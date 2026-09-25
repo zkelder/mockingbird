@@ -3,9 +3,9 @@
 The normalization helpers below are for persisted operational timestamps.
 `resolve_host_local_timezone` is a separate, small concern -- discovering
 this single-site install's actual local IANA timezone (for example
-"America/New_York") -- kept in this same dependency-free module because
-every analytics surface that needs "local time" already imports this module
-for UTC normalization (see `mockingbird.repository.product_repository`).
+"America/New_York") -- kept in this same module because every analytics
+surface that needs "local time" already imports this module for UTC
+normalization (see `mockingbird.repository.product_repository`).
 """
 
 from __future__ import annotations
@@ -56,15 +56,29 @@ def resolve_host_local_timezone(now: datetime | None = None) -> tzinfo:
        system zoneinfo database resolves it to a real IANA zone (the
        standard Linux/macOS convention; this sandbox and any Linux/macOS
        deployment satisfy it today).
-    3. A fixed-offset snapshot of the host's current local UTC offset --
+    3. `tzlocal.get_localzone_name()` -- the platform-native lookup, and on
+       native Windows the *only* path that can produce an IANA key at all:
+       Windows names its zone in its own vocabulary
+       (`HKLM\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation`
+       `TimeZoneKeyName`, e.g. "Eastern Standard Time"), which `tzlocal`
+       translates through the CLDR `windowsZones` mapping it bundles. This
+       is deliberately an established mapping mechanism rather than a
+       hand-maintained table in this repository (see
+       docs/native-windows-field-reliability-corrections-v1-contract.md,
+       "Windows timezone contract"). `tzdata` is packaged alongside it for
+       native Windows, which has no system zoneinfo database for `ZoneInfo`
+       to read.
+    4. A fixed-offset snapshot of the host's current local UTC offset --
        this product's original behavior, correct only for the supplied (or
        current) instant, not across a range that spans a DST transition.
-       This is the only path a plain Windows host without the optional
-       `tzdata` package can reach, since `zoneinfo` needs a system or
-       `tzdata`-provided database to resolve an IANA key, and Windows does
-       not name its local zone in IANA terms without one. It is a disclosed,
-       honest degradation -- identical to this product's pre-existing
-       behavior on such a host, never a crash and never an invented number.
+       Reached only when every named-zone path above fails (for example a
+       Windows zone CLDR does not map, or a runtime with neither `tzlocal`
+       nor any zoneinfo database installed). It is a disclosed, honest
+       degradation -- never a crash and never an invented number.
+
+    Native Windows reached step 4 for every timestamp before *Native-Windows
+    Field Reliability Corrections v1*, which is exactly why a December
+    instant rendered with a June DST offset; step 3 closes that.
 
     This never raises.
     """
@@ -87,6 +101,17 @@ def _host_iana_zone_name_candidates() -> Iterator[str]:
     if env_tz:
         yield env_tz
 
+    yield from _etc_localtime_zone_name_candidates()
+    yield from _platform_native_zone_name_candidates()
+
+
+def _etc_localtime_zone_name_candidates() -> Iterator[str]:
+    """The POSIX `/etc/localtime` symlink convention. Its own generator so a
+    host where this path is absent or unreadable (native Windows) still
+    reaches the platform-native lookup below -- an earlier version returned
+    from the shared generator here, which silently made every later
+    candidate unreachable."""
+
     try:
         resolved = os.path.realpath("/etc/localtime")
     except OSError:
@@ -95,3 +120,25 @@ def _host_iana_zone_name_candidates() -> Iterator[str]:
     index = resolved.rfind(marker)
     if index != -1:
         yield resolved[index + len(marker) :]
+
+
+def _platform_native_zone_name_candidates() -> Iterator[str]:
+    """`tzlocal`'s platform-native resolution, wrapped so this module keeps
+    its "never raises" contract even if `tzlocal` is absent (a minimal
+    install) or its own lookup fails (`ZoneInfoNotFoundError`, a registry
+    `OSError`, or the `LookupError` it raises on an unrecognizable Windows
+    configuration). On native Windows this is the registry ->
+    CLDR `windowsZones` -> IANA path; on POSIX it is a redundant
+    confirmation of the two candidates above, which is why it is tried
+    last and never changes existing Linux/macOS behavior."""
+
+    try:
+        from tzlocal import get_localzone_name
+    except Exception:  # noqa: BLE001 - an optional dependency must never break resolution
+        return
+    try:
+        name = get_localzone_name()
+    except Exception:  # noqa: BLE001 - see docstring: every documented failure mode is non-fatal here
+        return
+    if isinstance(name, str) and name.strip():
+        yield name.strip()

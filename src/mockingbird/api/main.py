@@ -549,6 +549,8 @@ from mockingbird.repository.product_repository import (
     CameraNodePendingSetup,
     FastReviewConflictError,
     MonitoringOperationConflictError,
+    OBSERVATION_INTENT_OBSERVING,
+    OBSERVATION_INTENT_STOPPED,
     ObservationAuthorityStatus,
     PlaceFeatureHasHistoryError,
     ProductRepository,
@@ -9839,6 +9841,17 @@ async def update_camera_source(
         # Archiving preserves product records but explicitly cancels future restart.
         for stream in result.streams:
             repository.disable_stream_monitoring_for_manual_stop(stream.id)
+            # Native-Windows Field Reliability Corrections v1, Blocker 2: the
+            # Camera Node lane's equivalent of the line above. `CameraNode
+            # RecoverySupervisor` already refuses to resume a Stream whose
+            # Source is archived, so this is not the only guard -- but leaving
+            # a stale `observing` intent behind would mean un-archiving a
+            # Source silently resumed observation nobody asked for again.
+            repository.record_stream_observation_intent(
+                stream.id,
+                desired_state=OBSERVATION_INTENT_STOPPED,
+                reason="source_archived",
+            )
             if _live_camera_session_manager is not None:
                 _live_camera_session_manager.stop(stream.id, reason="source_archived")
             await get_source_monitor_manager().stop(stream.id)
@@ -12069,6 +12082,28 @@ async def start_stream_observation(
         status = get_observation_engine_session_manager().start(
             stream_id, configuration, privacy_ignore_regions=regions,
         )
+        if status.state != "error":
+            # Native-Windows Field Reliability Corrections v1, Blocker 2: the
+            # durable record that this Stream is *supposed* to be observing --
+            # the only thing that survives a Host restart (clean or abrupt) and
+            # lets `CameraNodeRecoverySupervisor` resume it without
+            # resurrecting a session somebody deliberately stopped.
+            #
+            # The `error` guard covers a start the engine rejects
+            # synchronously. It is deliberately not a completeness claim:
+            # `start()` returns while the session is still `starting`, so a
+            # start that only fails later on its own thread does record intent
+            # here. That is bounded and safe rather than wrong -- the
+            # supervisor's intent class requires *no* in-process session, so
+            # after a restart it makes exactly one resume attempt, and a Stream
+            # whose pairing is incomplete has no base address to probe and is
+            # skipped outright. See docs/native-windows-field-reliability-
+            # corrections-v1-contract.md.
+            repository.record_stream_observation_intent(
+                stream_id,
+                desired_state=OBSERVATION_INTENT_OBSERVING,
+                reason="user_started",
+            )
         facts = unified_status.camera_node_facts(
             session_status=status, config=configuration,
             playback=repository.get_stream_playback_status(stream_id),
@@ -12152,6 +12187,18 @@ async def stop_stream_observation(
 
     if lane == unified_status.RUNTIME_KIND_CAMERA_NODE:
         status = get_observation_engine_session_manager().stop(stream_id)
+        # Native-Windows Field Reliability Corrections v1, Blocker 2: a
+        # deliberate Stop must stay stopped across any number of Host
+        # restarts, so the durable intent is cleared here -- unconditionally,
+        # including for an already-stopped Stream (this endpoint is documented
+        # as idempotent, and `stop()` returns `None` when no session object
+        # exists in *this* process, which is exactly the post-restart case
+        # where the intent is the only thing left to clear).
+        repository.record_stream_observation_intent(
+            stream_id,
+            desired_state=OBSERVATION_INTENT_STOPPED,
+            reason="user_stopped",
+        )
         facts = unified_status.camera_node_facts(
             session_status=status, config=configuration,
             playback=repository.get_stream_playback_status(stream_id),

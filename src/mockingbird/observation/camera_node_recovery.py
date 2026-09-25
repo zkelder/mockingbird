@@ -28,6 +28,32 @@ this module ever acts on (`_RECOVERABLE_STOPPED_REASONS`), not a deny-list:
 tearing down), and any other/future `stopped_reason` this module has never
 seen are all safely excluded by default, never auto-resumed.
 
+Native-Windows Field Reliability Corrections v1 -- Host-restart recovery.
+A second eligibility class was added above, because the first one is
+structurally blind to it: `session_manager.status()` reads the manager's own
+**in-memory** `_sessions` dict, so a Camera Node outage (which leaves that
+object behind, stopped, with `stopped_reason="camera_unavailable"`) is
+visible to this module, while a **Host** restart -- which destroys the whole
+process -- makes `status()` return `None` for every Stream and therefore
+matches nothing at all. Real field evidence: with the Node healthy and
+reachable throughout a graceful Host restart, the previously-observing Stream
+came back `state=stopped` and stayed stopped until a person pressed Start
+observing again (docs/field-validation-closure-v1-report.md Q-3) -- fatal for
+an unattended 24/7 deployment on a platform that reboots itself for updates.
+
+The fix is deliberately *not* a new mechanism: the resume path here already
+worked. What was missing was a durable answer to "is this Stream supposed to
+be observing?", now `ProductRepository.record_stream_observation_intent` /
+`streams_intended_observing` (schema 61). This module reads that intent and
+resumes a Stream with **no in-process session at all** whose intent is
+`observing`, then falls through to the identical probe/backoff/start path
+below. Because the record is durable rather than a clean-shutdown callback,
+an abrupt process or OS kill recovers through the very same route -- and an
+observation a person deliberately stopped has intent `stopped`, so it stays
+stopped across any number of restarts. An absent intent row is never read as
+`observing`: this must never become "start every Camera Node on boot." See
+docs/native-windows-field-reliability-corrections-v1-contract.md.
+
 Mirrors `monitoring.durable_supervisor.DurableMonitoringSupervisor`'s
 proven bounded-backoff/reconcile-loop shape (repository-sourced desired
 state, a `reconcile_once` pass that is unit-testable independent of the
@@ -89,7 +115,13 @@ class _RecoveryBookkeeping:
 class _RecoveryCandidate:
     stream_id: str
     config: StreamLivePlaybackConfig
-    session_status: ObservationEngineSessionStatus
+    # `None` for a Host-restart candidate: this process has no session object
+    # for the Stream at all, which is precisely what identifies it. Backoff
+    # bookkeeping keys off `stopped_at`, so such a candidate carries the
+    # durable intent's own `requested_at` as its stable stop identity instead
+    # (see `_maybe_recover`).
+    session_status: ObservationEngineSessionStatus | None
+    stop_identity: datetime | None
 
 
 class _HealthProbe(Protocol):
@@ -97,12 +129,20 @@ class _HealthProbe(Protocol):
 
 
 class CameraNodeRecoverySupervisor:
-    """Background, bounded reconciliation loop: for every configured Camera
-    Node Stream whose most recent Observation Engine session ended with
-    `stopped_reason == "camera_unavailable"`, periodically re-probes that
-    Node's own health and calls `ObservationEngineSessionManager.start()`
-    again once it responds -- restoring "MockingBird resumes watching once
-    its camera comes back" without any user action.
+    """Background, bounded reconciliation loop that periodically re-probes a
+    Camera Node's own health and calls `ObservationEngineSessionManager
+    .start()` again once it responds, with no user action -- for a Camera Node
+    Stream in either of two states (see `_eligible_candidates`):
+
+    - its most recent in-process Observation Engine session ended with
+      `stopped_reason == "camera_unavailable"` (the camera went away while the
+      Host kept running), or
+    - this process has **no** session for it at all while its durable
+      observation intent is `observing` (the Host itself restarted, cleanly or
+      abruptly, while the user's standing intent was to observe).
+
+    Together these restore both "MockingBird resumes watching once its camera
+    comes back" and "MockingBird resumes watching after its own Host reboots."
 
     Each background session already opens its own dedicated
     `ProductRepository` (see `ObservationEngineSessionManager`'s own
@@ -211,15 +251,51 @@ class CameraNodeRecoverySupervisor:
                 logger.exception("camera_node_recovery_attempt_failed", extra={"stream_id": candidate.stream_id})
 
     def _eligible_candidates(self, repository: ProductRepository) -> list[_RecoveryCandidate]:
+        """Two eligibility classes, checked per Stream in this order:
+
+        1. **In-process `camera_unavailable` stop** -- the original class. A
+           session object exists, it ended, and its `stopped_reason` is on the
+           allow-list. This is a Camera Node outage inside a still-running
+           Host.
+        2. **No in-process session at all, with durable intent `observing`** --
+           Host-restart recovery (Native-Windows Field Reliability Corrections
+           v1). `status() is None` is exactly what a fresh process sees for a
+           Stream that was observing before it restarted, and the durable
+           intent is the only thing that can say whether it *should* still be.
+
+        A Stream whose session object exists but stopped for any other reason
+        -- `user_stopped`, `app_shutdown`, a hard `error` -- matches neither
+        class and is never resumed, unchanged from before. Class 2
+        deliberately requires the intent to be *present and* `observing`: an
+        absent row means nobody ever asked this Stream to observe.
+        """
+
+        intended_observing = frozenset(repository.streams_intended_observing())
         candidates: list[_RecoveryCandidate] = []
         for stream in repository.list_streams():
             status = self._session_manager.status(stream.id)
-            if (
-                status is None
-                or status.state != "stopped"
+            stop_identity: datetime | None
+            if status is None:
+                if stream.id not in intended_observing:
+                    continue
+                intent = repository.get_stream_observation_intent(stream.id)
+                if intent is None or not intent.observing_intended:
+                    # Raced away between the set query and this read (a Stop
+                    # landing mid-pass). Never resume on a stale snapshot.
+                    continue
+                # Stable per-intent identity for backoff bookkeeping, in
+                # place of a `stopped_at` this class has no session to read.
+                # It changes only when the user's intent itself changes, so
+                # repeated failed resume attempts keep backing off instead of
+                # resetting every pass.
+                stop_identity = intent.requested_at
+            elif (
+                status.state != "stopped"
                 or status.stopped_reason not in _RECOVERABLE_STOPPED_REASONS
             ):
                 continue
+            else:
+                stop_identity = status.stopped_at
             config = repository.get_stream_live_playback_config(stream.id)
             if config is None or resolve_observation_runtime(config) != RUNTIME_KIND_CAMERA_NODE:
                 continue
@@ -229,18 +305,27 @@ class CameraNodeRecoverySupervisor:
                 # place (`_run_async`'s own pairing guard reports a
                 # different, non-recoverable `error` state instead), but
                 # this stays a safe, explicit no-op rather than an
-                # assumption.
+                # assumption. It is also the right answer for a
+                # Host-restart candidate whose pairing was removed while
+                # the Host was down.
                 continue
             source = repository.get_source(config.source_id)
             if source is None or source.status == SourceStatus.archived:
                 continue
-            candidates.append(_RecoveryCandidate(stream_id=stream.id, config=config, session_status=status))
+            candidates.append(
+                _RecoveryCandidate(
+                    stream_id=stream.id,
+                    config=config,
+                    session_status=status,
+                    stop_identity=stop_identity,
+                )
+            )
         return candidates
 
     def _maybe_recover(self, candidate: _RecoveryCandidate, *, now: datetime) -> None:
         with self._lock:
             bookkeeping = self._bookkeeping.setdefault(candidate.stream_id, _RecoveryBookkeeping())
-            stopped_at = candidate.session_status.stopped_at
+            stopped_at = candidate.stop_identity
             if bookkeeping.last_seen_stopped_at != stopped_at:
                 # A new stop event since we last looked (either the very
                 # first sighting, or a resumed session that failed again) --
@@ -267,7 +352,26 @@ class CameraNodeRecoverySupervisor:
         # this recovery attempt. "user-intentional stop remains stopped and
         # is NOT auto-resumed" holds regardless of probe latency.
         latest_status = self._session_manager.status(candidate.stream_id)
-        if (
+        if candidate.session_status is None:
+            # Host-restart class: eligibility was "no session object exists."
+            # If one now does, something else (a user pressing Start, or an
+            # earlier resume in this same process) already started it, so this
+            # attempt must stand down rather than race it. The durable intent
+            # is re-read too, so a Stop issued during the probe wins.
+            if latest_status is not None:
+                with self._lock:
+                    self._bookkeeping.pop(candidate.stream_id, None)
+                return
+            repository = self._repository_factory()
+            try:
+                intent = repository.get_stream_observation_intent(candidate.stream_id)
+            finally:
+                repository.close()
+            if intent is None or not intent.observing_intended:
+                with self._lock:
+                    self._bookkeeping.pop(candidate.stream_id, None)
+                return
+        elif (
             latest_status is None
             or latest_status.state != "stopped"
             or latest_status.stopped_reason not in _RECOVERABLE_STOPPED_REASONS
@@ -283,7 +387,15 @@ class CameraNodeRecoverySupervisor:
         finally:
             repository.close()
         log_event(
-            "observation_engine", "camera_node_auto_resume_attempt", stream_id=candidate.stream_id,
+            "observation_engine",
+            "camera_node_auto_resume_attempt",
+            stream_id=candidate.stream_id,
+            # Which of the two eligibility classes fired, so a field operator
+            # reading the log can tell "the camera came back" apart from "the
+            # Host restarted and we restored the user's standing intent."
+            recovery_class=(
+                "host_restart_intent" if candidate.session_status is None else "camera_unavailable"
+            ),
         )
         self._session_manager.start(candidate.stream_id, fresh_config, privacy_ignore_regions=regions)
         with self._lock:

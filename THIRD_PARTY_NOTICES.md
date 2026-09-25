@@ -99,6 +99,8 @@ closures below; each ships its own license the identical way).
 | opencv-python-headless | Apache-2.0 |
 | uvicorn | BSD-3-Clause |
 | astral | Apache-2.0 |
+| tzlocal | MIT |
+| tzdata | Apache-2.0 (the IANA time zone database it carries is public domain) |
 | react / react-dom | MIT |
 
 Two larger optional runtime closures ship as part of an official Windows

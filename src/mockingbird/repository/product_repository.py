@@ -926,6 +926,7 @@ from mockingbird.storage.models import (
     StreamModel,
     StreamMonitoringPolicyModel,
     StreamMonitoringOperationModel,
+    StreamObservationIntentModel,
     StreamRuntimeCheckpointModel,
     StorageCleanupBatchModel,
     StorageCleanupItemModel,
@@ -2378,6 +2379,50 @@ class _BioClipAttemptContext:
     motion_evidence_id: str | None
     crop: _ReviewSpeciesCropContext | None
     candidate_pack: SpeciesCandidatePack
+
+
+OBSERVATION_INTENT_OBSERVING = "observing"
+OBSERVATION_INTENT_STOPPED = "stopped"
+
+
+@dataclass(frozen=True)
+class StreamObservationIntent:
+    """Native-Windows Field Reliability Corrections v1: the durable, read-only
+    projection of `stream_observation_intents` -- whether this Stream is
+    *supposed* to be observing, independent of whether any process currently
+    is. Operational intent, never evidence and never reviewed truth.
+
+    Absence of an intent is represented by `None` from
+    `get_stream_observation_intent`, never by a row with some "unknown"
+    state: "nobody has ever expressed an intent for this Stream" and "a
+    person deliberately stopped it" must stay distinguishable, and neither
+    may ever be read as `observing`."""
+
+    stream_id: str
+    desired_state: str
+    requested_reason: str
+    requested_at: datetime
+    updated_at: datetime
+
+    @property
+    def observing_intended(self) -> bool:
+        return self.desired_state == OBSERVATION_INTENT_OBSERVING
+
+
+def _stream_observation_intent_from_model(
+    row: "StreamObservationIntentModel",
+) -> "StreamObservationIntent":
+    """Normalize both persisted timestamps on the way out, the same way every
+    other operational projection in this module does -- a legacy naive value
+    must never reach a caller comparing it against an aware `utc_now()`."""
+
+    return StreamObservationIntent(
+        stream_id=row.stream_id,
+        desired_state=row.desired_state,
+        requested_reason=row.requested_reason,
+        requested_at=normalize_utc(row.requested_at),
+        updated_at=normalize_utc(row.updated_at),
+    )
 
 
 @dataclass(frozen=True)
@@ -15942,6 +15987,87 @@ class ProductRepository:
                 checkpoint.last_stop_reason = "manual_camera_stop"
                 checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, stream_id, now)
+
+    # ----------------------------------------------------------------------
+    # Durable observation intent (Native-Windows Field Reliability
+    # Corrections v1, Blocker 2). See
+    # docs/native-windows-field-reliability-corrections-v1-contract.md.
+    # ----------------------------------------------------------------------
+
+    def record_stream_observation_intent(
+        self,
+        stream_id: str,
+        *,
+        desired_state: str,
+        reason: str,
+        now: datetime | None = None,
+    ) -> StreamObservationIntent | None:
+        """Persist whether this Stream is *supposed* to be observing.
+
+        Called only from a genuine product action -- Start observing, Stop
+        observing, archiving a Source -- and deliberately never from a
+        runtime teardown (`app_shutdown`, `repository_reconfigured`,
+        `local_backup_restore`), which is exactly what makes Host-restart
+        recovery possible without resurrecting a session a person stopped on
+        purpose.
+
+        `requested_at` advances only when `desired_state` actually changes, so
+        pressing Start observing again on an already-intended-observing Stream
+        is an honest no-op rather than a fresh intent. Returns `None` -- and
+        writes nothing -- for a `stream_id` that does not exist, rather than
+        raising a foreign-key error at a caller that was only trying to
+        record intent.
+        """
+
+        if desired_state not in (OBSERVATION_INTENT_OBSERVING, OBSERVATION_INTENT_STOPPED):
+            raise ValueError("observation_intent_desired_state_invalid")
+        moment = normalize_utc(now) if now is not None else datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(StreamModel, stream_id) is None:
+                    return None
+                row = session.get(StreamObservationIntentModel, stream_id)
+                if row is None:
+                    row = StreamObservationIntentModel(
+                        stream_id=stream_id,
+                        desired_state=desired_state,
+                        requested_reason=reason,
+                        requested_at=moment,
+                        updated_at=moment,
+                    )
+                    session.add(row)
+                else:
+                    if row.desired_state != desired_state:
+                        row.desired_state = desired_state
+                        row.requested_at = moment
+                    row.requested_reason = reason
+                    row.updated_at = moment
+                session.flush()
+                return _stream_observation_intent_from_model(row)
+
+    def get_stream_observation_intent(self, stream_id: str) -> StreamObservationIntent | None:
+        """`None` when no intent has ever been expressed for this Stream --
+        never read as `observing` by any caller (see the model docstring: the
+        product must not blind-start every Camera Node on boot)."""
+
+        with self.session_factory() as session:
+            row = session.get(StreamObservationIntentModel, stream_id)
+            return _stream_observation_intent_from_model(row) if row is not None else None
+
+    def streams_intended_observing(self) -> tuple[str, ...]:
+        """Every Stream whose durable intent is `observing`, for
+        `CameraNodeRecoverySupervisor`'s own restart-recovery pass. One query,
+        not one per Stream: the supervisor already iterates every Stream each
+        reconcile pass and must not add an N+1 to it."""
+
+        with self.session_factory() as session:
+            return tuple(
+                session.scalars(
+                    select(StreamObservationIntentModel.stream_id).where(
+                        StreamObservationIntentModel.desired_state == OBSERVATION_INTENT_OBSERVING
+                    )
+                ).all()
+            )
 
     def prepare_for_supervision(self, app_instance_id: str) -> None:
         """Invalidate any process-owned checkpoint before a new app claims runtime."""

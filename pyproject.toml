@@ -45,6 +45,18 @@ dependencies = [
   # / Windows tzdata) -- a plain core dependency, not an optional extra
   # the way the ML runtimes below are, and requires no network access.
   "astral>=3.2,<4.0",
+  # Native-Windows Field Reliability Corrections v1: the established
+  # Windows-zone-name -> IANA mapping mechanism (CLDR `windowsZones`,
+  # bundled inside the package; MIT, pure Python, 18 kB, no network) that
+  # `mockingbird.time_utils.resolve_host_local_timezone` needs to name this
+  # host's zone at all on native Windows -- the platform does not name its
+  # zone in IANA terms. Deliberately a real dependency rather than a
+  # hand-maintained mapping table in this repository. Pulls in `tzdata`
+  # only on Windows (`platform_system == "Windows"`, its own declared
+  # marker), which is where `zoneinfo` has no system database to read;
+  # `astral` already declared the same conditional `tzdata` requirement, so
+  # this adds no new non-Windows dependency at all.
+  "tzlocal>=5.2,<6.0",
 ]
 
 [project.scripts]

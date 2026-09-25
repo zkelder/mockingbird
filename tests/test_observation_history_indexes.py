@@ -39,12 +39,18 @@ def _index_names(repository: ProductRepository) -> set[str]:
         return set(rows)
 
 
-def test_schema_version_is_sixty_and_the_migration_is_registered() -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 60
+def test_this_migration_stays_registered_and_reachable_from_every_earlier_schema() -> None:
+    """Deliberately version-agnostic about the *current* schema (which later
+    milestones keep bumping -- it is 61 as of Native-Windows Field Reliability
+    Corrections v1) and specific about the only thing this file owns: schema
+    60's own migration must stay registered, and every earlier version must
+    still be able to reach whatever the current one is."""
+
     assert 60 in _SCHEMA_MIGRATIONS
-    # Every earlier version must still be able to reach the current one.
+    assert CURRENT_DATABASE_SCHEMA_VERSION >= 60
     assert database_schema_version_is_compatible(1)
     assert database_schema_version_is_compatible(59)
+    assert database_schema_version_is_compatible(CURRENT_DATABASE_SCHEMA_VERSION - 1)
 
 
 def test_a_fresh_install_has_every_index(tmp_path) -> None:

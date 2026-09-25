@@ -246,6 +246,29 @@ WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     # dependency` for the regression guard this exact class of drift now
     # has.
     "astral>=3.2,<4.0",
+    # Native-Windows Field Reliability Corrections v1: mirrors
+    # `pyproject.toml`'s own new core dependency (see its comment there) --
+    # the CLDR `windowsZones` mapping `mockingbird.time_utils.
+    # resolve_host_local_timezone` needs to name this host's zone in IANA
+    # terms on native Windows at all.
+    "tzlocal>=5.2,<6.0",
+    # Deliberately explicit, and deliberately NOT a `pyproject.toml` core
+    # dependency -- the same "extra pin with no pyproject counterpart"
+    # exception shape as the `idna`/`click` entries below, but for a
+    # different reason. Both `astral` and `tzlocal` already declare `tzdata`
+    # conditionally (`sys_platform == "win32"` / `platform_system ==
+    # "Windows"` respectively), yet `install_windows_runtime_dependencies`
+    # resolves environment markers against the *Linux build host* while only
+    # the wheel *tags* honor `--platform win_amd64` (the same marker-vs-tag
+    # asymmetry `uvicorn[standard]`/`uvloop` is worked around for just
+    # above). So both conditional requirements evaluate False at build time
+    # and `tzdata` was never packaged -- directly confirmed in the field at
+    # `d5dd1d9` ("tzdata: NOT present", see
+    # docs/field-validation-closure-v1-report.md Q-1). Without a zoneinfo
+    # database on Windows, `ZoneInfo("America/New_York")` cannot construct
+    # even once `tzlocal` has correctly produced that name, so this line is
+    # load-bearing for the timezone fix, not belt-and-braces.
+    "tzdata>=2024.1",
     # Not a direct MockingBird dependency -- pulled in transitively by
     # `anyio`'s own unconditional, unbounded `idna>=2.8` requirement (real,
     # installed metadata: `anyio 3.7.1 requires: idna (>=2.8), ...`). This

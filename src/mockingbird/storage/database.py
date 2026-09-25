@@ -43,7 +43,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 60
+CURRENT_DATABASE_SCHEMA_VERSION = 61
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1776,6 +1776,64 @@ def _migrate_to_observation_history_indexes(connection: Connection) -> None:
         connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {definition}")
 
 
+def _migrate_to_durable_observation_intent(connection: Connection) -> None:
+    """Native-Windows Field Reliability Corrections v1 (schema 61): add
+    `stream_observation_intents`, the durable record of whether a Stream is
+    *supposed* to be observing.
+
+    Purely additive: one new table, no existing column, row or value touched
+    -- in particular no timestamp and no evidence is rewritten. Every
+    pre-existing Stream starts with **no** row, which is deliberately read as
+    "no intent has ever been expressed," never as `observing`: upgrading an
+    installation must not spontaneously start observing on every paired
+    Camera Node. A Stream only gains a row the next time somebody presses
+    Start observing (or Stop observing, or archives its Source).
+
+    Why this table has to exist at all -- and why
+    `stream_monitoring_policies`, `stream_runtime_checkpoints` and
+    `monitoring_exposure_intervals` were each checked and cannot carry it --
+    is recorded in
+    docs/native-windows-field-reliability-corrections-v1-contract.md.
+
+    `IF NOT EXISTS`, and a `streams`-table existence check, for the same two
+    reasons the schema-60 index migration above documents: a database created
+    fresh at schema 61 already has this table from
+    `Base.metadata.create_all`, and migrations run *before* `create_all`, so a
+    database being brought forward from a much older schema can legitimately
+    reach this point before `streams` exists at all (the historical partial
+    fixtures in `tests/test_camera_health.py`/`test_repository_isolation.py`
+    do exactly that). Skipping then loses nothing -- `create_all`, moments
+    later, creates this table from the model itself. What must never happen
+    is an upgrade failing over it.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Durable observation-intent migration requires local SQLite storage."
+        )
+    existing_tables = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if "streams" not in existing_tables:
+        return
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS stream_observation_intents (
+            stream_id VARCHAR NOT NULL PRIMARY KEY REFERENCES streams (id),
+            desired_state VARCHAR NOT NULL,
+            requested_reason VARCHAR NOT NULL,
+            requested_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            CONSTRAINT ck_stream_observation_intent_desired_state
+                CHECK (desired_state IN ('observing', 'stopped'))
+        )
+        """
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1836,6 +1894,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     58: _migrate_to_field_acceptance_authentication,
     59: _migrate_to_place_feature_observation_links,
     60: _migrate_to_observation_history_indexes,
+    61: _migrate_to_durable_observation_intent,
 }
 
 

@@ -67,7 +67,7 @@ def test_current_schema_creates_no_map_or_placements(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 60
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 61
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"yard_maps", "yard_map_stream_placements", "yard_map_zone_placements"}.issubset(table_names)
     with repository.session_factory() as session:

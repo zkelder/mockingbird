@@ -51,9 +51,28 @@ class _FakeStream:
     id: str
 
 
+@dataclass
+class _FakeIntent:
+    """Structural double for `StreamObservationIntent` -- only the two members
+    the supervisor reads."""
+
+    desired_state: str
+    requested_at: datetime = NOW
+
+    @property
+    def observing_intended(self) -> bool:
+        return self.desired_state == "observing"
+
+
 class _FakeRepository:
-    """Structural double for `ProductRepository`: only the five methods
-    `CameraNodeRecoverySupervisor` actually calls."""
+    """Structural double for `ProductRepository`: only the methods
+    `CameraNodeRecoverySupervisor` actually calls.
+
+    `intents` is keyed by stream id and defaults to empty -- i.e. no durable
+    observation intent has ever been expressed, which is exactly the state
+    every pre-existing test in this file was written against and must keep
+    behaving identically under (no Host-restart candidate can arise from an
+    absent intent)."""
 
     def __init__(
         self,
@@ -61,14 +80,24 @@ class _FakeRepository:
         streams: list[_FakeStream],
         configs: dict[str, StreamLivePlaybackConfig],
         sources: dict[str, CameraSource],
+        intents: dict[str, _FakeIntent] | None = None,
     ) -> None:
         self._streams = streams
         self._configs = configs
         self._sources = sources
+        self.intents = dict(intents or {})
         self.close_count = 0
 
     def list_streams(self) -> list[_FakeStream]:
         return list(self._streams)
+
+    def streams_intended_observing(self) -> tuple[str, ...]:
+        return tuple(
+            stream_id for stream_id, intent in self.intents.items() if intent.observing_intended
+        )
+
+    def get_stream_observation_intent(self, stream_id: str) -> _FakeIntent | None:
+        return self.intents.get(stream_id)
 
     def get_stream_live_playback_config(self, stream_id: str) -> StreamLivePlaybackConfig | None:
         return self._configs.get(stream_id)
@@ -600,3 +629,284 @@ def test_real_repository_excludes_archived_source(repository: ProductRepository)
     )
     supervisor.reconcile_once()
     assert manager.start_calls == []
+
+
+# --------------------------------------------------------------------------
+# Host-restart recovery (Native-Windows Field Reliability Corrections v1,
+# Blocker 2)
+#
+# A restarted Host is modelled exactly as the product experiences it: a
+# `_FakeSessionManager` with **no status at all** for the Stream, because the
+# process that held the session object is gone. The durable intent is the only
+# surviving statement of what should be happening -- which is the whole point
+# of the fix, and why every test below varies the intent, not the status.
+# --------------------------------------------------------------------------
+
+
+def _restarted_host(
+    *, intent: _FakeIntent | None, source_status: SourceStatus = SourceStatus.connected,
+    config: StreamLivePlaybackConfig | None = None,
+) -> tuple[_FakeSessionManager, _FakeRepository]:
+    """A fresh process: the session manager knows nothing about any Stream."""
+
+    manager = _FakeSessionManager(statuses={})
+    repository = _FakeRepository(
+        streams=[_FakeStream(STREAM_ID)],
+        configs={STREAM_ID: config or _config()},
+        sources={SOURCE_ID: _source(source_status)},
+        intents={STREAM_ID: intent} if intent is not None else {},
+    )
+    return manager, repository
+
+
+def test_host_restart_resumes_a_stream_whose_durable_intent_is_observing() -> None:
+    """The reproduced field defect (Q-3), inverted into a passing assertion:
+    with the Node reachable and no in-process session, a standing `observing`
+    intent must resume observation with no user action at all."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == [(STREAM_ID, repository.get_stream_live_playback_config(STREAM_ID))]
+    assert manager.status(STREAM_ID).state == "observing"
+
+
+def test_host_restart_leaves_a_deliberately_stopped_stream_stopped() -> None:
+    """The safety property that matters most: a person pressed Stop, so the
+    Host coming back must NOT resurrect observation -- not even probe for it."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("stopped"))
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []
+    assert manager.status(STREAM_ID) is None
+
+
+def test_host_restart_never_starts_a_stream_with_no_recorded_intent() -> None:
+    """No blind "start every Camera Node on boot." A Stream nobody has ever
+    asked to observe -- including every Stream on an installation upgraded to
+    schema 61, which gets no intent row from the migration -- stays stopped."""
+
+    manager, repository = _restarted_host(intent=None)
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []
+
+
+def test_host_restart_with_an_unavailable_node_resumes_once_it_returns() -> None:
+    """The Host starts while the Camera Node is still offline (pairing and
+    credentials intact, transport simply unavailable). The existing bounded
+    backoff must keep probing and resume the moment the Node answers -- no new
+    scheduler, no manual intervention, and no giving up."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+    health = _FakeHealthClient(healthy=False)
+    moment = [NOW]
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock(moment),
+        backoff_schedule_seconds=(10.0, 20.0),
+    )
+
+    supervisor.reconcile_once()
+    assert manager.start_calls == []
+    assert health.calls == ["http://192.168.1.50:8787"]
+
+    # Still down, and still inside the first backoff step: not re-probed.
+    moment[0] = moment[0] + timedelta(seconds=5)
+    supervisor.reconcile_once()
+    assert len(health.calls) == 1
+
+    # First backoff step elapsed, still down: probed again, still no start.
+    moment[0] = moment[0] + timedelta(seconds=5)
+    supervisor.reconcile_once()
+    assert len(health.calls) == 2
+    assert manager.start_calls == []
+
+    # The Node returns.
+    health.healthy = True
+    moment[0] = moment[0] + timedelta(seconds=20)
+    supervisor.reconcile_once()
+    assert manager.start_calls == [(STREAM_ID, repository.get_stream_live_playback_config(STREAM_ID))]
+
+
+def test_host_restart_resume_is_attempted_once_per_intent_not_once_per_pass() -> None:
+    """Idempotence across passes: once a resume has started a session, later
+    reconcile passes see a live session and must not call `.start()` again --
+    no duplicate session, no duplicate observation work."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+    health = _FakeHealthClient(healthy=True)
+    moment = [NOW]
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock(moment),
+    )
+
+    for _ in range(4):
+        moment[0] = moment[0] + timedelta(minutes=5)
+        supervisor.reconcile_once()
+
+    assert len(manager.start_calls) == 1
+
+
+def test_host_restart_resume_that_fails_again_keeps_backing_off() -> None:
+    """A resumed session that immediately re-fails with `camera_unavailable`
+    hands over to the *existing* eligibility class (a real stopped session
+    object now exists), rather than the intent class retrying every pass."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+    manager.resume_result = "camera_unavailable"
+    health = _FakeHealthClient(healthy=True)
+    moment = [NOW]
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock(moment),
+        backoff_schedule_seconds=(10.0, 20.0),
+    )
+
+    supervisor.reconcile_once()
+    assert len(manager.start_calls) == 1
+    assert manager.status(STREAM_ID).stopped_reason == "camera_unavailable"
+
+    # The next pass is the ordinary camera_unavailable path, which is due
+    # immediately on a newly-seen `stopped_at` -- it must still be exactly one
+    # start per stop event, never an unbounded loop.
+    moment[0] = moment[0] + timedelta(seconds=1)
+    supervisor.reconcile_once()
+    assert len(manager.start_calls) == 2
+
+
+def test_a_users_stop_during_the_health_probe_wins_over_a_host_restart_resume() -> None:
+    """The intent is deliberately re-read immediately before `.start()`: a Stop
+    that lands while the (potentially slow) health probe is in flight must win,
+    exactly as the pre-existing `camera_unavailable` race guard does for a
+    stale session object."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+
+    class _StopDuringProbe(_FakeHealthClient):
+        def health(self, base_address: str) -> dict[str, object]:
+            repository.intents[STREAM_ID] = _FakeIntent("stopped")
+            return super().health(base_address)
+
+    health = _StopDuringProbe(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert health.calls == ["http://192.168.1.50:8787"]
+    assert manager.start_calls == []
+
+
+def test_a_manual_start_during_the_health_probe_is_not_raced_by_a_resume() -> None:
+    """If something else started the Stream while the probe was in flight (a
+    user pressing Start observing), the resume must stand down rather than
+    start a second session for the same Stream."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+
+    class _StartDuringProbe(_FakeHealthClient):
+        def health(self, base_address: str) -> dict[str, object]:
+            manager.statuses[STREAM_ID] = _status(STREAM_ID, state="observing")
+            return super().health(base_address)
+
+    health = _StartDuringProbe(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+
+
+def test_host_restart_never_resumes_an_archived_sources_stream() -> None:
+    manager, repository = _restarted_host(
+        intent=_FakeIntent("observing"), source_status=SourceStatus.archived,
+    )
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []
+
+
+def test_host_restart_never_resumes_a_stream_that_lost_its_pairing() -> None:
+    """Credentials/pairing removed while the Host was down: there is no base
+    address to probe, so this is a clean no-op rather than an exception."""
+
+    manager, repository = _restarted_host(
+        intent=_FakeIntent("observing"), config=_config(camera_node_base_address=None),
+    )
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []
+
+
+def test_host_restart_never_resumes_a_non_camera_node_stream() -> None:
+    """An intent row for a Stream that is no longer a Camera Node Stream (or
+    never was) must not drag the legacy live-monitoring lane into this
+    supervisor."""
+
+    manager, repository = _restarted_host(
+        intent=_FakeIntent("observing"),
+        config=_config(
+            live_stream_type="rtsp", provider_key="rtsp",
+            live_stream_url="rtsp://camera.local/stream",
+            camera_node_base_address=None, camera_node_credential=None,
+            camera_node_camera_id=None, camera_node_id=None,
+        ),
+    )
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []
+
+
+def test_shutdown_prevents_any_host_restart_resume() -> None:
+    """`shutdown()` must quiesce the intent class exactly as it does the
+    existing one -- an app tearing down never starts a new session."""
+
+    manager, repository = _restarted_host(intent=_FakeIntent("observing"))
+    health = _FakeHealthClient(healthy=True)
+    supervisor = _supervisor(
+        session_manager=manager, repository=repository, health_client=health, clock=_clock([NOW]),
+    )
+
+    supervisor.shutdown()
+    supervisor.reconcile_once()
+
+    assert manager.start_calls == []
+    assert health.calls == []

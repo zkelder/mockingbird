@@ -222,6 +222,62 @@ class StreamRuntimeCheckpointModel(Base):
     )
 
 
+class StreamObservationIntentModel(Base):
+    """Native-Windows Field Reliability Corrections v1 (schema 61): the
+    durable answer to "should this Stream be observing?"
+
+    Operational intent -- never evidence, never reviewed truth, and it
+    carries no observation content of any kind. Written only at a real
+    product action (Start observing / Stop observing / archiving a Source),
+    and deliberately **not** written by any runtime teardown
+    (`app_shutdown`, `repository_reconfigured`, `local_backup_restore`):
+    that is exactly what lets `CameraNodeRecoverySupervisor` tell "the Host
+    restarted while observation was supposed to be running" apart from "a
+    person pressed Stop," which nothing in the product could distinguish
+    across a process restart before this table existed. Because the record
+    is durable rather than a clean-shutdown callback, an abrupt process or
+    OS kill is covered by the identical mechanism -- it writes nothing, and
+    the intent from the user's original Start is simply still here.
+
+    `stream_id` is the primary key, so a duplicate intent for one Stream is
+    not representable. An absent row means "no intent has ever been
+    expressed" and is never read as `observing` -- the product must never
+    blind-start every Camera Node on boot. Losing the row degrades to
+    exactly the pre-milestone behaviour (no automatic resume), never to a
+    wrong one.
+
+    See docs/native-windows-field-reliability-corrections-v1-contract.md,
+    "The durable observation-intent contract," including why
+    `stream_monitoring_policies`/`stream_runtime_checkpoints`/
+    `monitoring_exposure_intervals` were each checked and could not carry
+    this.
+    """
+
+    __tablename__ = "stream_observation_intents"
+    __table_args__ = (
+        CheckConstraint(
+            "desired_state IN ('observing', 'stopped')",
+            name="ck_stream_observation_intent_desired_state",
+        ),
+    )
+
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
+    desired_state: Mapped[str] = mapped_column(String, nullable=False)
+    # Why `desired_state` last *changed* -- `user_started`, `user_stopped`,
+    # `source_archived`, `automatic_resume`. Diagnostic only: no recovery
+    # decision reads it, so a future reason needs no code change here.
+    requested_reason: Mapped[str] = mapped_column(String, nullable=False)
+    # When `desired_state` last actually changed, as distinct from
+    # `updated_at` (every write). A repeated Start observing on an
+    # already-`observing` Stream must not look like a fresh intent.
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class MonitoringExposureIntervalModel(Base):
     """A bounded healthy-frame interval; it is operational history, never evidence."""
 

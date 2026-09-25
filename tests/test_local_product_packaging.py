@@ -316,6 +316,45 @@ def test_windows_runtime_requirements_matches_every_pyproject_core_dependency() 
     )
 
 
+def test_windows_runtime_requirements_package_the_windows_timezone_stack() -> None:
+    """Native-Windows Field Reliability Corrections v1, Blocker 1. Neither
+    half of this is guarded by the pyproject-mirror test above, and both are
+    load-bearing for correct local-time rendering on the first-class
+    acceptance platform:
+
+    - `tzlocal` is the CLDR `windowsZones` mapping that turns the Windows
+      registry's own zone name into an IANA key. It *is* a pyproject core
+      dependency, so the mirror test would catch its removal from this
+      tuple -- but not its removal from both places at once, which is what
+      this asserts.
+    - `tzdata` is deliberately NOT a pyproject core dependency, so the
+      mirror test cannot see it at all. Both `astral` and `tzlocal` declare
+      it conditionally for Windows, but `install_windows_runtime_
+      dependencies` resolves environment markers against the Linux build
+      host while only wheel *tags* honor `--platform win_amd64` -- so those
+      conditional requirements evaluate False and `tzdata` silently is not
+      packaged. That was directly confirmed in the field at `d5dd1d9`
+      ("tzdata: NOT present", docs/field-validation-closure-v1-report.md
+      Q-1). Without it, `zoneinfo` has no database on Windows and
+      `ZoneInfo("America/New_York")` cannot construct even once `tzlocal`
+      has correctly produced that name.
+    """
+
+    names = _windows_runtime_requirement_names()
+
+    assert "tzlocal" in names, (
+        "tzlocal is missing from WINDOWS_RUNTIME_REQUIREMENTS -- a packaged "
+        "Windows build could not derive an IANA timezone name at all, and every "
+        "server-side local-time surface would silently revert to one fixed UTC "
+        "offset applied to every date (the reproduced Q-1 field defect)."
+    )
+    assert "tzdata" in names, (
+        "tzdata is missing from WINDOWS_RUNTIME_REQUIREMENTS -- see this test's "
+        "docstring: the conditional markers on astral/tzlocal cannot supply it "
+        "from a Linux build host, so it must be listed explicitly."
+    )
+
+
 def test_sync_packaged_web_dist_copies_the_built_frontend_to_a_target(tmp_path: Path) -> None:
     fake_dist = _fake_web_dist(tmp_path)
     target = tmp_path / "packaged-web-dist"
