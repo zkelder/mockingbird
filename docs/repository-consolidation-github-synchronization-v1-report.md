@@ -48,11 +48,46 @@ and a second, independent pass re-ran the high-signal ones:
 
 Verdict: no blocker for a private fast-forward push.
 
-Push record: see §2a (filled in after the push).
+### 2a. Push record
+
+- Remote tip re-checked immediately before pushing: still `1772c36`.
+- `git push origin main:main` -- normal fast-forward, `1772c36..7892926`, **452
+  commits**: the 451 accepted commits ending at `a9878a8` plus `7892926`
+  (this milestone's reconciliation commit). No force, no `--all`/`--mirror`,
+  no tag, no other branch.
+- `git ls-remote origin refs/heads/main` = local HEAD = `7892926280c5…`.
+  <https://github.com/zkelder/mockingbird/commit/7892926280c524829da5186fcbf7d371367baebe>
+- This report's own follow-up commit (recording §2a/§3a) was pushed the same
+  way afterwards; its hash is in `git log`, since a commit cannot contain its
+  own hash.
+- Post-push: all eight protected files `sha256sum -c` OK and still untracked;
+  `git fsck --connectivity-only` clean; retained worktrees intact, `git
+  worktree prune --dry-run` empty.
 
 ## 3. CI
 
-See §3a (filled in after the run).
+### 3a. First GitHub Actions run of `ci.yml`
+
+`ci.yml` had never run before (it was added in `a56081a` and never pushed).
+Run [36218193598](https://github.com/zkelder/mockingbird/actions/runs/36218193598)
+on `7892926`:
+
+| Job | Result |
+| --- | --- |
+| Frontend typecheck and build | **success** |
+| Release artifact packaging smoke test (structural Windows bundle + independent verifier) | **success** |
+| Backend tests (Core gate) | **failure -- environment, not tests.** `pip install -e .` does not install the `test` extra, so `verify_core.py` stopped at `No module named pytest` before collecting a single test. The structural `--check` step was skipped as a consequence |
+
+Classification: a **pre-existing workflow defect, newly exposed** by the first
+push. It is not caused by any accepted milestone, and it is **not** evidence
+about the six known Core failures either way -- CI has produced **no** Core
+result. The local accepted Core record (`6 failed, 6225 passed`, not green)
+stands unchanged. Not fixed here: CI changes are outside this milestone. The
+proposed follow-up is one line (`pip install -e ".[test]"`), after which the
+first real Linux-runner Core result must be classified against the recorded
+six-set, since a hosted runner may add environment-specific failures of its
+own. The follow-up push of this report re-runs the same workflow and is
+expected to fail identically.
 
 ## 4. Repository / worktree disposition
 
