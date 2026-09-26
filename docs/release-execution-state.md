@@ -3849,6 +3849,82 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Recorded, 2026-09-25, by Today Truth Regression Repair v1.**
+
+**Accepted delta.** *Native-Windows Field Reliability Corrections v1* is
+**accepted at `83a0e86`, schema `v61`** -- validation state carried forward
+unchanged from its own record below and in
+[native-windows-field-reliability-corrections-v1-report.md](native-windows-field-reliability-corrections-v1-report.md).
+*Field Validation Closure v1* **remains unaccepted**, because the Today truth
+regression that milestone's closure pass newly identified (§3's
+"newly identified release-blocker CANDIDATE," below) was judged a **v0.1
+blocker**. `Q-2`, `Q-4` and the stale `camera_connected` field keep their
+existing disposition: **nonblocking, deferred, not fixed.**
+
+**Authorized.** *Today Truth Regression Repair v1* -- one bounded
+correctness milestone during the feature freeze, and **the only authorized
+milestone**. Its product purpose is to preserve Discover -> Confirm ->
+Remember: confirming wildlife must not make that wildlife disappear from
+Today's relevant summaries and highlights. See
+[today-truth-regression-repair-v1-contract.md](today-truth-regression-repair-v1-contract.md)
+and
+[today-truth-regression-repair-v1-report.md](today-truth-regression-repair-v1-report.md).
+
+**Status: IMPLEMENTED, pending acceptance.** Committed locally, not pushed.
+Schema **v61, unchanged**; version `0.1.0`, unchanged. One production file
+changed: `src/mockingbird/repository/product_repository.py`.
+
+- **Root cause.** `_preloaded_motion_evidence_for_review_queue_item`
+  returned an *authoritative* `None` -- not its `_PRELOAD_MISS` sentinel --
+  for any Visit/Event absent from Review Queue Scale Closure v1's bulk
+  preload. A target with no MotionEvidence and a target never fetched are
+  both simply absent from the map; the code read the second as the first.
+  Because `_read_only_build_cache` is shared by nested builds, and
+  `dashboard_summary` runs the queue build and *then* Today inside one
+  cache, Today's reviewed/confirmed Visits -- not queue members -- were
+  told they had no evidence, and `detector_qualified_animal_visit_count`
+  collapsed toward `0`.
+- **Blast radius, swept rather than assumed.** Three lookups consult that
+  cache. Today's two day loops were wrong; the queue's own **visit-less
+  Event lane** was also wrong (a second, previously unreported in-queue
+  manifestation, found by the trace, not by the failing tests); the Visit
+  loop was correct only by predicate coincidence; the pending-suggestion
+  preload was latent; `media_asset_by_local_path` was never exposed. The
+  four identification/BioCLIP paths open no build cache and always queried.
+- **Repair.** Each preload now carries the exact id set it fetched, and
+  `covers()` is the only thing that authorises a cached answer; a lookup
+  whose Visit *or* Event side is uncovered falls through. Media filtering,
+  union deduplication, newest-first `(created_at, id)` ordering including
+  ties, nested-cache lifetime and cleanup, queue membership/order/
+  classification are all preserved. **The accepted optimization is not
+  disabled or reverted** -- it is made correct and then extended, so Today
+  and the visit-less Event lane declare their own bounded row sets and get
+  one bulk read instead of one round trip per row.
+- **Evidence.** All seven recorded regression tests fail at `83a0e86` and
+  pass after; 14 new focused tests (six of which also fail at the
+  unrepaired baseline) assert every lookup case **twice** -- cached and
+  uncached -- and require the two answers to agree. Product flow, identical
+  isolated data: confirming four animal Visits took Today's count 4 -> 1 ->
+  **0** with "Best moments" **empty** before, and holds it at **4** with
+  each species in "New today" exactly once after. The canonical Today
+  report (`place_activity_report`) was correct on both sides -- a separate
+  computation path, which is why its correctness was never evidence that
+  the Dashboard Today panel was fine.
+- **Query performance, identical data.** Review-queue statement counts are
+  `+1` flat (68 -> 69 at both 25 and 205 Visits; 300 -> 301 with 60
+  visit-less Events); `dashboard_summary` is `+2` flat regardless of the
+  day's size (437 -> 439 at 10 confirmed Visits, 2,547 -> 2,549 at 100),
+  while the counts go from a wrong `5` to a correct `15` and `105`.
+  Established scale guarantees are retained and structurally locked down.
+- **No schema, public API, review-authority, model, camera-status,
+  recovery or production-configuration change.** No hardware session,
+  packaging rebuild or Full gate was required by this cache-only scope.
+
+**This entry authorizes no further milestone.** *Field Validation Closure
+v1* remains unaccepted; the remaining release queue in §6 is unchanged.
+
+---
+
 **Recorded, 2026-09-25, by Native-Windows Field Reliability Corrections v1.**
 
 *Field Validation Closure v1* **executed at `8a45d1a` but is NOT accepted** --

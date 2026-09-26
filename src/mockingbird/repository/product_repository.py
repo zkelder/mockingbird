@@ -19776,6 +19776,17 @@ class ProductRepository:
             .limit(501)
         ).all()
         truncated = len(rows) > 500
+        # Today Truth Regression Repair v1. The loop below asks for each
+        # Visit's MotionEvidence, and these Visits are a different set from
+        # the review queue's -- most of them are already reviewed, which is
+        # the whole point of Today. Declare the set up front so the shared
+        # preload covers it: one bulk read for a `.limit(501)`-bounded day
+        # rather than one round trip per Visit.
+        self._extend_motion_evidence_preload(
+            session,
+            visit_ids=[visit.id for visit, _event, _stream, _source in rows[:500]],
+            event_ids=[event.id for _visit, event, _stream, _source in rows[:500]],
+        )
         qualified: list[DashboardVisitSummary] = []
         confirmed_species: dict[str, list[DashboardVisitSummary]] = {}
         likely_species: dict[str, list[DashboardVisitSummary]] = {}
@@ -19863,6 +19874,17 @@ class ProductRepository:
             .limit(501)
         ).all()
         detector_count_truncated = len(detector_count_rows) > 500
+        # A wider day window than the story loop above, so it carries rows
+        # that preload has not covered yet; already-covered ids are skipped.
+        self._extend_motion_evidence_preload(
+            session,
+            visit_ids=[
+                visit.id for visit, _event, _stream, _source in detector_count_rows[:500]
+            ],
+            event_ids=[
+                event.id for _visit, event, _stream, _source in detector_count_rows[:500]
+            ],
+        )
         for visit, event, _stream, _source in detector_count_rows[:500]:
             if not self._dashboard_today_is_nature_event(event.event_type):
                 continue
@@ -32707,12 +32729,24 @@ class ProductRepository:
     ) -> MotionEvidenceModel | None | object:
         """Answer from the queue build's bulk MotionEvidence preload, or miss.
 
-        Review Queue Scale Closure v1. Returns `_PRELOAD_MISS` -- never
-        `None`, which is a real answer here -- whenever this lookup is not
-        one the preload can serve, so the caller falls through to its own
-        query unchanged. The preload is keyed by promoted Visit and
-        promoted Event, so a lookup with no Visit/Event target at all
-        (`filters = [media_filter]` in the caller) is deliberately a miss.
+        Review Queue Scale Closure v1, corrected by Today Truth Regression
+        Repair v1. Returns `_PRELOAD_MISS` -- never `None`, which is a real
+        answer here -- whenever this lookup is not one the preload can
+        serve, so the caller falls through to its own query unchanged. The
+        preload is keyed by promoted Visit and promoted Event, so a lookup
+        with no Visit/Event target at all (`filters = [media_filter]` in
+        the caller) is deliberately a miss.
+
+        The coverage check is the whole point. "No rows for this Visit" and
+        "this Visit was never preloaded" are indistinguishable in the map
+        alone, because a target with no MotionEvidence is simply absent
+        from it. The original code treated both as an authoritative `None`,
+        which silently answered *every* caller sharing this session's read
+        cache -- including `_dashboard_today_summary`, whose Visits are a
+        different set from the queue's -- with "no motion evidence," and so
+        collapsed Today's confirmed-wildlife counts toward zero. A cache
+        answer has to equal the query's answer, so the preload may only
+        answer for targets it actually covered.
 
         The filtering below is the same predicate the query applies:
         newest-first by `(created_at, id)`, restricted to the requested
@@ -32723,10 +32757,10 @@ class ProductRepository:
         cache = session.info.get(_READ_CACHE_SESSION_KEY)
         if cache is None:
             return _PRELOAD_MISS
-        by_target = cache.get("review_queue_motion_evidence")
-        if by_target is None:
+        preload = cache.get("review_queue_motion_evidence")
+        if preload is None:
             return _PRELOAD_MISS
-        if not visit_id and not event_id:
+        if not preload.covers(visit_id=visit_id, event_id=event_id):
             return _PRELOAD_MISS
 
         candidates: list[MotionEvidenceModel] = []
@@ -32737,7 +32771,7 @@ class ProductRepository:
         ):
             if key is None:
                 continue
-            for model in by_target.get(key, ()):
+            for model in preload.by_target.get(key, ()):
                 if model.id in seen:
                     continue
                 seen.add(model.id)
@@ -40114,9 +40148,17 @@ class ProductRepository:
 
         This is purely a prefetch, exactly like `_preload_review_queue_
         rows`: the three consumers each fall back to their own original
-        query whenever their map is absent or does not contain the key,
-        the maps are filled and never consulted for existence, and nothing
-        here decides what is in the queue or how it is classified.
+        query whenever their record is absent or does not cover the
+        target, and nothing here decides what is in the queue or how it is
+        classified.
+
+        Today Truth Regression Repair v1 corrected how "does not cover the
+        target" is decided. The first two records now carry the exact id
+        sets this call fetched, because an empty result and an unfetched
+        target look identical in a map alone -- and `_read_only_build_
+        cache` is shared with every other build in the same session, so
+        answering for an unfetched target is answering for somebody else's
+        Visits. See `_PreloadedMotionEvidence`.
         """
 
         pending_status = SpeciesSuggestionStatus.pending.value
@@ -40131,30 +40173,23 @@ class ProductRepository:
                 current = suggestions.get(model.visit_id)
                 if current is None or _pending_suggestion_outranks(model, current):
                     suggestions[model.visit_id] = model
-        cache["review_queue_pending_suggestion"] = suggestions
+        # Today Truth Regression Repair v1: the covered Visit set travels
+        # with the map, because a Visit with no pending suggestion is
+        # absent from it and would otherwise be indistinguishable from a
+        # Visit this preload never fetched.
+        cache["review_queue_pending_suggestion"] = _PreloadedPendingSuggestions(
+            by_visit=suggestions,
+            visit_ids=set(visit_ids),
+        )
 
-        evidence_by_target: dict[tuple[str, str], list[MotionEvidenceModel]] = {}
-
-        def _record(key: tuple[str, str], model: MotionEvidenceModel) -> None:
-            evidence_by_target.setdefault(key, []).append(model)
-
-        for chunk in _id_chunks(list(visit_ids)):
-            for model in session.scalars(
-                select(MotionEvidenceModel).where(
-                    MotionEvidenceModel.promoted_visit_id.in_(chunk)
-                )
-            ).all():
-                _record(("visit", model.promoted_visit_id or ""), model)
-        for chunk in _id_chunks(list(event_ids)):
-            for model in session.scalars(
-                select(MotionEvidenceModel).where(
-                    MotionEvidenceModel.promoted_event_id.in_(chunk)
-                )
-            ).all():
-                _record(("event", model.promoted_event_id or ""), model)
-        for models in evidence_by_target.values():
-            models.sort(key=lambda model: (model.created_at, model.id), reverse=True)
-        cache["review_queue_motion_evidence"] = evidence_by_target
+        preloaded_evidence = _PreloadedMotionEvidence()
+        self._preload_motion_evidence_for_targets(
+            session,
+            preloaded_evidence,
+            visit_ids=visit_ids,
+            event_ids=event_ids,
+        )
+        cache["review_queue_motion_evidence"] = preloaded_evidence
 
         paths: list[str] = []
         seen_paths: set[str] = set()
@@ -40173,6 +40208,84 @@ class ProductRepository:
             ).all():
                 by_path.setdefault(asset.local_path, asset)
         cache["media_asset_by_local_path"] = by_path
+
+    def _extend_motion_evidence_preload(
+        self,
+        session: Session,
+        *,
+        visit_ids: Sequence[str] = (),
+        event_ids: Sequence[str] = (),
+    ) -> None:
+        """Bring these targets inside the active build's preload coverage.
+
+        Today Truth Regression Repair v1. The repaired lookup answers only
+        for targets the preload actually read, which is what makes a cache
+        answer equal the query's answer. A caller that knows its own row
+        set up front -- Today's two bounded day loops, and the queue's
+        visit-less Event lane -- can therefore say so and get one bulk read
+        instead of one round trip per row. No-op without an active build
+        cache: the lookup simply falls through, as it always could.
+        """
+
+        if not visit_ids and not event_ids:
+            return
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is None:
+            return
+        preload = cache.get("review_queue_motion_evidence")
+        if preload is None:
+            preload = _PreloadedMotionEvidence()
+            cache["review_queue_motion_evidence"] = preload
+        self._preload_motion_evidence_for_targets(
+            session,
+            preload,
+            visit_ids=[
+                visit_id for visit_id in visit_ids if visit_id not in preload.visit_ids
+            ],
+            event_ids=[
+                event_id for event_id in event_ids if event_id not in preload.event_ids
+            ],
+        )
+
+    def _preload_motion_evidence_for_targets(
+        self,
+        session: Session,
+        preload: _PreloadedMotionEvidence,
+        *,
+        visit_ids: Sequence[str] = (),
+        event_ids: Sequence[str] = (),
+    ) -> None:
+        """Bulk-fetch MotionEvidence for these targets and record coverage.
+
+        Today Truth Regression Repair v1 factored this out of
+        `_preload_review_queue_item_context` so other bounded callers can
+        extend the same preload with their own ids rather than paying one
+        query per row -- see `_extend_motion_evidence_preload`, which is
+        the seam they use and which drops ids already covered before
+        calling this.
+
+        Recording coverage here rather than at the call site is deliberate:
+        a target enters the covered sets only on the path that actually
+        issued the reads for it, so "covered" cannot come to mean anything
+        looser than "this build read this target's rows".
+        """
+
+        for chunk in _id_chunks(list(visit_ids)):
+            for model in session.scalars(
+                select(MotionEvidenceModel).where(
+                    MotionEvidenceModel.promoted_visit_id.in_(chunk)
+                )
+            ).all():
+                preload.record(("visit", model.promoted_visit_id or ""), model)
+        for chunk in _id_chunks(list(event_ids)):
+            for model in session.scalars(
+                select(MotionEvidenceModel).where(
+                    MotionEvidenceModel.promoted_event_id.in_(chunk)
+                )
+            ).all():
+                preload.record(("event", model.promoted_event_id or ""), model)
+        preload.visit_ids.update(visit_ids)
+        preload.event_ids.update(event_ids)
 
     def _review_queue_items_uncached(
         self,
@@ -40253,8 +40366,13 @@ class ProductRepository:
                 visit.zone_id or event.primary_zone_id,
             )
             pending_suggestions = _cached_review_queue_pending_suggestions(session)
-            if pending_suggestions is not None:
-                suggestion_model = pending_suggestions.get(visit.id)
+            preloaded_suggestion: SpeciesSuggestionModel | None | object = (
+                _PRELOAD_MISS
+                if pending_suggestions is None
+                else pending_suggestions.newest_pending(visit.id)
+            )
+            if preloaded_suggestion is not _PRELOAD_MISS:
+                suggestion_model = preloaded_suggestion
             else:
                 suggestion_model = session.scalars(
                     select(SpeciesSuggestionModel)
@@ -40432,6 +40550,20 @@ class ProductRepository:
                 )
             )
         event_models = session.scalars(event_query.order_by(EventModel.started_at)).all()
+        eventless_event_ids = [
+            event_model.id
+            for event_model in event_models
+            if event_model.id not in visit_event_ids
+            and event_model.id not in event_ids_with_historical_visits
+        ]
+        # Today Truth Regression Repair v1. This lane's Events are, by
+        # definition, not any queued Visit's Event, so
+        # `_preload_review_queue_item_context` never covered them -- and
+        # the repaired lookup correctly refuses to answer for a target it
+        # did not read. Extend the same preload with exactly the Events
+        # this loop is about to visit, so restoring correctness does not
+        # also restore one MotionEvidence round trip per visit-less Event.
+        self._extend_motion_evidence_preload(session, event_ids=eventless_event_ids)
         for event_model in event_models:
             if (
                 event_model.id in visit_event_ids
@@ -42260,6 +42392,16 @@ def _read_only_build_cache(session: Session):
         # stays `None` until that preload runs, and every consumer falls
         # straight through to its own query while it is `None`, so no other
         # caller's behaviour depends on them.
+        #
+        # Today Truth Regression Repair v1: being filled is necessary but
+        # not sufficient. Because nested builds share this outermost cache
+        # (see above) -- and `dashboard_summary` deliberately runs the
+        # review-queue build and then Today inside one of them -- a filled
+        # map is also visible to callers whose targets that preload never
+        # covered. The first two records therefore carry their own covered
+        # id sets and answer only for those; the third is keyed by a path
+        # whose presence is checked directly. A cache answer must equal the
+        # answer the original query would have given, never a narrower one.
         "review_queue_pending_suggestion": None,
         "review_queue_motion_evidence": None,
         "media_asset_by_local_path": None,
@@ -42346,9 +42488,88 @@ _PRELOAD_MISS = object()
 """Distinguishes "the preload cannot answer this" from a real `None` answer."""
 
 
+@dataclass
+class _PreloadedMotionEvidence:
+    """The queue build's bulk MotionEvidence rows, plus what they cover.
+
+    Today Truth Regression Repair v1. Review Queue Scale Closure v1 kept
+    only the map. That was unsafe because a target with no MotionEvidence
+    is absent from the map, exactly like a target the preload never
+    fetched -- so "not in the map" could not be read as "no rows exist"
+    without also answering, wrongly and authoritatively, for every target
+    outside the preload's set. `_read_only_build_cache` is shared by
+    nested builds, and `dashboard_summary` runs the queue build and then
+    Today inside one cache, so those out-of-set targets are not
+    hypothetical: reviewed/confirmed Visits are not queue members.
+
+    The coverage sets make the distinction explicit, and they are the only
+    thing that authorises an answer.
+    """
+
+    by_target: dict[tuple[str, str], list[MotionEvidenceModel]] = dataclasses.field(
+        default_factory=dict
+    )
+    visit_ids: set[str] = dataclasses.field(default_factory=set)
+    event_ids: set[str] = dataclasses.field(default_factory=set)
+    # Per-key id index, so extending the preload stays linear rather than
+    # rescanning a target's existing rows for every row added to it.
+    _recorded: dict[tuple[str, str], set[str]] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def record(self, key: tuple[str, str], model: MotionEvidenceModel) -> None:
+        recorded = self._recorded.setdefault(key, set())
+        if model.id in recorded:
+            return
+        recorded.add(model.id)
+        self.by_target.setdefault(key, []).append(model)
+
+    def covers(self, *, visit_id: str | None, event_id: str | None) -> bool:
+        """Whether this preload read every target the lookup asks about.
+
+        A lookup with no Visit/Event target at all is not something the
+        preload is keyed for, and a lookup whose Visit *or* Event side was
+        never fetched is only partially answerable -- either way the
+        caller must fall through to its own query, because a partial
+        answer over a union predicate is a wrong answer, not a slower one.
+        """
+
+        if not visit_id and not event_id:
+            return False
+        if visit_id and visit_id not in self.visit_ids:
+            return False
+        if event_id and event_id not in self.event_ids:
+            return False
+        return True
+
+
+@dataclass
+class _PreloadedPendingSuggestions:
+    """The queue build's newest pending SpeciesSuggestion per Visit.
+
+    Today Truth Regression Repair v1 gave this the same coverage set, for
+    the same reason as `_PreloadedMotionEvidence`: a Visit with no pending
+    suggestion is absent from `by_visit`. The queue build's own membership
+    predicate matches the preload's today, so no current caller reads an
+    uncovered Visit -- but a nested build inside the same read cache
+    replaces this record with its own narrower set, and the contract
+    should not depend on remembering that.
+    """
+
+    by_visit: dict[str, SpeciesSuggestionModel] = dataclasses.field(
+        default_factory=dict
+    )
+    visit_ids: set[str] = dataclasses.field(default_factory=set)
+
+    def newest_pending(self, visit_id: str) -> SpeciesSuggestionModel | None | object:
+        if visit_id not in self.visit_ids:
+            return _PRELOAD_MISS
+        return self.by_visit.get(visit_id)
+
+
 def _cached_review_queue_pending_suggestions(
     session: Session,
-) -> dict[str, SpeciesSuggestionModel] | None:
+) -> _PreloadedPendingSuggestions | None:
     cache = session.info.get(_READ_CACHE_SESSION_KEY)
     if cache is None:
         return None
