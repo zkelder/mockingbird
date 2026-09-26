@@ -14,6 +14,7 @@ convention -- never by hand-setting `VisitModel.reviewed_label`.
 
 from __future__ import annotations
 
+import functools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -228,6 +229,20 @@ def _report(repository: ProductRepository, *, start_at=PERIOD_START, end_at=PERI
     return repository.place_activity_report(
         PlaceActivityReportRequest(start_at=start_at, end_at=end_at), local_timezone=local_timezone
     )
+
+
+def _pin_route_clock(monkeypatch: pytest.MonkeyPatch, repository: ProductRepository, now: datetime, *method_names: str) -> None:
+    """Anchor the HTTP routes' "as of right now" reads to the same explicit
+    `now` this file's repository-level assertions already pass. The routes
+    themselves take no clock (by design -- a live view, not a report
+    period), so the configured repository instance's named methods are
+    given `now` as their default for the test's lifetime. This keeps the
+    real route/schema/serialization path under test while removing the
+    only nondeterminism: the real clock versus the fixture's own anchor
+    (CI & Core Validation Closure v1)."""
+
+    for name in method_names:
+        monkeypatch.setattr(repository, name, functools.partial(getattr(repository, name), now=now))
 
 
 def _change_status_for(report, label: str):
@@ -597,7 +612,22 @@ def test_today_and_bird_log_present_the_same_change_status(repository: ProductRe
 # 15. API round trip exposes the new fields end to end -----------------------
 
 
-def test_api_round_trip_exposes_change_detection_fields(repository: ProductRepository) -> None:
+def test_api_round_trip_exposes_change_detection_fields(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The report routes take an explicit period; Bird Log's routes anchor
+    # to "now" by convention (see test 14, above). Pin them to the same
+    # in-period anchor test 14 uses, or the fixed 2026-08-21 fixture reads
+    # as `insufficient_recent_coverage` once the real clock is more than
+    # RECENT_WINDOW_FRESHNESS_CAP_DAYS past it -- the recorded
+    # date-dependent Core failure, never a product defect.
+    _pin_route_clock(
+        monkeypatch,
+        repository,
+        PERIOD_START + timedelta(hours=12),
+        "wildlife_journal_overview",
+        "wildlife_journal_history",
+    )
     _add_full_valid_baseline(repository)
     recent_days = [PERIOD_START - timedelta(days=offset) for offset in range(5)]
     reference_days = [PERIOD_START - timedelta(days=offset) for offset in range(9, 12)]

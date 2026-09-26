@@ -5493,8 +5493,16 @@ class ProductRepository:
             daily_total_precipitation_mm=precipitation_sums,
         )
 
-    def get_place_environmental_context_today(self) -> PlaceEnvironmentalContext:
-        now = datetime.now(UTC)
+    def get_place_environmental_context_today(
+        self, *, now: datetime | None = None
+    ) -> PlaceEnvironmentalContext:
+        # `now` mirrors `place_biodiversity_summary`/`wildlife_journal_
+        # overview`'s existing keyword: the real clock by default (the API
+        # route passes nothing), test-injected so a Place-relative
+        # temperature baseline built from explicitly cached dates is judged
+        # against the same anchor rather than whatever calendar day the
+        # suite happens to run on (CI & Core Validation Closure v1).
+        now = _as_utc(now) if now is not None else datetime.now(UTC)
         with self.session_factory() as session:
             with session.begin():
                 settings = session.get(EnvironmentalContextSettingsModel, 1)

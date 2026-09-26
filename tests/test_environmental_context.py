@@ -949,7 +949,13 @@ def test_temperature_band_established_once_enough_days_are_cached(weather_reposi
                     latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
                 )
     assert len(fake.calls) == MIN_DAYS_FOR_TEMPERATURE_BASELINE
-    context = repository.get_place_environmental_context_today()
+    # Read "today" at the same explicit anchor the ten days were cached
+    # against. `_recent_temperature_band` bounds its window to
+    # `WEATHER_MAX_PAST_DAYS` before the read's own date, so a read on the
+    # real clock silently lost this fixture once the suite ran more than
+    # that many days after 2026-06-21 -- a recorded, date-dependent Core
+    # failure (CI & Core Validation Closure v1), never a product defect.
+    context = repository.get_place_environmental_context_today(now=now)
     # The fake requester returns a flat 15.0C for every hour of every date,
     # so "today" (also 15.0C) lands exactly on the (degenerate, zero-spread)
     # baseline -- "typical", not cooler/warmer, proving the baseline is now

@@ -14,6 +14,7 @@ never by hand-setting `VisitModel.reviewed_label`.
 
 from __future__ import annotations
 
+import functools
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -207,6 +208,20 @@ def _add_usable_day(repository: ProductRepository, *, day: datetime, hours: floa
 def _establish_baseline(repository: ProductRepository, *, before: datetime = NOW) -> None:
     for offset in range(1, 1 + MIN_USABLE_DAYS_FOR_ESTABLISHED_BASELINE):
         _add_usable_day(repository, day=before - timedelta(days=offset))
+
+
+def _pin_route_clock(monkeypatch: pytest.MonkeyPatch, repository: ProductRepository, now: datetime, *method_names: str) -> None:
+    """Anchor the HTTP routes' "as of right now" reads to the same explicit
+    `now` this file's repository-level assertions already pass. The routes
+    themselves take no clock (by design -- a live view, not a report
+    period), so the configured repository instance's named methods are
+    given `now` as their default for the test's lifetime. This keeps the
+    real route/schema/serialization path under test while removing the
+    only nondeterminism: the real clock versus the fixture's own anchor
+    (CI & Core Validation Closure v1)."""
+
+    for name in method_names:
+        monkeypatch.setattr(repository, name, functools.partial(getattr(repository, name), now=now))
 
 
 def _taxa_labels(summary) -> set[str]:
@@ -502,7 +517,12 @@ def test_taxon_history_with_no_confirmed_records_has_no_place_context(
 # 6. HTTP route ---------------------------------------------------------
 
 
-def test_api_route_returns_the_summary(repository: ProductRepository) -> None:
+def test_api_route_returns_the_summary(repository: ProductRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fixture's `NOW` is pinned to noon UTC; the route otherwise reads
+    # the real clock, so a night run (real clock before that noon, or on
+    # the previous local day) saw the Visit as not-yet-"new" -- the
+    # recorded time-of-day-dependent Core failure.
+    _pin_route_clock(monkeypatch, repository, NOW, "place_biodiversity_summary")
     _establish_baseline(repository)
     _add_visit(repository, visit_id="cardinal-1", at=NOW - timedelta(hours=1))
     _confirm(repository, visit_id="cardinal-1", label="northern_cardinal")
@@ -529,8 +549,11 @@ def test_api_route_returns_the_summary(repository: ProductRepository) -> None:
 
 
 def test_human_correction_updates_place_biodiversity_intelligence_correctly(
-    repository: ProductRepository,
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _pin_route_clock(
+        monkeypatch, repository, NOW, "place_biodiversity_summary", "wildlife_journal_history"
+    )
     _establish_baseline(repository)
     corrected_at = NOW - timedelta(hours=1)
     _add_visit(repository, visit_id="mystery-1", at=corrected_at)

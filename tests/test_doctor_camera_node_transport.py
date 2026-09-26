@@ -23,7 +23,7 @@ from mockingbird.storage.camera_node_transport_ledger import TransportLedger
 def test_interpret_no_transport_configured_anywhere_is_pass() -> None:
     result = doctor._interpret_camera_node_transport({"sources": []}, now=datetime.now(UTC))
     assert result.status == DoctorStatus.PASS
-    assert "not in use" in result.detail
+    assert "not currently in use" in result.detail
 
 
 def test_interpret_transport_configured_but_never_contacted_warns() -> None:
@@ -101,7 +101,7 @@ def test_interpret_ignores_sources_without_transport_configured() -> None:
     gathered = {"sources": [{"source_id": "s1", "name": "Old Node", "node_id": "node-abc", "transport_configured": False, "backlog_summary": None}]}
     result = doctor._interpret_camera_node_transport(gathered, now=datetime.now(UTC))
     assert result.status == DoctorStatus.PASS
-    assert "not in use" in result.detail
+    assert "not currently in use" in result.detail
 
 
 # --------------------------------------------------------------------------

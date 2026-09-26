@@ -29,11 +29,38 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install MockingBird (editable)
-        run: pip install -e .
+      - name: Install MockingBird (editable) with the declared test extra
+        # CI & Core Validation Closure v1: `pip install -e .` alone left
+        # `pytest`/`httpx` (pyproject's own `[test]` extra) uninstalled, so
+        # the first hosted run stopped at `No module named pytest` before
+        # collecting a single test. The hardware-free Core contract needs
+        # exactly the core dependencies plus this extra -- no optional ML
+        # runtime (`classifier-*`, `detector-*`, `observation-onnx-cuda`)
+        # is installed to make collection succeed; tests that need one
+        # skip or fall back honestly by design.
+        run: pip install -e ".[test]"
+
+      - name: Core collection inventory (pytest --collect-only)
+        # The exact test identities this runner collects, so a hosted
+        # result can be compared against a local one by identity rather
+        # than by count alone (local checkouts may carry preserved
+        # untracked tests that never reach GitHub).
+        run: >
+          python -m pytest -m "not slow" --collect-only -q
+          | tee core-collected.txt | tail -n 3
 
       - name: Core gate (pytest -m "not slow")
-        run: python scripts/verify_core.py -q
+        # `-rfEsxX`: list every failure, error, skip, xfail and xpass by
+        # identity in the summary, so the hosted record is classifiable.
+        run: python scripts/verify_core.py -q -rfEsxX
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-collected-inventory
+          path: core-collected.txt
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Structural preflight (python -m mockingbird --check)
         # An isolated runtime home -- never the checkout itself -- exactly
