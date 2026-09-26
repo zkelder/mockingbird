@@ -228,8 +228,9 @@ codebase safe to change quickly. See "Task packet" in
   changed and why (and what was tested), following the style already in
   `git log`.
 - **Commit locally; do not push** unless a human explicitly asks you to.
-  This repository's own history is routinely many commits ahead of
-  `origin/main` by design -- that is expected, not a mistake to fix.
+  Local `main` running some commits ahead of `origin/main` between
+  human-authorized synchronizations is expected, not a mistake to fix.
+  Never force-push or rewrite pushed history.
 
 ## Getting oriented for a specific change
 

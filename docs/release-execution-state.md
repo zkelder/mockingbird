@@ -793,10 +793,37 @@ Stability Closure v1 can now be accepted, and whether Field Validation
 Closure is next, is the external sequencing decision -- this milestone
 authorizes nothing.
 
+**Update, 2026-09-26, by Repository Consolidation & GitHub Synchronization
+v1:** records the owner's sequencing-review acceptances -- *Native-Windows
+Field Reliability Corrections v1* (`83a0e86`), *Today Truth Regression
+Repair v1* (`a9878a8`), and *Field Validation Closure v1* on cumulative
+evidence -- and synchronizes accepted `main` to GitHub (private repository,
+fast-forward, no tag, no release). Phase label unchanged: **FEATURE FREEZE**.
+See §1 and §3 for the delta. **Authorization: Repository Consolidation &
+GitHub Synchronization v1** while it runs; **NONE** on its closure.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-26, by Repository Consolidation & GitHub
+Synchronization v1:** the notes below are superseded. **Current facts,
+verified directly:** accepted HEAD
+`a9878a893175e067eefb75ec8155dd9bd79a8da9` (*Today Truth Regression Repair
+v1*); schema `v61` (`CURRENT_DATABASE_SCHEMA_VERSION = 61`); version
+`0.1.0`; latest accepted milestones *Native-Windows Field Reliability
+Corrections v1* (`83a0e86`), *Today Truth Regression Repair v1* (`a9878a8`)
+and *Field Validation Closure v1* (on cumulative evidence -- see §3).
+**Authoritative development checkout:** this repository, and only this one;
+every other local MockingBird checkout/worktree is historical, archival or
+deployment material (dispositions in the consolidation report linked from
+§3). **GitHub:** `main` is synchronized to the private
+`https://github.com/zkelder/mockingbird` by a normal fast-forward push
+(before this, `origin/main` was `1772c36`, 451 commits behind). Pushing
+still requires an explicit human request. Working tree: the seven preserved
+untracked detector files (§13) and `uv.lock`, untracked and hash-verified
+unchanged. Current authorization after this milestone's closure: **NONE**.
 
 **Staleness correction, 2026-09-22, by Performance / Scale / Stability
 Closure v1:** the note immediately below is superseded. **Current facts,
@@ -3849,6 +3876,48 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Recorded, 2026-09-26, by Repository Consolidation & GitHub
+Synchronization v1** (see
+[repository-consolidation-github-synchronization-v1-report.md](repository-consolidation-github-synchronization-v1-report.md)).
+
+**Accepted delta -- the owner's sequencing review, recorded here, not decided
+here.**
+
+- *Native-Windows Field Reliability Corrections v1* -- **accepted at
+  `83a0e86`** (already recorded below).
+- *Today Truth Regression Repair v1* -- **accepted at `a9878a8`**, schema
+  `v61`, version `0.1.0`. Its recorded Core result stands exactly as
+  recorded: `6 failed, 6225 passed, 4 skipped, 35 deselected, 11 xfailed`,
+  all six attributed to the pre-existing baseline. **That is not a green
+  suite**, and neither acceptance nor GitHub synchronization resolves those
+  six.
+- *Field Validation Closure v1* -- **accepted on cumulative evidence**: its
+  own `d5dd1d9` field run plus the two field corrections (`83a0e86`) and the
+  Today truth repair (`a9878a8`) that closed the blockers it and its closure
+  pass surfaced. This is **not** a claim that its original validation was
+  re-run unchanged at `a9878a8`.
+- `Q-2`, `Q-4` and the stale `camera_connected` field keep their disclosed
+  disposition: **nonblocking, deferred, not fixed.**
+
+The "pending acceptance", "remains unaccepted" and "still awaits ChatGPT
+acceptance" statements in the two entries below are superseded by this
+delta; they are otherwise preserved as the historical record.
+
+**Authorized.** *Repository Consolidation & GitHub Synchronization v1*,
+directly by the owner: one authoritative checkout, a normal fast-forward push
+of `main` to the private `https://github.com/zkelder/mockingbird`, and safe
+retirement of redundant local worktrees/branches. It is **not** authorization
+to publish the release, tag, change repository visibility, rewrite history, or
+start a product milestone. Push, CI and cleanup outcomes are recorded in the
+report above, not duplicated here.
+
+**This entry authorizes no further milestone.** On this milestone's closure
+the authorization field returns to **NONE**. *Documentation / Diagnostics /
+Release Engineering Closure* is no longer gated on Field Validation Closure
+v1's acceptance, but it is **not authorized** by this entry.
+
+---
+
 **Recorded, 2026-09-25, by Today Truth Regression Repair v1.**
 
 **Accepted delta.** *Native-Windows Field Reliability Corrections v1* is
@@ -3871,7 +3940,8 @@ and
 [today-truth-regression-repair-v1-report.md](today-truth-regression-repair-v1-report.md).
 
 **Status: IMPLEMENTED, pending acceptance.** Committed locally, not pushed.
-Schema **v61, unchanged**; version `0.1.0`, unchanged. One production file
+*(Superseded 2026-09-26: accepted at `a9878a8` and synchronized to GitHub --
+see the entry above.)* Schema **v61, unchanged**; version `0.1.0`, unchanged. One production file
 changed: `src/mockingbird/repository/product_repository.py`.
 
 - **Root cause.** `_preloaded_motion_evidence_for_review_queue_item`
@@ -13061,6 +13131,13 @@ recent actual full-suite number.
 > failures attributable to that milestone. Reconciling this ledger (and the rest
 > of this file, un-reconciled since 2026-09-12) belongs to *Documentation /
 > Diagnostics / Release Engineering Closure*, which is **not yet authorized**.
+>
+> **Pointer added 2026-09-26 (Repository Consolidation & GitHub
+> Synchronization v1).** The most recent full Core run is now *Today Truth
+> Regression Repair v1*'s, on committed `a9878a8`, schema **v61**: `6 failed,
+> 6225 passed, 4 skipped, 35 deselected, 11 xfailed` (0:45:53), all six
+> reproducing identically at the pre-repair baseline and all six members of
+> the established recorded set. Not a green suite. See §3.
 
 **Latest accepted Core checkpoint (Final Release Hardening & Launch
 Readiness v1):** 5995 passed / **4 failed** / 4 skipped / 35 deselected

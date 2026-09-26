@@ -1,5 +1,11 @@
 # Field Validation Closure v1 -- closure report
 
+**Acceptance (recorded 2026-09-26):** accepted on cumulative evidence --
+this report's `d5dd1d9` field run plus the field corrections accepted at
+`83a0e86` and the Today truth repair accepted at `a9878a8`. Not a claim that
+the original validation below was re-run unchanged; see
+`release-execution-state.md` §3.
+
 Status: real-hardware field validation of MockingBird v0.1 against a native
 Windows Host, the real reference Camera Node, a real camera, a real LAN, real
 field media, and the accepted production ML pipeline. Not a broad code audit,

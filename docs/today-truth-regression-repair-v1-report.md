@@ -1,6 +1,9 @@
 # Today Truth Regression Repair v1 -- Report
 
 **Status:** IMPLEMENTED, pending acceptance.
+**Acceptance (recorded 2026-09-26):** accepted at `a9878a8` by the owner's
+sequencing review; see `release-execution-state.md` §3. The body below is
+preserved as written.
 **Contract:** [today-truth-regression-repair-v1-contract.md](today-truth-regression-repair-v1-contract.md).
 
 | | |
