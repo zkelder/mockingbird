@@ -802,10 +802,35 @@ fast-forward, no tag, no release). Phase label unchanged: **FEATURE FREEZE**.
 See §1 and §3 for the delta. **Authorization: Repository Consolidation &
 GitHub Synchronization v1** while it runs; **NONE** on its closure.
 
+**Update, 2026-09-26, by CI & Core Validation Closure v1:** records the
+owner's acceptance of *Repository Consolidation & GitHub Synchronization
+v1* at `312bc7d` and executes the next bounded milestone the owner
+authorized: a functioning hosted Core gate, and evidence-backed closure of
+the six recorded local Core failures plus the sixteen hosted-only failures
+the first completed hosted run exposed. Phase label unchanged: **FEATURE
+FREEZE**. See §3 for the record and
+[ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)
+for the full evidence. **Authorization: CI & Core Validation Closure v1**
+while it runs; **NONE** on its closure.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-26, by CI & Core Validation Closure v1:**
+the note immediately below is superseded on these facts. **Current facts,
+verified directly:** *Repository Consolidation & GitHub Synchronization v1*
+is **accepted at `312bc7d`** (owner sequencing review). This milestone's
+final HEAD is its documentation-closure commit on top of `e2c543e` (hash in
+`git log`); schema `v61`, version `0.1.0`, unchanged.
+`main` remains synchronized to the private GitHub repository by normal
+fast-forward pushes (authorized for this milestone so hosted CI could run;
+no force-push, tag, release, visibility or deployment change). Hosted CI
+now runs the Core gate: `0 failed, 6143 passed, 85 skipped, 35 deselected, 11 xfailed` on ``d0b5dd0``
+(§14). Working tree: the seven preserved untracked detector files (§13) and
+`uv.lock`, untracked and hash-verified unchanged before and after. Current
+authorization after this milestone's closure: **NONE**.
 
 **Staleness correction, 2026-09-26, by Repository Consolidation & GitHub
 Synchronization v1:** the notes below are superseded. **Current facts,
@@ -3875,6 +3900,64 @@ boundary to an actual product user (`docs/using-mockingbird.md`'s new
 exactly as open as stated.
 
 ## 3. Current authorized milestone
+
+**Recorded, 2026-09-26, by CI & Core Validation Closure v1** (see
+[ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)).
+
+**Accepted delta -- the owner's sequencing review, recorded here, not decided
+here.** *Repository Consolidation & GitHub Synchronization v1* is **accepted
+at `312bc7d`**, with these corrections to the summary handed off with it
+(each recorded in the report's §9): the concurrent-write lost-Visit defect
+was already closed by *Concurrent Candidate Visit Persistence Reliability
+v1* (classification A, §6) and is not reopened; the first hosted Linux run
+is a new *hosted, hardware-free* baseline, not the first Linux validation
+baseline (every §14 checkpoint ran on this Linux/WSL2 checkout); the
+remaining queue is the complete §6, lanes A-S, with classifications
+unchanged; public distribution, signing, security-reporting and
+launch-scope decisions remain separate and did not block this milestone;
+Gate G remains unexecuted -- neither waived nor passed; and "only publishing
+remains" is not a true statement while current-candidate acceptance and
+Gate G remain open.
+
+**Authorized and executed.** *CI & Core Validation Closure v1*, directly by
+the owner: correct the hosted backend job's installation of the declared
+`[test]` extra, capture the first completed hosted Core result and classify
+it against the recorded local six-set by test identity, diagnose and close
+the six recorded failures through evidence-backed corrections (minimal
+production changes only where a reproduced failure required one; no
+weakened assertion, blanket skip, unjustified xfail, narrowed Core
+coverage or user-facing-semantics change), and correct the release
+handoff. Normal scoped pushes to the existing private repository were
+authorized for this milestone; no force-push, visibility change, release,
+tag or deployment.
+
+**Status: EXECUTED.** Final HEAD: the documentation-closure commit on top of
+`e2c543e` (hash in `git log`; final code revision `d0b5dd0`, workflow fix
+`e2c543e`); schema `v61`, version
+`0.1.0`, unchanged. Outcome: both the hosted and the local Core gate pass with zero failures on the final code revision, with no concealed coverage reduction. All six recorded local
+failures (two obsolete Doctor copy expectations after `4ec0702`; one
+date-dependent environmental-context fixture, closed by giving
+`get_place_environmental_context_today` the same optional `now` keyword its
+siblings already have -- the only production change; two time-of-day-
+dependent biodiversity fixtures and one date-dependent change-summary
+fixture, closed by pinning the HTTP routes' clock to the fixtures' own
+anchors) and all sixteen hosted-only failures (nine host-timezone
+assumptions, five ffmpeg assumptions, one optional-package assumption, one
+built-frontend assumption -- every one reproduced locally under a
+simulated hosted environment and corrected in tests only) are closed with
+their intended contracts preserved. One narrow product edge was disclosed
+with a proposed contract rather than patched (a Calm Attention sync tick
+landing exactly on local midnight; report §5). `Q-2`, `Q-4` and the stale
+`camera_connected` field keep their disposition: **nonblocking, deferred,
+not fixed.**
+
+**This entry authorizes no further milestone.** The report's §11 records
+the readiness verdict for a fresh Windows Host and Camera Node
+release-candidate build as a recommendation only; building or publishing
+that candidate requires a new decision. On this milestone's closure the
+authorization field returns to **NONE**.
+
+---
 
 **Recorded, 2026-09-26, by Repository Consolidation & GitHub
 Synchronization v1** (see
@@ -13131,6 +13214,32 @@ recent actual full-suite number.
 > failures attributable to that milestone. Reconciling this ledger (and the rest
 > of this file, un-reconciled since 2026-09-12) belongs to *Documentation /
 > Diagnostics / Release Engineering Closure*, which is **not yet authorized**.
+>
+> **Pointer added 2026-09-26 (CI & Core Validation Closure v1).** The
+> current validation baseline is now this milestone's, superseding the
+> pointer immediately below as the "most recent full Core run" while
+> preserving it and the whole ledger as history:
+> **local Core at `6b6c0fc` (every production change of the milestone):
+> `6231 passed, 0 failed, 4 skipped, 35 deselected, 11 xfailed` (46:54);
+> local Core at the final code revision `d0b5dd0` (test-only changes on
+> top): `6230 passed, 1 failed` -- the one failure being this section's own
+> already-recorded `test_transport_worker.py` load-induced timing flake
+> (3.0 s wall-clock deadline, load average 5-7 during the run), which
+> passed 3/3 in isolation and 7/7 with its file immediately afterwards
+> and passes on the hosted runner at the same revision; hosted Core at `d0b5dd0` (GitHub Actions
+> run 36249121286, `ubuntu-24.04`, CPython 3.12.14, core dependencies +
+> `[test]` only): `6143 passed, 0 failed, 85 skipped, 35 deselected, 11
+> xfailed` (25:08).** Schema **v61**. A green suite, locally and hosted.
+> The recorded six-set is closed (all six root-caused as obsolete
+> expectations or date/time-dependent fixtures, none a product defect) and
+> the sixteen hosted-only failures the first completed hosted run exposed
+> are closed as validation-environment assumptions. See
+> [ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)
+> §3-§6 for the run records, the identity-level local-versus-hosted
+> collection comparison (6,246 local vs 6,239 hosted; the difference is
+> exactly the seven preserved untracked `tests/test_small_bird_benchmark.py`
+> tests, never staged), and the hosted skip inventory (84, all existing
+> reasoned `skipif`s -- 70 of them ffmpeg absent on the runner).
 >
 > **Pointer added 2026-09-26 (Repository Consolidation & GitHub
 > Synchronization v1).** The most recent full Core run is now *Today Truth

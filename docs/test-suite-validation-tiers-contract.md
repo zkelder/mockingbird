@@ -385,6 +385,25 @@ could run `python scripts/verify_fast.py` (or Core) as one job step, with
 remains a small, cheap next step for whoever picks up public CI/OSS
 readiness -- not something this milestone should expand into on its own.
 
+**Current state (2026-09-26, CI & Core Validation Closure v1):** the
+paragraph above is now historical. `.github/workflows/ci.yml` (added by
+Release Engineering Foundation v1, first executed by Repository
+Consolidation & GitHub Synchronization v1) runs exactly the Core gate
+(`python scripts/verify_core.py`) as its backend job on a hosted Linux
+runner, plus the frontend typecheck/build and a structural packaging
+smoke. The hosted Core environment is deliberately the hardware-free
+contract this document describes: the core dependencies plus
+`pyproject.toml`'s `[test]` extra (`pytest`, `httpx`) and nothing else --
+no optional ML runtime is installed to make collection succeed, so tests
+that need one skip or fall back honestly, exactly as they do on any
+operator machine without that runtime. The job also publishes its
+`--collect-only` inventory as an artifact so a hosted result is compared
+to a local one by test identity, never by count alone (a local checkout
+may carry preserved untracked tests that never reach GitHub). `slow`
+remains excluded from hosted runs; the Full gate stays a local/release
+step. See
+[ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md).
+
 ## Gate-detection acceptance (injected-failure proof)
 
 Each gate's actual failure-detection behavior was verified directly, not
