@@ -42504,6 +42504,19 @@ class _PreloadedMotionEvidence:
 
     The coverage sets make the distinction explicit, and they are the only
     thing that authorises an answer.
+
+    A covered id means **this cache read that target's rows** -- never
+    "that target belongs to this build". The difference is load-bearing.
+    `_preload_review_queue_rows` returns early, without touching the cache,
+    whenever its narrowed target set holds no Visit (what
+    `_review_queue_item_by_target` produces for an Event target), so one
+    build's record routinely survives into a nested build and outlives it.
+    Under the read invariant that is still an honest record -- everything
+    in it really was read, and a read-only build cache cannot go stale
+    inside its own window -- while a target it never read stays uncovered
+    and falls through. A coverage set defined as "this build's members"
+    would instead answer confidently for the wrong build. See
+    `test_an_early_returning_nested_preload_leaves_honest_coverage`.
     """
 
     by_target: dict[tuple[str, str], list[MotionEvidenceModel]] = dataclasses.field(

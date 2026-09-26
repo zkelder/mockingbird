@@ -851,3 +851,77 @@ def test_today_motion_evidence_reads_do_not_scale_with_the_day(tmp_path) -> None
     finally:
         small.close()
         large.close()
+
+
+def test_an_early_returning_nested_preload_leaves_honest_coverage(tmp_path) -> None:
+    """The stale-map path: a nested build that preloads nothing at all.
+
+    `_preload_review_queue_rows` returns early -- without touching the
+    cache -- when its narrowed target set contains no Visit, which is
+    exactly what `_review_queue_item_by_target` produces for an Event
+    target. The outer build's record therefore survives into that nested
+    build and outlives it.
+
+    That is safe here, and the reason is the invariant worth stating: a
+    covered id means *this cache read that target's rows*, never *that
+    target belongs to this build*. A read-only build cache cannot go stale
+    inside its own window, so a surviving record is still an honest record
+    -- while a Visit it never read stays uncovered and still falls
+    through. Asserted rather than argued, because a coverage set built
+    from "this build's members" instead would answer for the wrong build.
+    """
+
+    repository = _repository(tmp_path)
+    try:
+        queued_event = _add_visit(repository, visit_id="queued")
+        outside_event = _add_visit(
+            repository, visit_id="outside", reviewed_label="northern_cardinal"
+        )
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    EventModel(
+                        id="eventless",
+                        stream_id=STREAM_ID,
+                        title="Visit-less activity",
+                        event_type="durable_monitoring_visit",
+                        started_at=_NOW,
+                        ended_at=_NOW + timedelta(seconds=10),
+                        primary_zone_id=None,
+                        review_status="needs_review",
+                    )
+                )
+
+        with repository.session_factory() as session:
+            with _read_only_build_cache(session) as cache:
+                repository._preload_review_queue_rows(
+                    session, cache, include_reviewed=False
+                )
+                # Event-only target => no wanted Visit ids => the preload
+                # early-returns and the outer record survives untouched.
+                repository._review_queue_items(
+                    session,
+                    include_detail=False,
+                    only_target=("event", "eventless"),
+                )
+
+                # A Visit the outer build really did read: still answerable.
+                covered = repository._motion_evidence_for_review_queue_item(
+                    session,
+                    event_id=queued_event,
+                    visit_id="queued",
+                    media_asset_id=None,
+                )
+                # A reviewed Visit no build in this cache ever read: must
+                # still fall through and find its real evidence.
+                uncovered = repository._motion_evidence_for_review_queue_item(
+                    session,
+                    event_id=outside_event,
+                    visit_id="outside",
+                    media_asset_id=None,
+                )
+
+        assert covered is not None and covered.id == "evidence-queued"
+        assert uncovered is not None and uncovered.id == "evidence-outside"
+    finally:
+        repository.close()
