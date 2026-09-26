@@ -123,7 +123,7 @@ one.
 
 ### New focused coverage -- `tests/test_today_truth_regression_repair.py`
 
-14 tests. Every lookup case is asserted **twice** -- once with the preload
+15 tests. Every lookup case is asserted **twice** -- once with the preload
 active, once with no cache at all -- and the two answers must agree, which
 is stronger than asserting a fixed value because it cannot drift from the
 query it stands in for.
@@ -144,13 +144,25 @@ query it stands in for.
 | `test_best_moments_still_surface_a_confirmed_visit` | Best moments |
 | `test_dashboard_reads_write_nothing` | reads side-effect free; Reviewed truth unchanged |
 | `test_today_motion_evidence_reads_do_not_scale_with_the_day` | scale guarantee |
+| `test_an_early_returning_nested_preload_leaves_honest_coverage` | stale-preload carryover (see §K) |
 
-**Proven red before, green after.** Run against the stashed (unrepaired)
-`product_repository.py`, six of the fourteen fail -- the uncovered-target,
-mixed-union, Event-only, nested-build, review-to-Today and Best-moments
-cases. The other eight pass at baseline by design: they lock down
-behaviour the repair must *preserve* (media filter, ordering, dedup,
-covered-empty, cleanup, side-effect freedom), so they are regression
+**Proven red before, green after.** With only the one tracked production
+file reverted to `83a0e86` and the final test files in place:
+
+```
+=== BASELINE (83a0e86 product_repository.py, final tests) ===
+15 failed, 14 passed in 9.66s
+=== REPAIRED (HEAD) ===
+29 passed in 9.38s
+```
+
+The 15 baseline failures are the seven recorded regressions plus eight of
+the fifteen new tests (uncovered target, mixed union, Event-only,
+nested-build, early-returning nested preload, review-to-Today, Best
+moments, and the scale guarantee). The remaining seven new tests pass at
+baseline **by design**: they lock down behaviour the repair must
+*preserve* -- covered-empty, covered-with-rows, media filter, ordering,
+union dedup, cache cleanup, side-effect freedom -- so they are regression
 guards, not defect reproductions.
 
 ## D. Visible product-flow proof
@@ -248,9 +260,8 @@ times, while both days count correctly (6 and 51; the regression made both
 
 ### Tier 3 -- complete non-hardware gate
 
-**Core gate (`python scripts/verify_core.py`):** run on this commit's exact
-code -- result recorded in §I, below, by the follow-up commit that carries
-it.
+**Core gate:** see §I. **All seven recorded regression failures are gone,
+and zero failures are attributable to this milestone.**
 
 | Check | Result |
 | --- | --- |
@@ -316,7 +327,50 @@ no `git add -A`, no `git add .`.
 
 ## I. Core gate result
 
-*Recorded by the follow-up commit; see the table below.*
+Run on this milestone's committed code (`19ae391`), `pytest -m "not slow"`
+-- the Core gate:
+
+```
+6 failed, 6225 passed, 4 skipped, 35 deselected, 11 xfailed,
+284 warnings in 2753.35s (0:45:53)
+```
+
+**All seven recorded regression failures are gone.** The prior milestone's
+accepted Core checkpoint was `11 failed, 6205 passed`; this run is `6
+failed, 6225 passed`.
+
+**Failures attributable to this milestone: ZERO** -- established, not
+asserted:
+
+1. **All six reproduce deterministically in isolation** at `19ae391`
+   (2.84 s, same six). None is order-dependent; "flaky" was rejected as a
+   label rather than used as one.
+2. **All six fail identically at the pre-repair baseline**, obtained by
+   reverting the one tracked production file to `83a0e86` and re-running
+   the same six (2.99 s, same six, same assertions). The failure set is
+   the same before and after the repair.
+
+| Test | Disposition |
+| --- | --- |
+| `test_doctor_camera_node_transport.py::test_interpret_no_transport_configured_anywhere_is_pass` | pre-existing, of record |
+| `test_doctor_camera_node_transport.py::test_interpret_ignores_sources_without_transport_configured` | pre-existing, of record |
+| `test_environmental_context.py::test_temperature_band_established_once_enough_days_are_cached` | pre-existing, of record |
+| `test_place_biodiversity_summary_repository.py::test_api_route_returns_the_summary` | pre-existing, of record |
+| `test_place_biodiversity_summary_repository.py::test_human_correction_updates_place_biodiversity_intelligence_correctly` | pre-existing, of record |
+| `test_place_change_summary_repository.py::test_api_round_trip_exposes_change_detection_fields` | pre-existing, of record (that file's own long-documented date-sensitive fixture) |
+
+All six are members of the **established recorded six-set** in
+[performance-scale-stability-closure-v1-report.md](performance-scale-stability-closure-v1-report.md)
+§X. This run contains all six of that set and nothing else; the previous
+milestone's run contained four of the six plus the seven Today
+regressions. The two `test_place_biodiversity_summary_repository.py`
+cases are the pair that happened *not* to fail in that previous run, and
+they were specifically checked against the pre-repair baseline rather than
+assumed -- they are Place-intelligence repository tests, so attribution to
+this repair was genuinely plausible and had to be disproved.
+
+**No deterministic failure was relabelled flaky, and no unrelated test was
+modified.** The only test file this milestone touches is its own new one.
 
 ## J. Concurrent-session conflict, disclosed
 
@@ -347,3 +401,34 @@ Consequences, stated plainly:
 
 The seven protected untracked detector files and `uv.lock` were re-hashed
 after the peer became active and are byte-identical (§G).
+
+
+## K. Peer review incorporated
+
+A concurrent session tracing the same defect independently (see §J) raised
+one risk a coverage-set fix might not close, and it was checked rather
+than assumed: `_preload_review_queue_rows` returns early -- without
+touching the cache -- whenever its narrowed target set holds no Visit,
+which is exactly what `_review_queue_item_by_target` produces for an Event
+target. One build's preload record therefore survives into a nested build
+and outlives it.
+
+**Verdict: safe, for a reason that was implicit and is now explicit.** A
+covered id means *this cache read that target's rows*, never *that target
+belongs to this build*. A read-only build cache cannot go stale inside its
+own window, so a surviving record is still an honest record, while a
+target it never read stays uncovered and falls through. Had coverage been
+implemented as "this build's member ids", the early-return path would have
+answered confidently for the wrong build.
+
+Committed as `19ae391`: the invariant stated in `_PreloadedMotionEvidence`'s
+docstring, plus `test_an_early_returning_nested_preload_leaves_honest_
+coverage` covering the concrete path (outer build, then an Event-only
+nested build that preloads nothing, then one covered and one uncovered
+lookup). No behaviour change.
+
+The same review independently reached the same conclusion on the other
+three items -- Today/dashboard contamination, the visit-less Event lane as
+in-queue self-contamination, and `_media_asset_for_path_from_session`
+being unaffected because it membership-checks. That is convergent
+evidence for §A's blast-radius table, not new scope.

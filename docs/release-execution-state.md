@@ -3916,9 +3916,25 @@ changed: `src/mockingbird/repository/product_repository.py`.
   day's size (437 -> 439 at 10 confirmed Visits, 2,547 -> 2,549 at 100),
   while the counts go from a wrong `5` to a correct `15` and `105`.
   Established scale guarantees are retained and structurally locked down.
+- **Core gate, on the committed code:** `6 failed, 6225 passed, 4 skipped,
+  35 deselected, 11 xfailed` (0:45:53). **All seven recorded regression
+  failures are gone**, and **zero failures are attributable to this
+  milestone**: all six remaining reproduce in isolation and fail
+  *identically* at the pre-repair baseline with only the one tracked
+  production file reverted, and all six are members of the established
+  recorded six-set. The prior accepted checkpoint was `11 failed, 6205
+  passed`. Also clean: frontend type-check and production build,
+  `python -m mockingbird --check`, a hardware-free product smoke over HTTP
+  on a disposable instance, and zero new `ruff` findings.
 - **No schema, public API, review-authority, model, camera-status,
   recovery or production-configuration change.** No hardware session,
   packaging rebuild or Full gate was required by this cache-only scope.
+- **Disclosed:** at least two *other* Claude sessions were active in this
+  working tree during the milestone -- one briefed on the same defect
+  (it detected the uncommitted work, stopped before editing, stood down,
+  and contributed a review finding now committed as `19ae391`), and a
+  third running a wide `pytest` sweep against the uncommitted tree whose
+  results are **not** a `83a0e86` baseline. See the report's §J.
 
 **This entry authorizes no further milestone.** *Field Validation Closure
 v1* remains unaccepted; the remaining release queue in §6 is unchanged.
