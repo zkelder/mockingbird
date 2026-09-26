@@ -62,6 +62,23 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the frontend the preflight requires
+        # CI & Core Validation Closure v1: the first time this job reached
+        # the preflight it exited 2 with "needs its local web dependencies
+        # before the first launch" -- `--check` honestly refuses a launch
+        # with no built interface, exactly as a packaged launch would. The
+        # backend job never built one, so build it the same way the
+        # packaging job below does; the tests above deliberately still run
+        # without it (a built frontend is not part of the Core contract).
+        working-directory: web
+        run: npm ci && npm run build
+
       - name: Structural preflight (python -m mockingbird --check)
         # An isolated runtime home -- never the checkout itself -- exactly
         # the same real preflight/migration path a packaged launch takes,
