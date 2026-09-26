@@ -16,15 +16,25 @@ correction contract"), stated before implementation and honored exactly.
 | Schema / version | `v61` / `0.1.0` | unchanged |
 | GitHub | private `zkelder/mockingbird`, `main` synchronized | synchronized by normal fast-forward pushes (§7); no force-push, tag, release, visibility or deployment change |
 | Untracked | the seven preserved detector files + `uv.lock` | the same eight, byte-identical (§8) |
-| Last recorded local Core | `6 failed, 6225 passed, 4 skipped, 35 deselected, 11 xfailed` (Today Truth Regression Repair v1, `19ae391`) | **`local Core **`0 failed, 6231 passed, 4 skipped, 35 deselected, 11 xfailed`** at `6b6c0fc` (46:54); local Core at `d0b5dd0` `1 failed, 6230 passed` -- the single failure is the scheduler's already-recorded load-induced transport-worker timing flake, passing 3/3 isolated (§6)`** (§6) |
-| Hosted Core | never ran a test (`No module named pytest`) | **`hosted Core **`0 failed, 6143 passed, 85 skipped, 35 deselected, 11 xfailed`** (run 36249121286)`** on ``d0b5dd0`` (§6) |
+| Last recorded local Core | `6 failed, 6225 passed, 4 skipped, 35 deselected, 11 xfailed` (Today Truth Regression Repair v1, `19ae391`) | local Core at `6b6c0fc`: **6231 passed, 0 failed**, 4 skipped, 35 deselected, 11 xfailed (46:54); local Core at the final code revision `d0b5dd0`: **6230 passed, 1 failed** -- `test_transport_worker.py::test_sticky_diagnostic_set_on_protocol_incompatibility_and_cleared_on_next_success`, the already-recorded load-induced timing exception. Isolated reruns (3/3, and 7/7 with its file) support that attribution but **do not replace the full-run result**: the final-revision local run was not green (§6) |
+| Hosted Core | never ran a test (`No module named pytest`) | hosted Core at `d0b5dd0` (run 36249121286) and again at `e2c543e` (run 36250782155): **6143 passed, 0 failed**, 85 skipped, 35 deselected, 11 xfailed; on the `e2c543e` run every workflow job and the structural preflight passed (§3d, §6) |
 
 **Outcome in one line:** the hosted Core gate now runs, collects the same
-test identities as the local checkout, and both the hosted and the local Core gate pass with zero failures on the final code revision, with no concealed coverage reduction. All six
-recorded local failures and all sixteen hosted-only failures were
-reproduced, classified and corrected without weakening an assertion,
-adding a skip/xfail, narrowing Core coverage or changing user-facing
-semantics.
+test identities as the local checkout, and passes with zero failures on the
+final code revision (`d0b5dd0`, then `e2c543e` with every job green); the
+local Core gate passes with zero failures at `6b6c0fc` (every production
+change of this milestone), and at the final code revision `d0b5dd0` it
+recorded one failure -- the already-documented transport-worker timing
+exception -- so the final-revision local run is **not** claimed green. All
+six recorded local failures and all sixteen hosted-only failures were
+classified and corrected without weakening an assertion, adding an xfail,
+narrowing Core coverage or changing user-facing semantics; **one
+ffmpeg-dependent skip guard was added** (identity and justification in §5).
+Fifteen of the sixteen hosted-only failures reproduced in local simulation;
+the BirdNET one's mechanism was established from the hosted evidence (§5).
+
+*Corrected 2026-09-26 by Internal Release Candidate Rebuild & Native-Windows
+Acceptance v1 -- see §13 for exactly what this correction changed and why.*
 
 ## 2. Bounded correction contract (stated before edits)
 
@@ -193,19 +203,21 @@ file are identical to HEAD.
 
 ## 5. The sixteen hosted-only failures -- classification and correction
 
-None of these fails locally. **All sixteen reproduce locally under a
-simulated hosted environment** (`env -i TZ=UTC`, a PATH with `ffmpeg`/
-`ffprobe` removed, `MOCKINGBIRD_WEB_DIST` pointed at an empty directory),
-run against HEAD's own test files: `15 failed, 1 passed` -- the one pass is
-the BirdNET test, whose mechanism is a missing package this host has
-installed and is established directly from the hosted assertion instead.
+None of these fails locally. **Fifteen of the sixteen reproduce locally
+under a simulated hosted environment** (`env -i TZ=UTC`, a PATH with
+`ffmpeg`/`ffprobe` removed, `MOCKINGBIRD_WEB_DIST` pointed at an empty
+directory), run against HEAD's own test files: `15 failed, 1 passed`. The
+one that does not reproduce locally is the BirdNET test: its mechanism is a
+missing optional package that this host has installed, so it cannot fail
+here; its mechanism was **established from the hosted assertion output**,
+not from a local reproduction.
 Every one is a **validation-environment assumption** (in scope), not a
 product defect, with one narrow product edge disclosed at the end.
 
 | Family | Tests | Mechanism | Correction |
 | --- | --- | --- | --- |
 | Host timezone (9) | `test_calm_attention.py` x4 (`first_seen_is_not_duplicated...`, `becoming_regular_produces_one_insight_alert`, `stale_place_story_alert_is_resolved...`, `fifth_species_diversity_milestone_still_fires`); `test_place_activity_report_repository.py::test_activity_by_hour_uses_resolved_local_time_not_utc`, `::test_local_offset_resolves_correctly_for_the_generation_moment`; `test_dashboard_today.py::test_today_summary_uses_selected_local_day_and_current_reviewed_truth`; `test_wildlife_insights.py::test_wildlife_insights_aggregate_only_current_active_reviewed_truth`; `test_stream_playback_contract.py::test_dashboard_midnight_boundary_uses_local_day_not_utc_digits` | MockingBird has no per-Place timezone; "local" is the host's (`resolve_host_local_timezone`, first candidate the `TZ` variable; and plain `datetime.astimezone()`). These fixtures were authored on an America/New_York host and encode it: hour 19 vs 23, "EST"/"EDT" labels, a `-04:00` local midnight, `peak_activity_hour == 5` for 09:00Z Visits. The runner is UTC | one shared `tests/conftest.py` fixture, `new_york_host_timezone`, pins `TZ=America/New_York` + `time.tzset()` for the test and restores both on teardown; each of the nine requests it. The expectations are untouched; the zone they assumed is now stated |
-| ffmpeg absent (5) | `test_camera_setup.py::test_preview_available_is_now_honest_instead_of_always_false`, `::test_preview_frame_endpoint_returns_a_real_image_and_uses_merged_credentials`, `::test_preview_frame_endpoint_reports_an_honest_failure_without_leaking_credentials`; `test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth`; `test_recorded_media_analysis_api.py::test_list_recorded_media_analysis_runs_reflects_a_completed_attempt` | preview availability and the preview-frame route gate on `rtsp_bridge.is_ffmpeg_available()` (400 `camera_setup_preview_unavailable` before the faked capture is reached); classifying a malformed file as `media_file_invalid` needs a real `ffprobe`; without ffmpeg the recorded-media ingest honestly fails one step earlier (`ffmpeg_unavailable`) than the engine-load failure | camera-setup: state the precondition with the file's own existing `is_ffmpeg_available -> True` patch (the capture is faked anyway); offline-ingest: the file's own existing `skipif(not _has_real_ffmpeg_suite())` guard its sibling tests already carry; recorded-media: expect `engine_unavailable` with ffmpeg and `ffmpeg_unavailable` without -- both the bounded, structured "completed failed attempt" the test protects |
+| ffmpeg absent (5) | `test_camera_setup.py::test_preview_available_is_now_honest_instead_of_always_false`, `::test_preview_frame_endpoint_returns_a_real_image_and_uses_merged_credentials`, `::test_preview_frame_endpoint_reports_an_honest_failure_without_leaking_credentials`; `test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth`; `test_recorded_media_analysis_api.py::test_list_recorded_media_analysis_runs_reflects_a_completed_attempt` | preview availability and the preview-frame route gate on `rtsp_bridge.is_ffmpeg_available()` (400 `camera_setup_preview_unavailable` before the faked capture is reached); classifying a malformed file as `media_file_invalid` needs a real `ffprobe`; without ffmpeg the recorded-media ingest honestly fails one step earlier (`ffmpeg_unavailable`) than the engine-load failure | camera-setup: state the precondition with the file's own existing `is_ffmpeg_available -> True` patch (the capture is faked anyway); offline-ingest: **one skip guard added** -- `test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth` now carries the file's existing `skipif(not _has_real_ffmpeg_suite())` guard its sibling tests already carry (justification: the contract it protects, "a malformed file is classified `media_file_invalid` with no partial truth", can only be exercised by a real `ffprobe`; without one the ingest honestly fails one step earlier with `ffmpeg_unavailable`, a different contract, so the test would assert the wrong thing rather than nothing -- a skip with a stated reason is the honest outcome on such a host); recorded-media: expect `engine_unavailable` with ffmpeg and `ffmpeg_unavailable` without -- both the bounded, structured "completed failed attempt" the test protects |
 | Missing optional package (1) | `test_birdnet_adapter.py::TestGetBirdNetStatus::test_never_raises_after_the_tflite_runtime_shim_has_already_installed` | the test is about the `tflite_runtime` probe against the shim (no `__spec__`), but also asserted `runtime_available is True`, which additionally requires `birdnetlib`/`librosa` to be installed -- true here, false on the runner | `_REQUIRED_RUNTIME_PACKAGES` patched to `()` so only the probe under test runs for real; "never raises" and the probe's verdict are asserted exactly as before |
 | No built frontend (1) | `test_clean_install_acceptance.py::test_clean_install_reaches_a_first_report_through_the_real_http_api` | step 7 asserted `GET /` -> 200; with no `web/dist` the route serves its honest "MockingBird interface is not ready yet" page as 503 | when `frontend_build_status().available` assert 200 as before; otherwise assert the honest 503 and its text -- the "route reachable, never a crash" contract is proven on both hosts |
 
@@ -229,7 +241,14 @@ for a later decision: a zero-length local day means "no day yet" -- skip
 the daily/weekly digest sync for that tick (the next tick covers it) rather
 than fabricate a window. Not implemented here because it changes Calm
 Attention behaviour, however narrowly, and the brief reserves that for a
-concrete decision.
+concrete decision. **This remains a real, disclosed product edge.** It is
+contained, not repaired: `AttentionSyncService.run_once` catches every
+exception from a sync pass (the service's documented "a delivery-side
+failure must never affect the product" rule), so an exact-midnight tick
+logs nothing user-facing and the next 15-minute tick covers the same day
+normally. The `new_york_host_timezone` fixture only restores the zone
+those four tests were written against; it does not change, mask or fix the
+product edge.
 
 ## 6. Tier 3 validation on the final code revision
 
@@ -259,7 +278,7 @@ hosted run per push.
 | `6b6c0fc` | `ci.yml` (`[test]` extra, inventory artifact, `-rfEsxX`); the six local corrections (`product_repository.py` seam; 4 test files) | fast-forward `312bc7d..6b6c0fc` | [36246838604](https://github.com/zkelder/mockingbird/actions/runs/36246838604): frontend + packaging success, Core `16 failed` (§3b) |
 | `d0b5dd0` | the sixteen hosted corrections (`tests/conftest.py` + 10 test files), no production code | fast-forward `6b6c0fc..d0b5dd0` | [36249121286](https://github.com/zkelder/mockingbird/actions/runs/36249121286): frontend + packaging success, **Core 6143 passed / 0 failed**, structural preflight executed and failed (no frontend build in the job -- §3d) |
 | `e2c543e` | `ci.yml`: build the frontend before the structural preflight | fast-forward `d0b5dd0..e2c543e` | [36250782155](https://github.com/zkelder/mockingbird/actions/runs/36250782155): **every job and step green** -- Core 6143 passed / 0 failed, frontend, packaging, and the structural preflight executed for real |
-| docs closure (hash in `git log`) | this report, scheduler §1/§3/§14 and header, the tiers-contract current-state paragraph | fast-forward | the docs-only push re-runs the identical workflow on unchanged code; its result is recorded on GitHub, expected identical to the `e2c543e` run |
+| `149eb70` (`149eb707ae6f13df29fc73334462d8d6d81aa124`) | this report, scheduler §1/§3/§14 and header, the tiers-contract current-state paragraph | fast-forward | the docs-only push re-runs the identical workflow on unchanged code (run 36252365993); its result is recorded on GitHub, expected identical to the `e2c543e` run |
 
 Attribution: every commit authored by the repository's configured git
 user with the session's co-author line; all pushes were normal
@@ -366,10 +385,11 @@ grounds:
   independent artifact verifier, and the isolated structural preflight all
   execute and pass hosted**; the preflight is proven to run, not assumed.
 - **No concealed coverage reduction**: zero assertions weakened, zero
-  skips or xfails added (the one new skip is a file's existing guard now
-  applied to a sibling that needed the same real `ffprobe`), Core's
-  selection unchanged, user-facing semantics unchanged, one additive
-  optional keyword the only production edit.
+  xfails added, **one skip guard added and disclosed by identity** (§5:
+  the malformed-video offline-ingest test, now skipped only on a host
+  without a real `ffprobe`), Core's selection unchanged, user-facing
+  semantics unchanged, one additive optional keyword the only production
+  edit.
 
 What this verdict does **not** say, stated so it cannot be over-read:
 
@@ -419,3 +439,24 @@ generated artifact or destructive operation was introduced. Two things the
 brief permitted were deliberately not done: no optional ML dependency was
 installed on the runner, and the Calm Attention midnight edge was proposed
 rather than patched.
+
+## 13. Correction record (2026-09-26, Internal Release Candidate Rebuild & Native-Windows Acceptance v1)
+
+The owner accepted this milestone's implementation at
+`149eb707ae6f13df29fc73334462d8d6d81aa124` **with the documented local
+transport-worker timing exception**, and asked that the record be corrected
+before a candidate is frozen from it. The evidence in §3-§7 was already
+accurate; several *summaries* over-read it. Corrected in place, historical
+evidence preserved:
+
+| Where | Before | After |
+| --- | --- | --- |
+| §1 table, §1 outcome line, scheduler §3 and §14 | "both the hosted and the local Core gate pass with zero failures on the final code revision" / "a green suite, locally and hosted" | Local `6b6c0fc`: 6231 passed, zero failures. Local `d0b5dd0` (final code revision): 6230 passed, one known transport-worker timing failure -- isolated reruns support the attribution but do not replace the full-run result, so that run is not called green. Hosted `d0b5dd0` and `e2c543e`: 6143 passed, zero failures; on `e2c543e` every workflow job and the structural preflight passed |
+| §1, §11 | "adding a skip/xfail" / "zero skips or xfails added (the one new skip ...)" | One ffmpeg-dependent skip guard **was** added: `tests/test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth`, now carrying its file's existing `skipif(not _has_real_ffmpeg_suite())`; justification in §5 |
+| §5 | "All sixteen reproduce locally under a simulated hosted environment" | Fifteen reproduced in local simulation (`15 failed, 1 passed`); the BirdNET test's mechanism was established from the hosted assertion, because the package it needs absent is installed on this host |
+| §5 | the Calm Attention exact-midnight edge described as proposed-only | Still a real, disclosed product edge; explicitly stated to be *contained* by `AttentionSyncService.run_once`'s exception handling and the next tick, not repaired by the test-timezone fixture |
+| §7 | docs-closure commit "hash in `git log`" | `149eb70` |
+
+Nothing else in this report changed. The acceptance and the authorization
+that followed it are recorded in the scheduler
+([release-execution-state.md](release-execution-state.md) §1/§3).

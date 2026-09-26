@@ -813,10 +813,44 @@ FREEZE**. See §3 for the record and
 for the full evidence. **Authorization: CI & Core Validation Closure v1**
 while it runs; **NONE** on its closure.
 
+**Update, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1:** records the owner's acceptance of *CI &
+Core Validation Closure v1* at
+`149eb707ae6f13df29fc73334462d8d6d81aa124` **with the documented local
+transport-worker timing exception** (not a claim that the final-revision
+local run was green -- the report's §13 and §3/§14 here are corrected
+accordingly), and executes the next bounded milestone the owner
+authorized: freeze an exact source SHA, build a fresh **private** Windows
+Host + Camera Node release candidate from it with the existing build
+machinery (version `0.1.0`, schema `v61`, accepted MDv5a ONNX at threshold
+0.1, BioCLIP-2 policy, no model/threshold change, no BirdNET weights),
+independently verify it, and accept it on native Windows against a
+disposable instance. No public release, tag, signing key, visibility
+change or Gate G. Phase label unchanged: **FEATURE FREEZE**. See §3 for
+the record. **Authorization: Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1** while it runs; **NONE** on its closure.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1:** the note immediately below is superseded on
+these facts. **Current facts, verified directly:** *CI & Core Validation
+Closure v1* is **accepted at `149eb707ae6f13df29fc73334462d8d6d81aa124`**
+(owner decision, with the documented local transport-worker timing
+exception). This milestone's record-correction commit -- the commit that
+carries this paragraph -- is the **frozen candidate source SHA**; it is
+docs-only on top of `149eb70`, so the candidate's product code is
+byte-identical to the accepted revision. Its hash is recorded in this
+milestone's §3 closure entry and in the built artifacts' own
+`manifest.json`/`build_info.json` (`git:<hash>`), never as a moving
+`main`. Schema `v61`, version `0.1.0`, unchanged. Working tree: the seven
+preserved untracked detector files (§13) and `uv.lock`, untracked and
+hash-verified unchanged. Current authorization: **Internal Release
+Candidate Rebuild & Native-Windows Acceptance v1** (returns to **NONE** on
+its closure).
 
 **Staleness correction, 2026-09-26, by CI & Core Validation Closure v1:**
 the note immediately below is superseded on these facts. **Current facts,
@@ -3901,6 +3935,75 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Recorded, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1.**
+
+**Accepted delta -- the owner's decision, recorded here, not decided here.**
+*CI & Core Validation Closure v1* is **accepted at
+`149eb707ae6f13df29fc73334462d8d6d81aa124`, with the documented local
+transport-worker timing exception.** This is not a claim that the
+final-revision local run was green: local `6b6c0fc` 6231 passed / 0
+failed; local `d0b5dd0` 6230 passed / 1 failed (the recorded timing
+exception -- isolated reruns support attribution, they do not replace the
+full-run result); hosted `e2c543e` 6143 passed / 0 failed with every
+workflow job and the structural preflight green. One ffmpeg-dependent skip
+guard was added and is disclosed by identity (report §5/§13); fifteen of
+the sixteen hosted-only failures reproduced in local simulation and the
+BirdNET one was established from hosted evidence; the Calm Attention
+exact-midnight tick remains a real, disclosed product edge, contained by
+the service's exception handling and subsequent ticks, not repaired by
+changing test timezones. The contradictory summaries in the report and in
+this file (§3 entry below, §14 pointer) are corrected in place; the
+historical evidence and the complete remaining queue (§6, lanes A-S,
+classifications unchanged) are preserved.
+
+**Authorized.** *Internal Release Candidate Rebuild & Native-Windows
+Acceptance v1*, directly by the owner: (1) commit this record correction
+and freeze that exact commit as the candidate source SHA -- never a moving
+`main`; (2) build the Windows Host and Camera Node artifacts from it with
+the existing `build_local_product.py`/`build_camera_node_artifact.py`
+machinery in the documented supported configuration (version `0.1.0`,
+schema `v61`, accepted MDv5a ONNX detector at threshold 0.1, BioCLIP-2
+identification policy, no promotion or threshold change, no BirdNET model
+weights), distinguishing a complete intended-use candidate from CI's
+structural bundle and reporting -- never disguising -- any missing
+required component; record source SHA, configuration, hashes, manifests,
+SBOM, licensing notices and independent verifier results, artifacts kept
+private under ignored paths; no signing key created, no tag/release, no
+visibility change, no field-data upload -- unsigned if no authorized
+signing arrangement exists; (3) validate the built artifact on native
+Windows against a clearly identified disposable instance with isolated
+data, proving the running instance's identity matches the manifest and
+exercising the bounded release path (install, launch, onboarding, real
+frontend, supported camera connection/preview and readiness, accepted
+detector/classifier runtime loading on the intended hardware, observe ->
+evidence -> review/correction -> durable history, Today truth after
+confirmations, restart/resume and named-timezone/DST behaviour,
+`v59 -> v61` backup/restore/upgrade on disposable copies, clean shutdown
+and documented recovery) with real browser evidence for the critical
+visible path; (4) independently verify the Camera Node artifact and run
+only safe compatibility checks against the reference topology -- no
+reflash, upgrade, unpair, stop or reconfiguration of the live Node.
+Non-goals: product feature work, schema change, refactor, model
+evaluation, public distribution, Gate G recruitment; any newly reproduced
+blocker is reported with cause and a bounded proposed correction contract,
+not fixed opportunistically. Tier 1 focused packaging/provenance checks;
+Tier 2 affected packaging/verification/installation/upgrade/recovery
+suites; Tier 3 reuses the verified Core baseline where source is
+unchanged. Normal scoped documentation commits and pushes to the existing
+private repository authorized; no force-push or history rewrite. Protected
+files and `uv.lock` preserved byte-for-byte and untracked.
+
+**Status: IN PROGRESS** (this correction commit). The closure record --
+frozen SHA, artifact hashes, verifier results, native-Windows evidence,
+Camera Node verification limits, exceptions/blockers, verdict and the
+single next release decision -- is added here and in
+`docs/internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md`
+when the milestone completes. **Gate G remains unexecuted and unwaived; an
+internally accepted candidate is not permission to publish or announce.**
+
+---
+
 **Recorded, 2026-09-26, by CI & Core Validation Closure v1** (see
 [ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)).
 
@@ -3934,7 +4037,18 @@ tag or deployment.
 **Status: EXECUTED.** Final HEAD: the documentation-closure commit on top of
 `e2c543e` (hash in `git log`; final code revision `d0b5dd0`, workflow fix
 `e2c543e`); schema `v61`, version
-`0.1.0`, unchanged. Outcome: both the hosted and the local Core gate pass with zero failures on the final code revision, with no concealed coverage reduction. All six recorded local
+`0.1.0`, unchanged. Outcome (as corrected 2026-09-26 -- see the report's
+§13): hosted Core passes with zero failures on the final code revision
+(`d0b5dd0`, 6143 passed; again at `e2c543e`, where every workflow job and
+the structural preflight also passed); local Core passes with zero
+failures at `6b6c0fc` (6231 passed, every production change of the
+milestone); local Core at the final code revision `d0b5dd0` recorded
+**6230 passed, one failure** -- the already-documented transport-worker
+timing exception, whose isolated reruns support the attribution but do not
+replace the full-run result -- so that run is **not** called green. No
+concealed coverage reduction: zero assertions weakened, zero xfails added,
+**one ffmpeg-dependent skip guard added and disclosed** (report §5). All
+six recorded local
 failures (two obsolete Doctor copy expectations after `4ec0702`; one
 date-dependent environmental-context fixture, closed by giving
 `get_place_environmental_context_today` the same optional `now` keyword its
@@ -3943,11 +4057,14 @@ dependent biodiversity fixtures and one date-dependent change-summary
 fixture, closed by pinning the HTTP routes' clock to the fixtures' own
 anchors) and all sixteen hosted-only failures (nine host-timezone
 assumptions, five ffmpeg assumptions, one optional-package assumption, one
-built-frontend assumption -- every one reproduced locally under a
-simulated hosted environment and corrected in tests only) are closed with
-their intended contracts preserved. One narrow product edge was disclosed
-with a proposed contract rather than patched (a Calm Attention sync tick
-landing exactly on local midnight; report §5). `Q-2`, `Q-4` and the stale
+built-frontend assumption -- fifteen reproduced locally under a
+simulated hosted environment, the BirdNET one established from the hosted
+evidence, all corrected in tests only) are closed with their intended
+contracts preserved. One narrow product edge was disclosed with a proposed
+contract rather than patched (a Calm Attention sync tick landing exactly on
+local midnight; report §5): it remains a real product edge, contained by
+the service's own exception handling and the following tick, not repaired
+by changing test timezones. `Q-2`, `Q-4` and the stale
 `camera_connected` field keep their disposition: **nonblocking, deferred,
 not fixed.**
 
@@ -13228,12 +13345,21 @@ recent actual full-suite number.
 > passed 3/3 in isolation and 7/7 with its file immediately afterwards
 > and passes on the hosted runner at the same revision; hosted Core at `d0b5dd0` (GitHub Actions
 > run 36249121286, `ubuntu-24.04`, CPython 3.12.14, core dependencies +
-> `[test]` only): `6143 passed, 0 failed, 85 skipped, 35 deselected, 11
-> xfailed` (25:08).** Schema **v61**. A green suite, locally and hosted.
+> `[test]` only) and again at `e2c543e` (run 36250782155, every job and the
+> structural preflight green): `6143 passed, 0 failed, 85 skipped, 35
+> deselected, 11 xfailed`.** Schema **v61**. *Corrected 2026-09-26:* this
+> is a green suite **hosted on the final code revision and locally at
+> `6b6c0fc`**; the final-revision local run (`d0b5dd0`, 6230 passed / 1
+> failed) is not called green -- the isolated reruns support attributing
+> that one failure to the recorded timing exception but do not replace the
+> full-run result. One ffmpeg-dependent skip guard was added
+> (`test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth`,
+> its file's existing real-`ffprobe` guard; report §5).
 > The recorded six-set is closed (all six root-caused as obsolete
 > expectations or date/time-dependent fixtures, none a product defect) and
 > the sixteen hosted-only failures the first completed hosted run exposed
-> are closed as validation-environment assumptions. See
+> are closed as validation-environment assumptions (fifteen reproduced in
+> local simulation; the BirdNET one established from hosted evidence). See
 > [ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)
 > §3-§6 for the run records, the identity-level local-versus-hosted
 > collection comparison (6,246 local vs 6,239 hosted; the difference is
