@@ -533,7 +533,7 @@ def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) ->
 
 
 async def test_dashboard_midnight_boundary_uses_local_day_not_utc_digits(
-    isolated_repository: ProductRepository,
+    new_york_host_timezone, isolated_repository: ProductRepository,
 ) -> None:
     """Deterministic, host-timezone-independent regression for the real
     midnight/local-day-boundary defect `add_dashboard_today_visits`'s own

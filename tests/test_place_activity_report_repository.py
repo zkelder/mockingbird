@@ -494,7 +494,7 @@ def test_same_zone_name_on_different_streams_is_never_merged(
 
 
 def test_activity_by_hour_uses_resolved_local_time_not_utc(
-    repository: ProductRepository,
+    new_york_host_timezone, repository: ProductRepository,
 ) -> None:
     # 2026-07-01T23:30:00Z is 2026-07-01T19:30:00-04:00 (EDT) -- hour 19
     # locally, not hour 23.
@@ -1032,7 +1032,7 @@ def test_invalid_reporting_window_inputs_are_rejected(repository: ProductReposit
 # 18. DST-boundary behavior -----------------------------------------------------------
 
 
-def test_local_offset_resolves_correctly_for_the_generation_moment(tmp_path: Path) -> None:
+def test_local_offset_resolves_correctly_for_the_generation_moment(new_york_host_timezone, tmp_path: Path) -> None:
     """`timezone_name` (a display label, e.g. "EST"/"EDT") reflects the
     resolved local zone's abbreviation *at the report's generation moment*
     -- proven here with a January (EST) and a July (EDT) `now`, both

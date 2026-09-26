@@ -233,7 +233,7 @@ def _durable_counts(repository: ProductRepository) -> tuple[int, int, int, int, 
 
 
 def test_today_summary_uses_selected_local_day_and_current_reviewed_truth(
-    repository: ProductRepository,
+    new_york_host_timezone, repository: ProductRepository,
 ) -> None:
     local_start = datetime(2026, 7, 29, 0, tzinfo=LOCAL_TIMEZONE)
     _add_visit(

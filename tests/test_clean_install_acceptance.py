@@ -30,6 +30,7 @@ from mockingbird.api import main as api_main
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.source_providers.camera_node import CameraNodeClient
+from mockingbird.web_app import frontend_build_status
 from tests.conftest import LegacyAuthenticatedTestClient
 
 NEVER_ECHO_CREDENTIAL = "never-echo-node-credential"
@@ -222,7 +223,16 @@ def test_clean_install_reaches_a_first_report_through_the_real_http_api(tmp_path
             # per this milestone's own instruction, since this test suite
             # cannot drive a real browser.
             root = await client.get("/")
-            assert root.status_code == 200
+            if frontend_build_status().available:
+                assert root.status_code == 200
+            else:
+                # No built frontend on this host (e.g. the hosted backend
+                # job never runs `npm run build`): the same route must
+                # still answer with its honest, structured "not ready yet"
+                # page -- never a crash -- which is the reachability this
+                # step proves.
+                assert root.status_code == 503
+                assert "not ready yet" in root.text
 
     try:
         asyncio.run(scenario())

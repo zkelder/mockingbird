@@ -259,7 +259,7 @@ def test_compose_digest_message_falls_back_to_coverage_message_with_no_highlight
 # ---------------------------------------------------------------------------
 
 
-def test_first_seen_is_not_duplicated_as_a_second_discovery_alert(repository: ProductRepository) -> None:
+def test_first_seen_is_not_duplicated_as_a_second_discovery_alert(new_york_host_timezone, repository: ProductRepository) -> None:
     """Phase 6 semantic deduplication: `_sync_journal_milestone_alert`
     (fired inline at review-commit time) already owns "first confirmed
     local observation." `sync_attention_signals` must not create a
@@ -281,7 +281,7 @@ def test_first_seen_is_not_duplicated_as_a_second_discovery_alert(repository: Pr
     assert not any(a.deduplication_key.startswith("place-story:first-seen:") for a in journal_after)
 
 
-def test_becoming_regular_produces_one_insight_alert(repository: ProductRepository) -> None:
+def test_becoming_regular_produces_one_insight_alert(new_york_host_timezone, repository: ProductRepository) -> None:
     start = date(2025, 3, 1)
     _cover_days(repository, start=start, days=40)
     for offset in range(10):
@@ -316,7 +316,7 @@ def test_becoming_regular_produces_one_insight_alert(repository: ProductReposito
         assert replayed[0].read_at is not None, "re-running the sync silently reset read state"
 
 
-def test_stale_place_story_alert_is_resolved_on_next_sync(repository: ProductRepository) -> None:
+def test_stale_place_story_alert_is_resolved_on_next_sync(new_york_host_timezone, repository: ProductRepository) -> None:
     """Phase 32 correction safety: an attention item whose underlying
     Place Story fact no longer recomputes (e.g. a correction changed the
     confirmed taxon) is resolved on the next periodic sync, not left
@@ -348,7 +348,7 @@ def test_stale_place_story_alert_is_resolved_on_next_sync(repository: ProductRep
         assert stale.resolved_at is not None
 
 
-def test_fifth_species_diversity_milestone_still_fires(repository: ProductRepository) -> None:
+def test_fifth_species_diversity_milestone_still_fires(new_york_host_timezone, repository: ProductRepository) -> None:
     """Proves the ordinal-1 exclusion above is narrow, not a blanket
     suppression of diversity milestones: the 5th distinct species is
     genuinely new information beyond that species' own routine "first

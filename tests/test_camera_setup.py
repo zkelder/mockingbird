@@ -761,7 +761,7 @@ def test_rtsp_credentials_already_embedded_in_the_url_are_never_overridden(
 
 @pytest.mark.anyio
 async def test_preview_available_is_now_honest_instead_of_always_false(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A configured RTSP live stream URL must report `preview_available`
     truthfully (the new preview-frame endpoint can genuinely serve it);
@@ -769,6 +769,14 @@ async def test_preview_available_is_now_honest_instead_of_always_false(
     `test_camera_setup_is_secret_safe_and_validation_creates_no_product_
     records` above for that unchanged negative case."""
 
+    # Preview availability gates on a real ffmpeg (`_camera_setup_preview_
+    # available` -> `rtsp_bridge.is_ffmpeg_available`); the capture itself
+    # is faked/irrelevant here, so state the precondition explicitly rather
+    # than assume the host has ffmpeg installed (the hosted runner does not).
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
     response = await client.post(
         "/api/camera-setup/validate",
         json={"provider_key": "external_url", "config": _RTSP_CONFIG},
@@ -781,6 +789,14 @@ async def test_preview_available_is_now_honest_instead_of_always_false(
 async def test_preview_frame_endpoint_returns_a_real_image_and_uses_merged_credentials(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Preview availability gates on a real ffmpeg (`_camera_setup_preview_
+    # available` -> `rtsp_bridge.is_ffmpeg_available`); the capture itself
+    # is faked/irrelevant here, so state the precondition explicitly rather
+    # than assume the host has ffmpeg installed (the hosted runner does not).
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
     captured_urls: list[str] = []
 
     def _fake_capture(url: str, **kwargs: object):
@@ -821,6 +837,14 @@ async def test_preview_frame_endpoint_returns_a_real_image_and_uses_merged_crede
 async def test_preview_frame_endpoint_reports_an_honest_failure_without_leaking_credentials(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Preview availability gates on a real ffmpeg (`_camera_setup_preview_
+    # available` -> `rtsp_bridge.is_ffmpeg_available`); the capture itself
+    # is faked/irrelevant here, so state the precondition explicitly rather
+    # than assume the host has ffmpeg installed (the hosted runner does not).
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
     def _fake_capture(url: str, **kwargs: object):
         from mockingbird.playback.rtsp_bridge import RtspPreviewCapture
 

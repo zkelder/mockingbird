@@ -197,6 +197,7 @@ async def review_state_token(client: httpx.AsyncClient, visit_id: str) -> str:
 
 
 async def test_wildlife_insights_aggregate_only_current_active_reviewed_truth(
+    new_york_host_timezone,
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
 ) -> None:

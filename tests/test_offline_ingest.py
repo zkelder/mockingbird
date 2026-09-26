@@ -623,6 +623,7 @@ async def test_offline_ingest_reprocessing_with_genuinely_different_detection_cr
     assert len(repository.list_visits()) == baseline_visit_count + 2
 
 
+@pytest.mark.skipif(not _has_real_ffmpeg_suite(), reason="ffmpeg/ffprobe not available in this environment")
 async def test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth(
     repository: ProductRepository, tmp_path: Path,
 ) -> None:

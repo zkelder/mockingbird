@@ -130,6 +130,11 @@ class TestGetBirdNetStatus:
         shim = types.ModuleType("tflite_runtime")
         monkeypatch.setitem(sys.modules, "tflite_runtime", shim)
         assert shim.__spec__ is None  # exactly the shape the real shim installs
+        # The contract under test is the `tflite_runtime` probe against the
+        # shim, not whether `birdnetlib`/`librosa` happen to be installed on
+        # this host (they are not on the hosted runner) -- so only that
+        # probe runs for real.
+        monkeypatch.setattr(birdnet_adapter, "_REQUIRED_RUNTIME_PACKAGES", ())
 
         status = birdnet_adapter.get_birdnet_status()  # must not raise
         assert status.runtime_available is True

@@ -46,6 +46,7 @@ unaffected by this default.
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 import pytest
@@ -370,3 +371,36 @@ class LegacyAuthenticatedSyncTestClient(_StarletteTestClient):
         )
         if signed_in.status_code != 200:
             raise _legacy_session_conflict_error(bootstrap.status_code, signed_in.status_code)
+
+
+@pytest.fixture
+def new_york_host_timezone():
+    """Pin this process's *host-local* timezone to America/New_York for one
+    test (CI & Core Validation Closure v1).
+
+    MockingBird has no per-Place timezone setting: "local" is whatever the
+    host resolves (`mockingbird.time_utils.resolve_host_local_timezone`,
+    whose first candidate is the `TZ` environment variable, and plain
+    `datetime.astimezone()`, which reads the C library's local zone). A
+    test whose fixture was authored against a real America/New_York host
+    -- hour buckets, local-midnight boundaries, "EST"/"EDT" labels --
+    encodes that zone in its expectations, so it must state the zone
+    explicitly rather than assume the machine it happens to run on; the
+    hosted Linux runner is UTC. `time.tzset()` is what makes the C-library
+    path honor the new `TZ` immediately (POSIX only; on Windows the
+    variable alone is honored). The previous value is restored, and
+    `tzset()` re-run, on teardown -- no zone leaks into the next test."""
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        if hasattr(time, "tzset"):
+            time.tzset()
