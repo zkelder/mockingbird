@@ -15430,8 +15430,12 @@ async def bulk_correct_review_queue_items(
 
 
 @app.get("/api/review-labels", response_model=list[ReviewLabel])
-async def list_review_labels() -> list[ReviewLabel]:
-    return get_repository().list_review_labels()
+async def list_review_labels(
+    # Demo-inclusive by default (raw/audit read). Product surfaces that
+    # present labels as the user's own reviewed history pass `true`.
+    real_sources_only: bool = Query(default=False),
+) -> list[ReviewLabel]:
+    return get_repository().list_review_labels(real_sources_only=real_sources_only)
 
 
 @app.post("/api/review-labels", response_model=ReviewCorrectionResult, status_code=201)

@@ -1509,7 +1509,13 @@ export const apiClient = {
   },
   getReviewQueueSummary: () =>
     request<ReviewQueueSummary>("/api/review-queue/summary"),
-  getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
+  // `realSourcesOnly` drops labels on the seeded demo Source's activity: use
+  // it wherever labels read as the user's own reviewed history. The raw
+  // (demo-inclusive) read stays the default for diagnostic surfaces.
+  getReviewLabels: (options: { realSourcesOnly?: boolean } = {}) =>
+    request<ReviewLabel[]>(
+      `/api/review-labels${options.realSourcesOnly ? "?real_sources_only=true" : ""}`,
+    ),
   searchActivityLibrary: (payload: ActivityLibrarySearchRequest) =>
     request<ActivityLibrarySearchResponse>("/api/activity-library/search", {
       method: "POST",

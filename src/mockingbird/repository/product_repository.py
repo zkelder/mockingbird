@@ -28508,12 +28508,21 @@ class ProductRepository:
                     review_queue_count=self._visible_review_queue_count(session),
                 )
 
-    def list_review_labels(self) -> list[ReviewLabel]:
+    def list_review_labels(self, *, real_sources_only: bool = False) -> list[ReviewLabel]:
+        """Effective ReviewLabels, demo-inclusive by default (raw/audit read).
+
+        `real_sources_only` is the product-surface read (Review Queue's
+        "Reviewed history"): it drops every label whose Visit/Event belongs
+        to the seeded demo Source, through the same `_real_stream_ids` seam
+        every other demo-exclusion site uses. It filters presentation only;
+        truth resolution (`_effective_review_label_models`) is unchanged."""
+
         with self.session_factory() as session:
             labels = session.scalars(
                 select(ReviewLabelModel).order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
             effective = self._effective_review_label_models(labels)
+            real_stream_ids = _real_stream_ids(session) if real_sources_only else None
             # Performance / Scale / Stability Closure v1: resolve "is this
             # label's Visit still active?" for every label in one chunked
             # query instead of one `session.get` per label -- 1,720
@@ -28525,18 +28534,39 @@ class ProductRepository:
             )
             active_visit_ids: set[str] = set()
             for chunk in _id_chunks(visit_ids):
-                active_visit_ids.update(
-                    session.scalars(
-                        select(VisitModel.id).where(
-                            VisitModel.id.in_(chunk),
-                            VisitModel.is_superseded.is_(False),
-                        )
-                    ).all()
+                visit_query = select(VisitModel.id).where(
+                    VisitModel.id.in_(chunk),
+                    VisitModel.is_superseded.is_(False),
                 )
+                if real_stream_ids is not None:
+                    visit_query = visit_query.join(
+                        EventModel, VisitModel.event_id == EventModel.id
+                    ).where(EventModel.stream_id.in_(real_stream_ids))
+                active_visit_ids.update(session.scalars(visit_query).all())
+            real_event_ids: set[str] | None = None
+            if real_stream_ids is not None:
+                event_ids = sorted(
+                    {label.target_id for label in effective if label.target_type == "event"}
+                )
+                real_event_ids = set()
+                for chunk in _id_chunks(event_ids):
+                    real_event_ids.update(
+                        session.scalars(
+                            select(EventModel.id).where(
+                                EventModel.id.in_(chunk),
+                                EventModel.stream_id.in_(real_stream_ids),
+                            )
+                        ).all()
+                    )
             return [
                 _review_label_from_model(label)
                 for label in effective
-                if label.target_type != "visit" or label.target_id in active_visit_ids
+                if (label.target_type != "visit" or label.target_id in active_visit_ids)
+                and (
+                    real_event_ids is None
+                    or label.target_type != "event"
+                    or label.target_id in real_event_ids
+                )
             ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:

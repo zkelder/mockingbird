@@ -2008,7 +2008,10 @@ export function ReviewQueuePage({
 
     async function loadReviewLabels() {
       try {
-        const labels = await apiClient.getReviewLabels();
+        // Demo-seed labels are not the user's reviewed history ("Reviewed
+        // history" titles each entry "Correction truth"), and demo Visits
+        // never reach this queue, so this page reads real Sources only.
+        const labels = await apiClient.getReviewLabels({ realSourcesOnly: true });
         if (isMounted) {
           setReviewLabels(labels);
         }
@@ -2028,7 +2031,7 @@ export function ReviewQueuePage({
 
   async function refreshReviewLabels() {
     try {
-      setReviewLabels(await apiClient.getReviewLabels());
+      setReviewLabels(await apiClient.getReviewLabels({ realSourcesOnly: true }));
     } catch {
       // Recent helpers are convenience only; correction truth is handled by submit.
     }
