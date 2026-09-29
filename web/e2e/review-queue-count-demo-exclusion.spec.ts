@@ -14,7 +14,19 @@ import { expect, test } from "@playwright/test";
 const TINY_JPEG_BASE64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDyuiiivxM/ns//2Q==";
 
-test("correcting one real item reports 0 remaining, not the seeded demo Visit's own count", async ({
+/** Other specs in this shared suite deliberately repurpose the seeded demo
+ * Source into a real camera (Guided Camera Editing), after which its seeded
+ * activity is real history by contract (`_real_source_condition`). A demo
+ * control therefore owns that state: it first returns the seeded Source to
+ * its demo provider through the ordinary provider-configuration API. */
+async function useSeededSourceAsDemo(page: import("@playwright/test").Page) {
+  const restored = await page.request.patch("/api/sources/source-backyard-demo/provider-configuration", {
+    data: { provider_key: "demo", config: {} },
+  });
+  expect(restored.ok()).toBeTruthy();
+}
+
+test("correcting one real item reports the real remaining count, never counting the seeded demo Visit", async ({
   page,
 }) => {
   // A dedicated, real (non-demo) Source/Stream -- `POST /api/sources`
@@ -41,22 +53,48 @@ test("correcting one real item reports 0 remaining, not the seeded demo Visit's 
     },
   });
   expect(imported.ok()).toBeTruthy();
+  const { visit } = await imported.json();
+
+  // Explicit demo control: the seeded demo Visit is still unresolved, so a
+  // demo-inclusive count would announce one more item than the real count.
+  await useSeededSourceAsDemo(page);
+  const demoVisit = await page.request.get("/api/visits/visit-bird-feeder-001");
+  expect(demoVisit.ok()).toBeTruthy();
+  expect((await demoVisit.json()).review_status).toBe("needs_review");
 
   await page.goto("/review");
   await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
 
-  // Default "Animals" tab, no click needed -- the just-imported real Visit
-  // must already be there, and it is the only item this fresh instance has
-  // (the seeded demo Visit never reaches this list at all, correctly
-  // excluded by the prior milestone's own `GET /api/review-queue` fix).
+  // Default "Animals" tab, no click needed. The suite shares one instance,
+  // so scope the list to this spec's own Visit rather than assume it is the
+  // only real item.
+  await page.getByText("Filter review items", { exact: true }).click();
+  await page.getByPlaceholder("label, stream, source, zone, suggestion").fill(visit.id);
   const cards = page.locator("article.queue-card");
   await expect(cards).toHaveCount(1);
+
+  // Real outstanding work right before the correction (demo-excluded by
+  // `/api/review-queue/summary`, the same visible needs-review set that
+  // backs the response's `review_queue_count`). A fresh instance has exactly
+  // this spec's item, so this is the original "0 items" assertion there.
+  const summary = await (await page.request.get("/api/review-queue/summary")).json();
+  const realNeedsReview = Object.values(summary.needs_review_by_stream as Record<string, number>).reduce(
+    (total, count) => total + count,
+    0,
+  );
+  expect(summary.needs_review_by_stream[stream.id]).toBe(1);
+  const remaining = realNeedsReview - 1;
+
   await cards.first().getByRole("button", { name: "False positive" }).click();
 
   // The regression: before this fix, this response's `review_queue_count`
   // was an unfiltered `len(_review_queue_items(session))`, which counts the
   // seeded demo Source's own still-needs-review `visit-bird-feeder-001` as
-  // if it were outstanding real work -- announcing "1" here even though the
-  // only genuine item in this instance was just resolved.
-  await expect(page.getByText(/0 items still need review\./)).toBeVisible();
+  // if it were outstanding real work -- announcing one more than the real
+  // remaining count (on a fresh instance, "1" instead of "0").
+  await expect(
+    page.getByText(new RegExp(`(^|\\D)${remaining} item${remaining === 1 ? "" : "s"} still need review\\.`)),
+  ).toBeVisible();
+  const resolved = await (await page.request.get(`/api/visits/${visit.id}`)).json();
+  expect(resolved.review_status).not.toBe("needs_review");
 });

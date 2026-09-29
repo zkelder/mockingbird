@@ -72,8 +72,15 @@ test("an imported Visit is reviewable from the default Animals tab, and Fast Rev
   const animalsTab = page.getByRole("button", { name: /^Animals/ });
   await expect(animalsTab).toBeVisible();
   await expect(page.getByText("No review items match these filters")).toHaveCount(0);
+  // Scope the queue to this spec's own Visit: the suite shares one
+  // instance, and Fast Review walks the whole filtered queue, so without
+  // this "Save & Next" would advance to another spec's leftover item
+  // instead of completing.
+  await page.getByText("Filter review items", { exact: true }).click();
+  await page.getByPlaceholder("label, stream, source, zone, suggestion").fill(visitId);
   const cards = page.locator("article.queue-card");
-  await expect(cards.first()).toBeVisible();
+  await expect(cards).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Start Fast Review (1)" })).toBeVisible();
 
   // Regression 2: Fast Review is reachable and operable by keyboard alone,
   // and activating it does not strand focus on <body>.
@@ -98,7 +105,7 @@ test("an imported Visit is reviewable from the default Animals tab, and Fast Rev
   await saveAndNext.focus();
   await page.keyboard.press("Enter");
 
-  // This fixture creates exactly one matching unresolved Visit, so saving
+  // The filter above leaves exactly one matching unresolved Visit, so saving
   // it advances Fast Review straight to "queue complete" rather than a
   // next item -- assert that transition (not a specific processed-count
   // string, which only the mid-queue view renders) as the UI-level

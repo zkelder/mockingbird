@@ -87,22 +87,73 @@ async function mockAlerts(page: Page, alerts: Array<Record<string, unknown>>) {
   );
 }
 
-// The first poll (`AlertsControl` mounts and polls immediately) returns
-// nothing, seeding `seenAlertIdsRef`; the second poll (60s later, advanced
-// via `page.clock`) returns `alertAfter` -- a genuinely *new* id, exactly
-// the "new since last poll" condition `shouldDeliverForegroundNotification`
+// Foreground delivery needs two `AlertsInbox` polls: the first seeds
+// `seenAlertIdsRef` with nothing, the second (60s later, advanced via
+// `page.clock`) returns `alertAfter` -- a genuinely *new* id, exactly the
+// "new since last poll" condition `shouldDeliverForegroundNotification`
 // requires (Phase 8: never re-notify for something already on screen the
 // first time it was ever seen).
-async function mockAlertsAppearingOnSecondPoll(page: Page, alertAfter: Record<string, unknown>) {
-  let pollCount = 0;
+//
+// Browser Suite Determinism & Demo-Boundary Closure v1: this used to switch
+// on "the second `/api/alerts/unread` request", but on Today
+// `TodayAttentionSummary` makes that request too, so whichever component
+// mounted first consumed "poll 1" -- a mount-order race (1 failure in 8 on
+// one shared instance) that could also let a "never delivers" test read
+// `__deliveredNotifications` before the poll it judges had run. Now every
+// request gets `[]` until the test has seen `AlertsInbox`'s first poll
+// arrive and explicitly releases the alert; `expectSecondAlertsInboxPoll`
+// then waits for the Alerts badge, which `AlertsInbox.refresh` sets in the
+// same step that makes the delivery decision.
+//
+// The app shell mounts one `AlertsControl` in the mobile header and one in
+// the sidebar (CSS shows one), and each polls on its own. So the helpers
+// count mounted pollers instead of assuming one, and a health alert is
+// delivered once per poller under the alert's own `tag` -- which the
+// Notification API coalesces into the single notification a person sees.
+async function mockAlertReleasedAfterFirstPoll(page: Page, alertAfter: Record<string, unknown>) {
+  let released = false;
+  let unreadResponses = 0;
+  let preferenceResponses = 0;
+  page.on("response", (response) => {
+    if (response.url().includes("/api/alerts/unread")) unreadResponses += 1;
+    if (response.url().includes("/api/notification-preferences")) preferenceResponses += 1;
+  });
   await page.route("**/api/alerts/unread", (route) => {
-    pollCount += 1;
-    const alerts = pollCount === 1 ? [] : [alertAfter];
+    const alerts = released ? [alertAfter] : [];
     return route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify({ unread_count: alerts.length, recent: alerts }),
     });
   });
+  return {
+    /** Opens Today and waits until every `AlertsInbox` poller's first poll
+     * (its unread and preferences reads) has reached the page. On Today
+     * only the pollers read preferences; `TodayAttentionSummary` reads
+     * unread once more. Returns the number of pollers. */
+    async gotoTodayAndAwaitFirstPoll(): Promise<number> {
+      await page.goto("/");
+      await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
+      const pollers = await page.locator(".alerts-control").count();
+      expect(pollers).toBeGreaterThan(0);
+      await expect
+        .poll(() => unreadResponses >= pollers + 1 && preferenceResponses >= pollers)
+        .toBe(true);
+      return pollers;
+    },
+    release() {
+      released = true;
+    },
+  };
+}
+
+async function expectSecondAlertsInboxPoll(page: Page, pollers: number) {
+  await expect(page.locator(".alerts-badge")).toHaveText(Array(pollers).fill("1"));
+}
+
+async function deliveredCount(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length,
+  );
 }
 
 // A minimal, real `Notification` stand-in -- installed before navigation
@@ -111,7 +162,7 @@ async function mockAlertsAppearingOnSecondPoll(page: Page, alertAfter: Record<st
 // `window.__deliveredNotifications` is what the tests below assert on.
 async function mockGrantedNotificationPermission(page: Page) {
   await page.addInitScript(() => {
-    (window as unknown as { __deliveredNotifications: Array<{ title: string; body?: string }> })
+    (window as unknown as { __deliveredNotifications: Array<{ title: string; body?: string; tag?: string }> })
       .__deliveredNotifications = [];
     class FakeNotification {
       static permission = "granted";
@@ -121,7 +172,7 @@ async function mockGrantedNotificationPermission(page: Page) {
       onclick: (() => void) | null = null;
       constructor(title: string, options?: NotificationOptions) {
         (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.push({
-          title, body: options?.body,
+          title, body: options?.body, tag: options?.tag,
         });
       }
       close() {}
@@ -146,35 +197,65 @@ test("Today surfaces a calm count of unread attention items", async ({ page }) =
   await expect(page.getByRole("button", { name: "2 things worth noticing" })).toBeVisible();
 });
 
-test("clicking an insight alert opens Place Story already scoped to wildlife", async ({ page }) => {
+const EMPTY_PLACE_STORY = {
+  generated_at: NOW, period_start_at: NOW, period_end_at: NOW,
+  entries: [], has_more: false, next_offset: null, total_matched: 0, is_early_experience: false,
+};
+
+async function openOnlyAlertFromToday(page: Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "1 thing worth noticing" }).click();
+  await expect(page).toHaveURL(/\/alerts/);
+}
+
+// Browser Suite Determinism & Demo-Boundary Closure v1: `openAlertAction`
+// has two deliberate `open_place_story` paths. Calm Attention &
+// Notifications v1 scoped a category-only insight to its Place Story group;
+// Place Story Deep Dives & Representative Evidence v1 then routed an action
+// that carries a precise `taxon_label` straight to that taxon's own Story.
+// This test's fixture used to carry `taxon_label` while asserting the
+// category-group path, so it exercised the newer route and failed. Each
+// path is now pinned by its own test.
+test("clicking a category-only insight alert opens Place Story already scoped to wildlife", async ({ page }) => {
   await completeSetup(page);
-  await mockAlerts(page, [alert()]);
+  await mockAlerts(page, [
+    alert({ action: { action_type: "open_place_story", story_kind: "regularity_change" } }),
+  ]);
   await page.route("**/api/place/story*", (route) =>
-    route.fulfill({
-      status: 200, contentType: "application/json",
-      body: JSON.stringify({
-        generated_at: NOW, period_start_at: NOW, period_end_at: NOW,
-        entries: [], has_more: false, next_offset: null, total_matched: 0, is_early_experience: false,
-      }),
-    }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(EMPTY_PLACE_STORY) }),
   );
 
-  await page.goto("/");
-  await page.getByRole("button", { name: "2 things worth noticing" }).or(
-    page.getByRole("button", { name: "1 thing worth noticing" }),
-  ).click();
-  await expect(page).toHaveURL(/\/alerts/);
+  await openOnlyAlertFromToday(page);
 
   const requestPromise = page.waitForRequest((request) => request.url().includes("/api/place/story?"));
   await page.getByRole("button", { name: "View in Place Story" }).first().click();
   const request = await requestPromise;
-  await expect(page).toHaveURL(/\/place-story/);
+  await expect(page).toHaveURL(/\/place-story$/);
   const url = new URL(request.url());
   // "regularity_change" maps to the "wildlife" group -- see App.tsx's
   // `placeStoryCategoryForKind`.
   expect(url.searchParams.getAll("kind").sort()).toEqual(
     ["diversity_milestone", "first_seen", "noteworthy_activity", "regularity_change", "return"].sort(),
   );
+  expect(url.searchParams.get("taxon")).toBeNull();
+});
+
+test("clicking a taxon-specific insight alert opens that taxon's own Place Story", async ({ page }) => {
+  await completeSetup(page);
+  await mockAlerts(page, [alert()]);
+  await page.route("**/api/place/story*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(EMPTY_PLACE_STORY) }),
+  );
+
+  await openOnlyAlertFromToday(page);
+
+  const requestPromise = page.waitForRequest((request) => request.url().includes("/api/place/story?"));
+  await page.getByRole("button", { name: "View in Place Story" }).first().click();
+  const request = await requestPromise;
+  await expect(page).toHaveURL(/\/place-story\/taxon\/northern_cardinal$/);
+  const url = new URL(request.url());
+  expect(url.searchParams.get("taxon")).toBe("northern_cardinal");
+  expect(url.searchParams.getAll("kind")).toEqual([]);
 });
 
 test("notification preferences load, render conservative defaults, and save a toggle change", async ({ page }) => {
@@ -270,7 +351,7 @@ test("a new sustained health alert delivers a live browser notification when ena
   await mockGrantedNotificationPermission(page);
   await completeSetup(page);
   await mockNotificationPreferences(page, defaultPreferences({ browser_notifications_enabled: true }));
-  await mockAlertsAppearingOnSecondPoll(page, alert({
+  const alerts = await mockAlertReleasedAfterFirstPoll(page, alert({
     id: "health-e2e-1", category: "monitoring", severity: "high",
     title: "Backyard camera has been offline for 20 minutes",
     message: "This enabled camera is unavailable after bounded local recovery attempts.",
@@ -278,19 +359,24 @@ test("a new sustained health alert delivers a live browser notification when ena
     action: { action_type: "open_stream", stream_id: "stream-e2e-1" },
   }));
 
-  await page.goto("/");
-  await expect.poll(() =>
-    page.evaluate(() => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length),
-  ).toBe(0); // first poll: nothing yet, and nothing delivered for the initial empty state
+  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  expect(await deliveredCount(page)).toBe(0); // nothing delivered for the initial empty state
 
+  alerts.release();
   await page.clock.fastForward(61_000); // advance past AlertsControl's 60s poll interval
-  await expect.poll(() =>
-    page.evaluate(() => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length),
-  ).toBe(1);
+  await expectSecondAlertsInboxPoll(page, pollers);
+  await expect.poll(() => deliveredCount(page)).toBe(pollers);
   const delivered = await page.evaluate(
-    () => (window as unknown as { __deliveredNotifications: Array<{ title: string }> }).__deliveredNotifications[0],
+    () =>
+      (window as unknown as { __deliveredNotifications: Array<{ title: string; tag?: string }> })
+        .__deliveredNotifications,
   );
-  expect(delivered.title).toBe("Backyard camera has been offline for 20 minutes");
+  // One notification as a person sees it: every delivery is this alert,
+  // under this alert's own tag.
+  expect(new Set(delivered.map((item) => item.tag))).toEqual(new Set(["health-e2e-1"]));
+  for (const item of delivered) {
+    expect(item.title).toBe("Backyard camera has been offline for 20 minutes");
+  }
 });
 
 test("a new insight/discovery alert never delivers a live browser notification", async ({ page }) => {
@@ -301,15 +387,15 @@ test("a new insight/discovery alert never delivers a live browser notification",
   await mockGrantedNotificationPermission(page);
   await completeSetup(page);
   await mockNotificationPreferences(page, defaultPreferences({ browser_notifications_enabled: true }));
-  await mockAlertsAppearingOnSecondPoll(page, alert()); // urgency: "digest" (see the `alert()` helper's default)
+  const alerts = await mockAlertReleasedAfterFirstPoll(page, alert()); // urgency: "digest" (see the `alert()` helper's default)
 
-  await page.goto("/");
+  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  alerts.release();
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("button", { name: "1 thing worth noticing" })).toBeVisible();
-  const delivered = await page.evaluate(
-    () => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length,
-  );
-  expect(delivered).toBe(0);
+  // The alert reached the Attention Center badge, so the second poll -- and
+  // its delivery decision -- really ran before this check.
+  await expectSecondAlertsInboxPoll(page, pollers);
+  expect(await deliveredCount(page)).toBe(0);
 });
 
 test("quiet hours suppress a live notification that would otherwise fire", async ({ page }) => {
@@ -323,18 +409,18 @@ test("quiet hours suppress a live notification that would otherwise fire", async
     browser_notifications_enabled: true, quiet_hours_enabled: true,
     quiet_hours_start_minute: 0, quiet_hours_end_minute: 1439,
   }));
-  await mockAlertsAppearingOnSecondPoll(page, alert({
+  const alerts = await mockAlertReleasedAfterFirstPoll(page, alert({
     id: "health-e2e-2", category: "monitoring", severity: "high",
     attention_category: "observatory_health", urgency: "immediate",
   }));
 
-  await page.goto("/");
+  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  alerts.release();
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("button", { name: "1 thing worth noticing" })).toBeVisible();
-  const delivered = await page.evaluate(
-    () => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length,
-  );
-  expect(delivered).toBe(0);
+  // The alert reached the Attention Center badge, so the second poll -- and
+  // its delivery decision -- really ran before this check.
+  await expectSecondAlertsInboxPoll(page, pollers);
+  expect(await deliveredCount(page)).toBe(0);
 });
 
 test("browser notifications stay off unless the user explicitly enabled them", async ({ page }) => {
@@ -342,16 +428,16 @@ test("browser notifications stay off unless the user explicitly enabled them", a
   await mockGrantedNotificationPermission(page); // permission granted, but the preference itself is off
   await completeSetup(page);
   await mockNotificationPreferences(page, defaultPreferences({ browser_notifications_enabled: false }));
-  await mockAlertsAppearingOnSecondPoll(page, alert({
+  const alerts = await mockAlertReleasedAfterFirstPoll(page, alert({
     id: "health-e2e-3", category: "monitoring", severity: "high",
     attention_category: "observatory_health", urgency: "immediate",
   }));
 
-  await page.goto("/");
+  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  alerts.release();
   await page.clock.fastForward(61_000);
-  await expect(page.getByRole("button", { name: "1 thing worth noticing" })).toBeVisible();
-  const delivered = await page.evaluate(
-    () => (window as unknown as { __deliveredNotifications: unknown[] }).__deliveredNotifications.length,
-  );
-  expect(delivered).toBe(0);
+  // The alert reached the Attention Center badge, so the second poll -- and
+  // its delivery decision -- really ran before this check.
+  await expectSecondAlertsInboxPoll(page, pollers);
+  expect(await deliveredCount(page)).toBe(0);
 });

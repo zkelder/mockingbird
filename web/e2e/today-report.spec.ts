@@ -281,6 +281,7 @@ async function mockPlaceActivityReport(page: Page, overrides: Record<string, unk
 async function mockDashboardHeadline(
   page: Page,
   headlineOverrides: Record<string, unknown>,
+  todayOverrides: Record<string, unknown> = {},
 ) {
   // Everyday Product / Discovery UX Closure v1: DashboardPage now requests
   // `/api/dashboard/summary?local_date=YYYY-MM-DD` (the browser's own local
@@ -291,6 +292,7 @@ async function mockDashboardHeadline(
     const real = await page.request.get(route.request().url());
     const body = await real.json();
     Object.assign(body.headline, headlineOverrides);
+    Object.assign(body.today, todayOverrides);
     await route.fulfill({ status: real.status(), contentType: "application/json", body: JSON.stringify(body) });
   });
 }
@@ -1092,7 +1094,16 @@ test("a quiet, intentional empty state appears when there is no wildlife activit
   page,
 }) => {
   await completeSetup(page);
-  await mockDashboardHeadline(page, { monitored_stream_count: 1, configured_stream_count: 1 });
+  // A genuinely empty day, owned by this test: the report is synthetic, and
+  // so are the Dashboard's own "today" highlight lists. Passing the real
+  // ones through let other specs' today-dated Visits on the shared instance
+  // fill "Best moments" (Browser Suite Determinism & Demo-Boundary Closure
+  // v1).
+  await mockDashboardHeadline(
+    page,
+    { monitored_stream_count: 1, configured_stream_count: 1 },
+    { best_moments: [], new_today: [], recent_regulars: [] },
+  );
   await mockPlaceActivityReport(page, {});
 
   await page.goto("/");

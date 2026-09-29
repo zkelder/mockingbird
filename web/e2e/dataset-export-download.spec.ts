@@ -14,6 +14,13 @@ test("Dataset Export manifest can be downloaded as a real file", async ({ page }
   await page.getByRole("button", { name: "Generate manifest" }).click();
 
   await expect(page.getByRole("heading", { name: "Manifest preview" })).toBeVisible();
+  // The page opens with the seeded export's manifest already loaded, so the
+  // Download button is live before this spec's own export exists. Wait for
+  // the creation message, which the page sets in the same update as the new
+  // manifest (Browser Suite Determinism & Demo-Boundary Closure v1: with
+  // more reviewed data on the shared instance, generation took long enough
+  // for the click to download the seeded manifest instead).
+  await expect(page.getByText("Reviewed local dataset manifest generated in memory.")).toBeVisible();
   const downloadButton = page.getByRole("button", { name: "Download manifest JSON" });
   await expect(downloadButton).toBeVisible();
 
