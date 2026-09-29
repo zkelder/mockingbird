@@ -890,6 +890,15 @@ Reviewed-Truth Browser Closure v1* executed, classification **B**.
 Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See
 §3.
 
+**Authorized, 2026-09-29:** *Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1*, by ChatGPT global
+sequencing after it accepted Reviewed-Truth Browser Closure v1 at
+classification **B** (implementation `b946932`, record `9e0e113`). The
+candidate source stays `215069b` and the schema stays `v61`. Gate G stays
+**waived, not passed**. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: Owner-Only Final Release Hardening -- Browser Suite
+Determinism & Demo-Boundary Closure v1** while it runs. See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3995,7 +4004,72 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE.** The owner must decide the next step. See the
+**Authorization: Owner-Only Final Release Hardening -- Browser Suite
+Determinism & Demo-Boundary Closure v1.** See the authorization entry
+immediately below. *(Before this milestone, this line read
+"Authorization: NONE. The owner must decide the next step.", the state
+after Reviewed-Truth Browser Closure v1, whose closure entry follows
+further below.)*
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1*, by ChatGPT global
+sequencing. It accepts Reviewed-Truth Browser Closure v1 at classification
+**B**: implementation commit `b946932`, record HEAD `9e0e113`. Candidate
+source stays `215069b`, the schema stays `v61`, Gate G stays **waived, not
+passed**, and the owner stays the sole pre-release tester. Starts from
+`main` at `9e0e113`.
+
+- **Mission 1: a deterministic, green default browser suite (194/194).**
+  Root-cause and close the seven disclosed failures before changing them:
+  - `review-queue-count-demo-exclusion`;
+  - `review-queue-fast-review-keyboard`;
+  - `today-report` (quiet/intentional empty state);
+  - `broader-wildlife-maturity-review` (two failures);
+  - `review-queue-bulk-correct-stale-write`;
+  - `notification-preferences` (the insight alert should open Place Story
+    scoped to wildlife). This is to be treated as a possible product
+    defect, not assumed to be stale test debt.
+
+  Shared-instance accumulation failures are to be scoped to each test's
+  own data, without weakening assertions or relying on execution order.
+  A spec that uses the seeded demo Stream moves to a real Source/Stream
+  fixture when its subject requires real user data, and keeps explicit
+  controls proving demo activity stays excluded.
+- **Mission 2: close the Reviewed-history demo leak.** Review Queue's
+  collapsed "Reviewed history" panel must stop presenting seeded demo
+  ReviewLabels as the user's "Correction truth". Genuine human-reviewed
+  labels from real Sources stay visible. Seed records are not deleted or
+  rewritten, and the authoritative Reviewed-truth boundary does not
+  change. A focused browser test needs negative and positive controls.
+- **Validation:** red evidence before each fix; affected specs alone on
+  fresh instances; shared-instance stress past pagination limits where
+  accumulation matters; the complete default suite (194/194, no skips,
+  quarantine, concealing retries or order dependence); the onboarding,
+  bounded Review Queue and bounded-media configurations; `tsc` and
+  `vite build`; focused backend tests if API or repository behavior
+  changes; full Core if backend or cross-cutting production behavior
+  changes, otherwise a concrete Tier 3 justification.
+- **Artifact:** if any packaged product input changes, `215069b` is
+  superseded. A new private Windows ZIP is then built from the clean
+  implementation commit, verified for provenance, checksums and package
+  parity, and accepted on native Windows for the corrected behavior, clean
+  launch/shutdown/restart, and zero browser errors. If the changes are
+  test-only, there is no rebuild, and unchanged packaged inputs must be
+  proven instead.
+- **Non-goals:** unrelated features; reopening O-1/O-2 without a
+  reproduced dependency; weakening demo exclusion; detector, threshold or
+  identification-policy changes; Pi or Camera Node hardware acceptance;
+  Gate G or participant work; signing, publishing, uploading, tagging or
+  pushing; touching the seven protected untracked files or `uv.lock`;
+  self-authorizing another milestone.
+
+**Status: IN PROGRESS** (this record). Authorization returns to NONE on
+closure.
+
+---
+
+**Authorization after Reviewed-Truth Browser Closure v1: NONE.** The owner
+must decide the next step. See the
 closure entry immediately below. *(While Owner-Only Final Release
 Hardening -- Reviewed-Truth Browser Closure v1 ran, this line read
 "Authorization: Owner-Only Final Release Hardening -- Reviewed-Truth
@@ -14994,3 +15068,20 @@ rather than rewriting accepted history in place.
   parent still `21fbc42`, was independent, objective confirmation neither
   peer had committed anything in the interim).
 - **Push:** explicit authorization required
+
+### Current authorization summary
+
+*(Added 2026-09-29, because the checkpoint above is historical. §3 is the
+authoritative record.)*
+
+- **Authorization:** Owner-Only Final Release Hardening -- Browser Suite
+  Determinism & Demo-Boundary Closure v1, **IN PROGRESS**. It returns to
+  NONE on closure.
+- **Record HEAD at authorization:** `9e0e113`. The last accepted
+  milestone is Reviewed-Truth Browser Closure v1 (classification B,
+  implementation `b946932`).
+- **Candidate source:** `215069b` (Windows ZIP `d1050b99…`). **Schema:**
+  `v61`.
+- **Gate G:** waived, not passed. The owner is the sole pre-release
+  tester.
+- **Phase label:** FEATURE FREEZE.
