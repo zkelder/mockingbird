@@ -853,6 +853,23 @@ assembled, locally only and not sent, with placeholders for owner inputs.
 **Gate G is not started.** Phase label unchanged: **FEATURE FREEZE**.
 **Authorization: NONE.** See §3.
 
+**Owner sequencing decision, 2026-09-29 (recorded by Owner-Only Release
+Polish & Acceptance v1):** the owner **waives** Gate G (External
+Pre-Release Acceptance). Gate G is **waived, not passed**; it must never be
+described as passed, completed, or as external or independent validation.
+The owner is the **sole pre-release tester** until public release. The
+downstream sequence becomes *owner-only pre-release acceptance -> Final
+Release Hardening -> the one public launch*, and the independent setup,
+hardware and user-diversity evidence Gate G was meant to supply is
+**lost, not substituted** -- see §3 for the full disclosure and §6.S for
+the lane reconciliation. The historical Gate G plan, participant package
+and reports are preserved unchanged. The owner also authorized the
+bounded milestone *Owner-Only Release Polish & Acceptance v1* (O-1/O-2
+presentation fixes, the in-box README-FIRST, the midnight-boundary Core
+fixture, and a fresh private candidate accepted on native Windows). Phase
+label unchanged: **FEATURE FREEZE**. **Authorization: Owner-Only Release
+Polish & Acceptance v1** while it runs; **NONE** on its closure.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3958,8 +3975,85 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE.** The owner must decide the next step. See the
-closure entry immediately below.
+**Authorization: Owner-Only Release Polish & Acceptance v1** while it runs;
+**NONE** on its closure. See the entry immediately below. *(The line that
+stood here before this entry -- "Authorization: NONE. The owner must decide
+the next step." -- recorded the state after Gate G -- Launch Package
+Refresh v1, whose closure entry follows.)*
+
+**Recorded, 2026-09-29, by Owner-Only Release Polish & Acceptance v1.**
+
+**Accepted delta -- the owner's decision, recorded here, not decided here.**
+
+- **Gate G is waived by the owner.** It is **not passed**. No participant
+  was recruited, contacted or sent anything; no finding was collected from
+  anyone but the owner. MockingBird must never be described -- in the
+  release, its documentation, launch material or any report -- as
+  externally validated, independently tested, or as having passed a
+  private pre-release cohort.
+- **The owner is the sole pre-release tester until public release.**
+- **Sequence, reconciled.** Previously: *External Pre-Release Acceptance
+  (Gate G) -> Final Release Hardening (Lane S) -> the one public launch*.
+  Now: *owner-only pre-release acceptance (owner testing plus
+  disposable-home native-Windows acceptance of each private candidate) ->
+  Final Release Hardening -> the one public launch*. The one-release
+  doctrine (§7) is unchanged: no beta, and the publish/announce decision
+  remains the owner's alone.
+- **Evidence lost by this waiver (disclosed, not substituted):**
+  - *Independent setup diversity:* no other homes, networks, Windows
+    builds and editions, locales, time zones, antivirus/SmartScreen
+    policies or disk layouts.
+  - *Hardware diversity:* no other GPUs (or GPU-less PCs), network/USB
+    cameras, or Camera Node hardware than the owner's own reference
+    setup.
+  - *User diversity:* no non-developer following only the shipped
+    materials (README-FIRST, onboarding) without the developer's knowledge
+    of the system; no independent accessibility, comprehension or
+    expectation findings; no independent findings intake. The owner's
+    knowledge of the system biases what gets exercised.
+  - Owner testing and automated/native acceptance **reduce** these gaps
+    for the owner's own configuration only; they do not close them.
+- **Historical Gate G material is preserved unchanged:**
+  [external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md),
+  `docs/gate-g-launch-package-v1/`,
+  [external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md)
+  and
+  [external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md](external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md).
+  The assembled participant bundle stays in ignored `dist/` and is not
+  sent. Its open `{{OWNER}}` placeholders are no longer needed.
+
+**Authorized.** *Owner-Only Release Polish & Acceptance v1*, directly by
+the owner, starting from `c02ffd5` (version `0.1.0`, schema `v61`,
+accepted Host candidate source `2272126`): (1) this record; (2) O-1 --
+recorded media without a capture time must read "Capture time unknown",
+never as the 1970 placeholder formatted as a date, preserving raw
+timestamps, provenance, ordering, evidence and reviewed truth, and using
+an existing provenance fact rather than inferring from old dates; (3) O-2
+-- a detector-produced offline Visit must not be called "manual media",
+without inventing evidence or Detection rows; (4) the embedded
+README-FIRST (five-step onboarding including Account; Local Data -> *Shut
+down MockingBird* as the primary stop, Task Manager/restart only for a
+forced stop; precise Local Only wording with opt-in network features;
+FFmpeg and BirdNET weights not bundled; accurate uninstall/data
+retention) with packaging tests that keep it true; (5) the
+midnight-boundary fixture in `test_today_dashboard_shows_only_corrected_
+truth`, without changing production Today/date semantics; then one frozen
+candidate-source commit, a fresh private Windows Host artifact (and the
+Camera Node artifact from the same commit if needed for consistency, with
+no Pi/hardware claim), independent verification, and native-Windows
+acceptance on a disposable home. Non-goals: new capability, schema
+change, detector/model/threshold change, Camera Node behaviour change,
+dependencies, Pi work, reopening accepted milestones. No push, tag,
+signature, publication, upload, recruitment or contact. Protected files
+and `uv.lock` untouched.
+
+**Status: IN PROGRESS** (this record). The closure -- candidate SHA,
+artifact identities, native-Windows evidence, validation, limitations and
+classification -- is added here and in
+`docs/owner-only-release-polish-acceptance-v1-report.md` when the
+milestone completes.
+
+---
 
 **Closure recorded, 2026-09-29, by Gate G -- Launch Package Refresh v1**
 (see
@@ -13335,6 +13429,18 @@ DECISION** -- the owner-only steps remaining (a real signing key if
 desired; the standing BirdNET commercial-adjacent legal question; the
 publish/announce decision itself) are named explicitly in the report's §9
 and are not, and cannot be, resolved by this or any engineering milestone.
+
+**2026-09-29 update (Gate G waived by the owner; owner-only pre-release
+acceptance):** the owner waived Gate G -- **waived, not passed** -- and is
+the sole pre-release tester until public release (see §3, *Owner-Only
+Release Polish & Acceptance v1*, for the complete record and the
+disclosed loss of independent setup, hardware and user-diversity
+evidence). This lane's upstream dependency on "External Pre-Release
+Acceptance findings" is replaced by owner-only pre-release acceptance
+findings; the framing paragraph above and the dated updates before this
+one are preserved as history. Sequence: *owner-only pre-release
+acceptance -> Final Release Hardening -> the one public launch*. This
+lane's status remains **LAST**.
 
 ## 7. One-release doctrine
 

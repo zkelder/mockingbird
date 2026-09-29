@@ -2733,6 +2733,15 @@ recruited, no cohort size is fixed, and no finding has been collected.**
 Current authorization to begin execution remains `NONE` -- see
 [release-execution-state.md](release-execution-state.md) §3/§6.
 
+**2026-09-29 update (waived by the owner, not passed):** the owner waived
+Gate G and is the sole pre-release tester until public release. The
+sequence is now *owner-only pre-release acceptance -> Final Release
+Hardening -> the one public launch*. The independent setup, hardware and
+user-diversity evidence this gate was meant to supply is lost, not
+substituted, and MockingBird must never be described as externally
+validated. The plan above is kept as history. See
+[release-execution-state.md](release-execution-state.md) §3 and §6.S.
+
 ### Numeric release budgets
 
 Where a valid numeric threshold already exists, it is preserved here rather
@@ -2944,7 +2953,8 @@ canonical roadmap must retain -- eventually, not now -- includes:
   "Deployment and organization doctrine" in
   [product-doctrine.md](product-doctrine.md));
 - hardware/BOM/compatibility truth;
-- an external pre-release acceptance cohort (Gate G, above);
+- an external pre-release acceptance cohort (Gate G, above -- waived by
+  the owner 2026-09-29, not passed);
 - support/security/community plan;
 - release artifacts/versioning/checksums/SBOM/signing where practical;
 - launch media built from real MockingBird evidence, never staged/synthetic
