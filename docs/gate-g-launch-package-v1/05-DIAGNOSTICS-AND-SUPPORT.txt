@@ -1,0 +1,60 @@
+Diagnostics and Support Bundles
+===============================
+
+{{OWNER_NAME}} is your only support contact: {{OWNER_CONTACT}}.
+There is no separate support team. You don't need to dig into
+MockingBird's internals yourself.
+
+DOCTOR (start here)
+
+Doctor runs one check of your database, storage, cameras, and detection
+and identification setup, and explains anything that needs attention in
+plain language.
+
+- In the app: open Doctor from the menu.
+- If MockingBird itself won't start: open the MockingBird-windows-x64
+  folder in File Explorer, click the address bar, type  cmd  and press
+  Enter, then run:
+
+    python\python.exe -m mockingbird doctor
+
+What to expect:
+- Right after first-run setup, before any media has been saved, Doctor
+  should report healthy. It explains that the media folder "has not
+  been created yet" -- that is normal.
+- After you stop MockingBird through Task Manager or a restart, Doctor
+  notes that the previous run "did not shut down cleanly". That is
+  expected after a forced stop and harmless. It should not appear after
+  Local Data -> "Shut down MockingBird".
+- A low-disk-space warning is real and means your disk is nearly full.
+
+If Doctor reports a problem you don't understand, copy or screenshot its
+summary and send it with your report.
+
+SUPPORT BUNDLE (only when asked, or for a real problem)
+
+A support bundle is one small .zip file for a support conversation. It
+contains Doctor's results, basic facts about your cameras (never their
+passwords), a recent, automatically redacted slice of MockingBird's
+log, and version information. It never includes camera passwords,
+pairing secrets, sign-in tokens, images, or video.
+
+To create one:
+1. Open the MockingBird-windows-x64 folder in File Explorer.
+2. Click the address bar, type  cmd  and press Enter.
+3. Run:
+
+     python\python.exe -m mockingbird support-bundle --no-local-paths
+
+   (--no-local-paths hides folder paths, which can include your Windows
+   user name. A few paths may still appear inside the detailed Doctor
+   section.)
+4. It prints where the file was saved -- normally inside
+   %LOCALAPPDATA%\MockingBird\data\ -- named like
+   mockingbird-support-bundle-20260101T120000Z.zip.
+5. Attach that file to your report.
+
+PLEASE DON'T SEND unless I ask for one specific item and explain why:
+- mockingbird.sqlite3 (your database)
+- camera images or video
+- camera passwords or any other password

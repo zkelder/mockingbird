@@ -1,0 +1,82 @@
+Known Limitations -- Please Read Before You Start
+=================================================
+
+Knowing these in advance means you won't mistake expected behavior for
+a bug. If something here behaves worse than described, that IS worth
+reporting.
+
+DETECTION AND TIMING
+
+- No supported NVIDIA graphics card, no automatic detection. MockingBird
+  says so plainly on this PC. Everything else still works.
+- A new Visit typically appears about 80-115 seconds after the real
+  activity, and occasionally several minutes later during busy
+  activity. MockingBird waits to gather a complete picture before
+  showing it. If you cannot tell "nothing happened" from "still
+  processing" from "something is wrong", please report that.
+- During unusually busy, continuous activity -- several birds at the
+  same spot in quick succession -- MockingBird may not create a separate
+  Visit for every individual. It deliberately prefers missing one over
+  wrongly merging two different birds into one Visit.
+- MockingBird is watching for wildlife, but people and pets can
+  occasionally be recorded as a Visit. Please mark those honestly when
+  you review them.
+
+IDENTIFICATION
+
+- Species suggestions are guesses, never facts, until you confirm or
+  correct them. Suggestions cover birds; for other animals you identify
+  them yourself.
+- MockingBird will sometimes give no suggestion at all ("No useful
+  suggestion is available yet"). That is honest and expected, not a
+  failure; you can still review and save your own answer.
+- The first species suggestion after starting can take close to a
+  minute; later ones are faster.
+
+THIS BUILD
+
+- The build is not code-signed, so Windows SmartScreen may warn you the
+  first time (see 02-INSTALL-AND-VERIFY.txt).
+- Before sending this build, the developer re-checked install, first-run
+  setup, review/correction, backup/restore, upgrade, recovery, and
+  shutdown on real Windows hardware. Live camera preview and live
+  observation were NOT re-checked on this exact build (no camera was
+  available); earlier builds with the same camera code were. Please
+  report any camera or observing problem.
+- The README-FIRST.txt inside the application folder describes stopping
+  MockingBird only through Task Manager. Use Local Data ->
+  "Shut down MockingBird" instead (both are safe).
+
+IMPORTED VIDEO
+
+- A recorded video file with no capture time stored inside it is shown
+  with a placeholder date (it can look like "Dec 31, 7:00 PM") instead
+  of saying "capture time unknown". Those Visits do not appear in Today.
+- The review page for a Visit found in imported video may say
+  "No detections are attached to this manual media visit" even though
+  one was found. Wording only.
+
+PRIVACY AND SECURITY
+
+- Camera login details are stored in plain text on your computer.
+- Privacy/Ignore Zones stop Visits from starting in that area. They do
+  not blur the area in every stored image.
+- Phone/other-device access is off by default and, when turned on, uses
+  plain (unencrypted) HTTP on your home network. Never forward
+  MockingBird's port on your router to the internet.
+
+NOT INCLUDED OR NOT SUPPORTED
+
+- Bird-sound identification (BirdNET) is not included in this build and
+  is not part of this test. BirdNET's model is licensed for
+  non-commercial use only (CC BY-NC-SA 4.0), which is why MockingBird
+  never bundles or downloads it. MockingBird itself is MIT-licensed; see
+  LICENSE and THIRD_PARTY_NOTICES.md inside the application folder.
+- FFmpeg is not included. Some network/USB camera and video-import
+  paths need it installed separately; MockingBird tells you if so.
+- More than one physical place per installation, a native phone app
+  (the phone browser works), Mac, Linux packages, AMD or Apple graphics,
+  and remote/cellular/solar field setups are not supported in this test.
+
+This is unfinished software. Rough edges and real bugs are expected --
+finding them is the point of this test.

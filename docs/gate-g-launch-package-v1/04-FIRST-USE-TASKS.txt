@@ -1,0 +1,75 @@
+First-Use Tasks
+===============
+
+Please work through these at your own pace. You don't need to do them
+in one sitting. Write down anything confusing, surprising, or broken
+(07-FINDINGS-TEMPLATE.txt).
+
+HOW TO READ WHAT MOCKINGBIRD SHOWS YOU
+
+MockingBird separates three kinds of information:
+
+  Measured  -- what was directly recorded: a time, a stored frame, a
+               camera reading.
+  Inferred  -- MockingBird's guess, for example a species suggestion.
+               Shown with words like "likely" or "possible".
+  Reviewed  -- what YOU confirmed or corrected. Only this becomes your
+               real history (Bird Log, statistics, exports).
+
+If a guess is ever presented as if it were a confirmed fact, please
+report it.
+
+TASK 1 -- GET SET UP
+
+1. Finish the five-step first-run setup (02-INSTALL-AND-VERIFY.txt).
+2. Add your camera. You should see a live preview. If your camera type
+   is not supported, MockingBird should tell you clearly why. If it
+   fails silently or the message makes no sense, report it.
+3. Start observing (Cameras -> your camera -> Start observing).
+   Please note roughly how long setup took and where you got stuck.
+
+TASK 2 -- SEE YOUR FIRST VISIT
+
+1. Leave MockingBird observing while real wildlife is active.
+2. Check Today and Bird Log first. That is where new activity normally
+   shows up.
+3. From the app alone, can you tell whether a Visit still needs your
+   review?
+4. Remember the normal delay (about 80-115 seconds, sometimes several
+   minutes during busy activity).
+
+TASK 3 -- REVIEW AND CORRECT (please do this for several Visits)
+
+1. Open Review Queue and open a Visit.
+2. Open its evidence gallery. You should see the frames captured for
+   that Visit, not just one picture.
+3. If there is a species suggestion, treat it as a guess. Confirm it if
+   right, correct it if wrong, or choose an honest "unknown" option if
+   you are not sure.
+4. MockingBird may honestly say it has no useful suggestion. That is
+   correct behavior. Please don't feel you must pick a species.
+5. MOST IMPORTANT: once you confirm or correct something, it must stay
+   that way. If a correction ever reverts, disappears, or is replaced by
+   a new guess, report it right away. That is the most serious kind of
+   problem in this test.
+
+TASK 4 -- LIVE WITH IT FOR A FEW DAYS
+
+- Let it run across several days without special attention.
+- Try it on your phone's browser if you like (see the guide's
+  "Use MockingBird on your phone"; off by default).
+- Note whether it stays responsive as your history grows, and whether
+  it ever stops without you asking.
+
+TASK 5 -- BACKUP AND SHUTDOWN (at least once)
+
+1. Local Data -> create a backup, then download it. Confirm the file
+   actually lands on your computer.
+2. Local Data -> "Shut down MockingBird" -> "Confirm shut down".
+   Start it again with "Start MockingBird.vbs" and confirm everything is
+   as you left it.
+
+TASK 6 -- RUN DOCTOR (at least once)
+
+Open Doctor from the menu (see 05-DIAGNOSTICS-AND-SUPPORT.txt). Does its
+plain-language summary match how you think your installation is doing?

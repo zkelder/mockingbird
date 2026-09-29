@@ -1,5 +1,19 @@
 # External Pre-Release Acceptance -- Private Cohort v1: Participant Materials
 
+**Superseded 2026-09-29 for §§2-9 by
+[gate-g-launch-package-v1/](gate-g-launch-package-v1/00-START-HERE.txt)**
+(*Gate G -- Launch Package Refresh v1*; see
+[its report](external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md)).
+The refreshed package targets candidate `2272126`. It corrects these
+statements below, which no longer match that candidate: the four-step
+onboarding (now five, with Account); stopping only via Task Manager (the
+in-app **Shut Down MockingBird** is now preferred); BirdNET "downloads a
+model the first time you use it" (it is never bundled or downloaded, and
+is out of scope for the test); and `python -m mockingbird doctor` with no
+packaged interpreter path. It also adds checksum verification, the
+SmartScreen notice, and the support-bundle steps. §1 (the invitation
+draft) is still usable. This document is kept unchanged below as history.
+
 **Status: DRAFT MATERIALS ONLY -- NOT SENT, NOT APPROVED.** Prepared under
 *External Pre-Release Acceptance -- Private Cohort v1* to satisfy that
 milestone's §4 ("Participant materials"). Nothing in this document has been

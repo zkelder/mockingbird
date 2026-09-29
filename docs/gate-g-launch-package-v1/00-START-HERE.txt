@@ -1,0 +1,28 @@
+MockingBird -- Private Pre-Release Test Package
+================================================
+
+Hello {{PARTICIPANT_NAME}},
+
+Thank you for helping test MockingBird before it is released. This is
+a private test of unreleased software, not a public beta. {{OWNER_NAME}}
+is your only point of contact: {{OWNER_CONTACT}}.
+
+Please read these files in order. Nothing gets installed until you
+have read and signed the consent agreement.
+
+  01-CONSENT-AGREEMENT.txt        Read and sign first.
+  02-INSTALL-AND-VERIFY.txt       What you need, checking the download,
+                                  unpacking, starting, stopping.
+  03-KNOWN-LIMITATIONS.txt        Expected behavior that is not a bug.
+  04-FIRST-USE-TASKS.txt          What to try, and how review works.
+  05-DIAGNOSTICS-AND-SUPPORT.txt  Doctor and support bundles.
+  06-BACKUP-UNINSTALL-WITHDRAW.txt  Backup, removal, stopping the test.
+  07-FINDINGS-TEMPLATE.txt        How to report a problem.
+  PROVENANCE.txt                  Exactly which build this is.
+  SHA256SUMS                      Checksums for every file here.
+  MockingBird-windows-x64.zip     The application itself.
+
+The one-sentence version: MockingBird runs entirely on your own Windows
+PC, keeps everything on that PC, offers honest guesses about what it
+sees, and treats only your own explicit confirmations and corrections
+as real history.

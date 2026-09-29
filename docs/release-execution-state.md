@@ -846,6 +846,13 @@ a rebuilt, independently verified candidate at `2272126`, which was
 re-accepted on native Windows. Phase label unchanged: **FEATURE FREEZE**.
 **Authorization: NONE.** See §3.
 
+**Correction, 2026-09-29:** *Gate G -- Launch Package Refresh v1*,
+authorized by the owner, executed and **complete** (classification A). The
+participant package was reconciled against candidate `2272126` and is
+assembled, locally only and not sent, with placeholders for owner inputs.
+**Gate G is not started.** Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3953,6 +3960,45 @@ exactly as open as stated.
 
 **Authorization: NONE.** The owner must decide the next step. See the
 closure entry immediately below.
+
+**Closure recorded, 2026-09-29, by Gate G -- Launch Package Refresh v1**
+(see
+[external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md](external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md)).
+This was a bounded refresh under the freeze. It was not product
+development.
+
+- **Artifact, unchanged and not rebuilt:** Windows ZIP
+  `124939b96bde155fceb34595a8ab41d7ca65ef2c3ff9a1d4a6bdeaeecc8dc650`
+  (`build_id c1b25f79d2db3f10`, source `2272126`, `0.1.0`, schema `v61`);
+  Camera Node wheel `38dfac47…`. Checked this session: both `SHA256SUMS`
+  OK; `verify_release_artifact.py` OK; all 212/212 packaged
+  `mockingbird/*.py` files byte-identical to `2272126`; `LICENSE` and
+  `THIRD_PARTY_NOTICES.md` identical; no BirdNET weights, no FFmpeg.
+- **Materials reconciled:** the new package is in
+  `docs/gate-g-launch-package-v1/` (tracked sources). The assembled bundle
+  is in the ignored `dist/gate-g-launch-package-v1-2272126/`: the ZIP,
+  manifest, SBOM, `SHA256SUMS` and `PROVENANCE.txt`, plus consent,
+  install/verify, limitations, first-use tasks, diagnostics/support
+  bundle, backup/uninstall/withdrawal, and the findings template. The
+  package corrects four statements from 2026-09-08 that no longer matched
+  the candidate: four-step onboarding, stopping only through Task Manager,
+  BirdNET "downloads a model", and a bare `python` Doctor command.
+  §§2-9 of the old materials are marked superseded; the historical report
+  is unchanged.
+- **Disclosed, not fixed:** the ZIP's own `README-FIRST.txt` still
+  describes stopping only through Task Manager. That method is still safe,
+  and changing the file needs a rebuild. Recommended for Final Release
+  Hardening.
+- **Owner inputs remaining:** `{{PARTICIPANT_NAME}}`/cohort roster,
+  `{{OWNER_NAME}}`, `{{OWNER_CONTACT}}`, `{{DELIVERY_CHANNEL}}`,
+  `{{FINDINGS_CHANNEL}}`. Also open: approval of the wording, the go/no-go,
+  and whether any participant may use the Camera Node path.
+- No product, schema, model or Camera Node change; no new Pi evidence; no
+  contact, upload, account, push, tag, signature or publication. The
+  protected files and `uv.lock` are byte-identical. **Gate G is not
+  started. Authorization: NONE.**
+
+---
 
 **Closure recorded, 2026-09-29, by Native-Windows Runtime Shutdown &
 Listener Resilience Correction v1** (see

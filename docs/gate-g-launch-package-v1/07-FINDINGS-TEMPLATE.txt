@@ -1,0 +1,42 @@
+Findings Report
+===============
+
+Send each report privately through: {{FINDINGS_CHANNEL}}
+Please don't post reports anywhere public.
+
+Copy this template for each separate problem or suggestion.
+
+-----------------------------------------------------------------------
+Date and approximate time it happened:
+
+What did you do?
+
+
+What did you expect to happen?
+
+
+What actually happened?
+
+
+How bad does it feel to you? (pick one)
+  crashed / lost or changed data / a correction I made didn't stick /
+  very confusing / minor annoyance / just a suggestion
+
+Can you make it happen again? (pick one)
+  yes, every time / yes, sometimes / no, only once
+
+Your setup (only needed the first time, or if it changed):
+  Windows version:
+  Graphics card (or "no NVIDIA card"):
+  Camera type (network RTSP/ONVIF, USB/built-in, imported files,
+  Camera Node):
+  Number of cameras:
+
+Doctor summary or support bundle (if this looks like a real problem --
+see 05-DIAGNOSTICS-AND-SUPPORT.txt). Please don't attach your database,
+images, video, or passwords unless I asked for one specific item.
+
+
+Anything else?
+
+-----------------------------------------------------------------------

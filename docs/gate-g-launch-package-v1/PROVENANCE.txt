@@ -1,0 +1,42 @@
+MockingBird Build Provenance
+============================
+
+Application file:     MockingBird-windows-x64.zip
+SHA-256:              124939b96bde155fceb34595a8ab41d7ca65ef2c3ff9a1d4a6bdeaeecc8dc650
+Version:              0.1.0
+Source commit:        2272126bfed784b48862fd59b99e19e03202b26f
+Source clean:         yes (built from an exact source snapshot)
+Build ID:             c1b25f79d2db3f10
+Built at:             2026-09-29T04:54:20Z
+Data format:          schema v61 (older data is upgraded automatically,
+                      after an automatic safety backup)
+Unpacked size:        19,284 files, 4,923,709,105 bytes
+Embedded Python:      3.12.7
+Code signing:         none (unsigned; see 02-INSTALL-AND-VERIFY.txt)
+
+manifest.json and sbom.json (CycloneDX 1.5, 59 components) in this
+package are the build's own provenance records, covered by SHA256SUMS.
+
+Once MockingBird is running, the build it reports about itself should
+match the commit and build ID above.
+
+INCLUDED MODELS (bundled, verified by SHA-256 at build time)
+
+- Wildlife detection: MegaDetector v5a (ONNX), MIT license.
+  onnx  b03ef7968a54be1ae15e6987d520be0fa3cd71d8d229ec3aeb0bf0faa710abbc
+  source fe3e90e4b1955821ab7c1f88b446dc0c8cb25e109fdd1872916a55305294a5ef
+- Species suggestions: BioCLIP-2 (runs on the regular processor), MIT
+  license.
+  weights b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef
+  labels  b90cea20b5d4ac992fdfc170bcca4b346de0e23ee8d25e78900d4800ae7fa442
+
+NOT INCLUDED
+
+- BirdNET model weights (non-commercial license, CC BY-NC-SA 4.0).
+- FFmpeg.
+
+LICENSES
+
+MockingBird is MIT-licensed. See LICENSE and THIRD_PARTY_NOTICES.md
+inside the application folder for MockingBird and every bundled
+third-party component.

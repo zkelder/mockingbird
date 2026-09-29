@@ -1,0 +1,61 @@
+Backup, Recovery, Uninstall, and Stopping the Test
+==================================================
+
+BACKUP (please try at least once)
+
+Local Data -> create a backup -> download it. Confirm the file lands
+somewhere on your computer.
+
+IF MOCKINGBIRD WON'T START OR REPORTS A DATABASE PROBLEM
+
+MockingBird checks its database before opening and refuses to start
+rather than risk your data. Please contact {{OWNER_NAME}} first; I can
+walk you through this. The steps are:
+1. Stop MockingBird if it is running.
+2. In your data folder (normally %LOCALAPPDATA%\MockingBird, also shown
+   on the Local Data page), move mockingbird.sqlite3 somewhere else.
+   Don't delete it.
+3. Start MockingBird again. It starts fresh.
+4. Local Data -> Import backup (your most recent .mbbackup file) ->
+   Restore.
+
+IF I SEND YOU A NEWER BUILD
+
+Check its checksum the same way as before, stop MockingBird (Local
+Data -> "Shut down MockingBird"), unpack the new build into a new
+folder, and start it from there. Your data lives outside
+the application folder, so it carries over. If the new build needs to
+update your data, MockingBird first makes an automatic safety backup
+(listed in Local Data as "Before update") and shows a short note that
+it updated your data. If you don't see that note after an update,
+please report it.
+
+UNINSTALL (any time)
+
+1. Stop MockingBird: Local Data -> "Shut down MockingBird" ->
+   "Confirm shut down". (If it won't open: end "pythonw.exe" in Task
+   Manager, or restart your computer.) Windows will not let you delete
+   the folder while MockingBird is running.
+2. Delete the MockingBird-windows-x64 application folder. This removes
+   MockingBird itself and leaves your data untouched. Unpacking a copy
+   later, anywhere, picks up where you left off.
+3. ONLY if you also want to permanently delete your data: separately
+   delete %LOCALAPPDATA%\MockingBird (or the data folder shown on the
+   Local Data page). This cannot be undone unless you kept a backup
+   elsewhere. It is deliberately a separate step.
+
+MockingBird has no entry in Windows' "Uninstall a program" list; there
+is nothing else to remove. If you installed FFmpeg separately, it is
+yours to keep or remove.
+
+STOPPING THE TEST (WITHDRAWAL)
+
+- You can stop at any time, for any reason, without explaining. Just
+  tell {{OWNER_NAME}} at {{OWNER_CONTACT}}.
+- Your MockingBird data never left your computer, and stopping doesn't
+  change that. Keep it, or remove it with the steps above -- your
+  choice.
+- Anything you already sent me (descriptions, Doctor summaries, support
+  bundles) is kept until this test and the release preparation after it
+  are finished, unless you ask me to delete it. You can ask at any time,
+  including after you stop.
