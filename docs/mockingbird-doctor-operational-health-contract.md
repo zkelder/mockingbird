@@ -167,7 +167,9 @@ a genuinely corrupt SQLite file that raises instead of returning a clean
 
 - **Blocking** (`FAIL`, `recoverability=blocking`): the install cannot be
   trusted to observe wildlife at all -- database unreachable/corrupt,
-  incompatible schema, or the storage root missing/unwritable.
+  incompatible schema, or the storage root unwritable, or missing once media
+  has been recorded into it (a media root not created yet because nothing
+  has been saved is informational, even with a Source configured).
 - **Degraded but usable** (`WARN`, `recoverability=degraded`): a real
   problem exists, but the core loop still works with a reduced capability
   -- for example, "BioCLIP runtime unavailable. Wildlife Visits can still

@@ -749,53 +749,31 @@ def _gather_export_root_status(
     return results
 
 
-# Mirrors `product_repository.demo_data.SOURCE_ID` exactly -- duplicated,
-# not imported, matching this module's own already-established pattern
-# just below (`_DOCTOR_NODE_API_VERSION`/`_DOCTOR_TRANSPORT_PROTOCOL_
-# VERSION`): `diagnostics.doctor` deliberately imports nothing from `api/`
-# today (see this module's own design-invariant docstring), and
-# `demo_data` lives under `api/`. `ProductRepository.__init__` seeds
-# exactly this one walkthrough Source on a brand-new database (see
-# `seed_if_empty`/`_seed_session`) -- confirmed directly against a real
-# bare construction, not assumed -- so counting it would make this check
-# report "configured" on every fresh install, defeating its purpose.
-# `remove_sample_data` already excludes it by this same id for the
-# identical reason (a real Source existing "besides the demo one").
-_DOCTOR_DEMO_SOURCE_ID = "source-backyard-demo"
+def _gather_has_any_media_recorded(engine: Engine | None) -> bool | None:
+    """Whether any MediaAsset has ever been recorded -- the one fact that
+    proves something has actually written into the lazily created media
+    root, so its absence is lost evidence storage rather than a not-yet-used
+    install.
 
-
-def _gather_has_any_source_configured(engine: Engine | None) -> bool | None:
-    """Whether at least one real Source (any kind -- Camera Node, RTSP,
-    ONVIF, external URL, folder import, webhook, ...) has ever been
-    configured by a user -- the seeded walkthrough demo Source does not
-    count (see `_DOCTOR_DEMO_SOURCE_ID`, above).
-
-    Release Reliability & First-Run Recovery v1: the real, previously
-    missing signal that distinguishes "database exists but the first-run
-    wizard has not reached Add a camera yet" from "database exists and this
-    install has genuinely started using MockingBird" -- see
-    `_interpret_storage`'s own docstring for why raw database-file
-    existence alone conflated the two. A cheap `SELECT ... LIMIT 1`
-    (existence, not a count) against the same `engine` `_gather_camera_node`
-    already reads from, reusing that established "pass the already-open
-    Engine in, never construct a `ProductRepository`" convention rather
-    than adding a new database dependency to this read-only module.
-    `None` when no engine is available at all (database unreachable/absent)
-    -- `_interpret_storage` never needs to distinguish that from `False`
-    here, since the database-existence check already covers that case.
+    Native-Windows Runtime Shutdown & Listener Resilience Correction v1
+    (F-3): this replaced a "has any real Source been configured" gate
+    (Release Reliability & First-Run Recovery v1). A configured Source is
+    not proof of a media write: default onboarding's "Finish without
+    watching yet" and any import-only Source before its first import both
+    configure a Source without writing media, and Doctor then reported a
+    healthy new install as `UNHEALTHY`. The seeded walkthrough demo data
+    records no MediaAsset, so it needs no exclusion here. A cheap
+    existence `SELECT ... LIMIT 1` against the already-open `engine`, the
+    same "pass the Engine in, never construct a `ProductRepository`"
+    convention `_gather_camera_node` uses. `None` when no engine is
+    available -- `_interpret_storage` never escalates on an unconfirmed
+    fact.
     """
 
     if engine is None:
         return None
     with engine.connect() as connection:
-        return (
-            connection.execute(
-                select(CameraSourceModel.id).where(
-                    CameraSourceModel.id != _DOCTOR_DEMO_SOURCE_ID
-                ).limit(1)
-            ).first()
-            is not None
-        )
+        return connection.execute(select(MediaAssetModel.id).limit(1)).first() is not None
 
 
 def _gather_storage(
@@ -827,9 +805,8 @@ def _gather_storage(
         "storage_health_tier": disk_status.storage_health_tier if disk_status else "healthy",
         "probed_directory": str(probe_directory),
         "export_roots": _gather_export_root_status(export_roots or {}, primary_device_id=primary_device_id),
-        # Release Reliability & First-Run Recovery v1: see
-        # `_gather_has_any_source_configured`'s own docstring.
-        "has_any_source_configured": _gather_has_any_source_configured(engine),
+        # See `_gather_has_any_media_recorded`'s own docstring.
+        "has_any_media_recorded": _gather_has_any_media_recorded(engine),
     }
 
 
@@ -842,34 +819,28 @@ def _interpret_storage(gathered: dict[str, Any], *, database_exists: bool) -> Do
     if not gathered.get("media_root_exists"):
         # `ProductRepository.__init__` does not eagerly create the media
         # root either -- confirmed directly, not assumed -- it is created
-        # lazily on first real media write. On a genuinely established
-        # install (database exists *and* at least one Source has been
-        # configured), a missing folder is a real problem; a not-yet-in-use
-        # install is the same honest "not started yet" state the Database
-        # check already reports as informational, not a defect.
+        # lazily on the first real media write. A missing folder is a real,
+        # blocking problem only once media has actually been recorded into
+        # it; before that (no database yet, a Source configured but nothing
+        # captured or imported yet) it is the same honest "not started yet"
+        # state the Database check already reports as informational.
         #
-        # Release Reliability & First-Run Recovery v1: raw database-file
-        # existence alone used to gate this branch, but the database file is
-        # created at server-process startup itself (see
-        # `runtime_state.prepare_runtime_state`), before the first-run
-        # wizard's Storage step is ever reached -- not at wizard completion.
-        # A brand-new participant who ran `doctor` mid-setup (exactly what
-        # this product's own onboarding/participant materials ask them to
-        # try) saw an alarming "genuine problem" `BLOCKING` message during
-        # entirely normal first-run setup. Treating "no Source configured
-        # yet" the same as "no database yet" closes that gap: nothing has
-        # ever had a reason to write to the media root in either case, so
-        # neither is a genuine problem. `has_any_source_configured is None`
-        # (no engine reachable at all -- the database check itself already
-        # reports this) is treated the same as `False`: never escalate to
-        # BLOCKING on a fact this check could not actually confirm.
-        if not database_exists or not gathered.get("has_any_source_configured"):
+        # History: raw database-file existence gated this first, then
+        # "any real Source configured" (Release Reliability & First-Run
+        # Recovery v1). Both still reported default first-run onboarding as
+        # BLOCKING (Native-Windows Runtime Shutdown & Listener Resilience
+        # Correction v1, F-3), because neither proves a media write.
+        # `has_any_media_recorded is None` (no engine reachable -- the
+        # database check itself already reports that) is treated the same
+        # as `False`: never escalate to BLOCKING on a fact this check could
+        # not actually confirm.
+        if not database_exists or not gathered.get("has_any_media_recorded"):
             return DoctorCheckResult(
                 code=DoctorCheckCode.STORAGE,
                 component="Storage",
                 status=DoctorStatus.PASS,
                 summary="The media storage folder has not been created yet.",
-                detail="This is expected before MockingBird's first launch or before any camera has been added.",
+                detail="This is expected until MockingBird saves its first media file.",
                 recoverability=DoctorRecoverability.INFORMATIONAL,
                 diagnostic_context=context,
             )

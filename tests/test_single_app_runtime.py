@@ -467,15 +467,207 @@ def test_real_launch_prepares_the_crash_marker_and_logging_before_serving(
     )
     # Never actually bind a port or block forever in a test.
     monkeypatch.setattr(runtime_module, "port_is_available", lambda _host, _port: True)
-    # Release Reliability & First-Run Recovery v1: `runtime.run()` now
-    # constructs `uvicorn.Config`+`uvicorn.Server` explicitly rather than
-    # calling `uvicorn.run(...)` (see runtime.py and
-    # test_windows_launcher_instance_identity.py's `_prepare_runtime_env`
-    # for the full rationale) -- mock `Server.run` itself instead.
-    monkeypatch.setattr(runtime_module.uvicorn.Server, "run", lambda self: None)
+    # `runtime.run()` builds the real `uvicorn.Server` and then serves it
+    # through `serve_until_stopped` (see runtime.py) -- mock only that step.
+    monkeypatch.setattr(runtime_module, "serve_until_stopped", lambda _server: None)
 
     result = run(["--no-browser", "--port", "8199", "--skip-frontend-build"])
 
     assert result == 0
     assert prepare_calls == [runtime_home.resolve()]
     assert log_calls == [runtime_home.resolve()]
+
+
+# ---------------------------------------------------------------------------
+# Native-Windows Runtime Shutdown & Listener Resilience Correction v1.
+#
+# F-1 and F-2 were found on native Windows against the bundled CPython's
+# Proactor event loop, which this Linux suite cannot run. These tests pin the
+# two runtime decisions that close them at the closest controllable
+# boundary: the uvicorn server loop is always a selector loop (F-2 and F-1's
+# trigger), and graceful shutdown is bounded even if a connection's
+# server-side bookkeeping leaks, which is exactly what the Proactor bug did
+# (F-1). The real native-Windows socket/process proof is
+# scripts/native_windows_runtime_resilience_acceptance.py.
+# ---------------------------------------------------------------------------
+
+
+def _free_loopback_port() -> int:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class _LeakedTransport:
+    """Stand-in for a transport whose close never reached `Server._detach`."""
+
+    def close(self) -> None:
+        pass
+
+    def abort(self) -> None:
+        pass
+
+
+def _leak_one_server_connection(server: asyncio.AbstractServer) -> None:
+    """Reproduce F-1's exact state: the bundled CPython's Proactor
+    `_call_connection_lost` raised `WinError 10054` before `server._detach()`,
+    leaving `asyncio.Server`'s active-connection count one too high forever,
+    so `Server.wait_closed()` (awaited unbounded by uvicorn's own shutdown)
+    never returns."""
+
+    try:
+        server._attach()  # CPython 3.11/3.12
+    except TypeError:
+        server._attach(_LeakedTransport())  # CPython 3.13+
+
+
+def _start_real_server(app, port: int, monkeypatch):
+    """Start a real server through the real launch path's own seams, forced
+    onto the native-Windows branch (selector loop via `asyncio.Runner`)."""
+
+    import threading
+    import time
+
+    monkeypatch.setattr(runtime_module, "_SERVE_ON_SELECTOR_LOOP", True)
+    server = runtime_module.build_uvicorn_server(app, host="127.0.0.1", port=port, log_config=None)
+    thread = threading.Thread(target=runtime_module.serve_until_stopped, args=(server,), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        assert thread.is_alive() and time.monotonic() < deadline, "test server never started"
+        time.sleep(0.02)
+    return server, thread
+
+
+def test_graceful_shutdown_is_bounded_when_a_connection_never_detaches(monkeypatch) -> None:
+    """F-1: a leaked server connection must not stop the existing lifespan
+    teardown (which ends in `mark_clean_shutdown()`) from running, and the
+    serve call must return within the configured bound."""
+
+    import time
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    assert isinstance(runtime_module.GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS, (int, float))
+    assert 0 < runtime_module.GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS <= 30
+    # Shrink only the wait for this test; the production value is asserted
+    # through the built Config just below.
+    monkeypatch.setattr(runtime_module, "GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS", 1)
+
+    teardown_events: list[str] = []
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        teardown_events.append("lifespan_teardown_completed")
+
+    server, thread = _start_real_server(FastAPI(lifespan=lifespan), _free_loopback_port(), monkeypatch)
+    assert server.config.timeout_graceful_shutdown == 1
+    listening = server.servers[0]
+    asyncio.run_coroutine_threadsafe(
+        asyncio.sleep(0, result=_leak_one_server_connection(listening)), listening.get_loop()
+    ).result(timeout=5)
+
+    stop_requested = time.monotonic()
+    server.should_exit = True
+    thread.join(timeout=10)
+
+    assert not thread.is_alive(), "graceful shutdown hung on a leaked connection (F-1)"
+    assert teardown_events == ["lifespan_teardown_completed"]
+    assert time.monotonic() - stop_requested < 5
+
+
+def test_serve_on_selector_loop_only_on_windows() -> None:
+    assert runtime_module._SERVE_ON_SELECTOR_LOOP is (runtime_module.sys.platform == "win32")
+
+
+def test_built_server_carries_the_bounded_graceful_shutdown_timeout() -> None:
+    server = runtime_module.build_uvicorn_server(app, host="127.0.0.1", port=8199, log_config=None)
+    assert (
+        server.config.timeout_graceful_shutdown
+        == runtime_module.GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
+    )
+
+
+def test_real_launch_serves_on_a_selector_loop_whatever_the_platform_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """F-2 (and F-1's trigger): uvicorn's own platform default on Windows is
+    the Proactor loop, whose accept loop closes the listening socket on
+    `WinError 64` and whose connection-lost path skips `Server._detach()` on
+    `WinError 10054`. The real launch path must choose the selector loop
+    itself on Windows, never inherit uvicorn's platform default. Windows and
+    its default are simulated here (the flag plus a marker loop factory),
+    since this suite runs on Linux."""
+
+    monkeypatch.chdir(Path.cwd())
+    dist_path = tmp_path / "dist"
+    create_frontend_build(dist_path)
+    monkeypatch.setenv(WEB_DIST_ENV_VAR, str(dist_path))
+    monkeypatch.setenv(APP_HOME_ENV_VAR, str(tmp_path / "home"))
+    monkeypatch.setattr(api_main, "_repository", None)
+    monkeypatch.setattr(runtime_module, "prepare_runtime_state", lambda _home: None)
+    monkeypatch.setattr(runtime_module, "configure_file_logging", lambda _home: None)
+    monkeypatch.setattr(runtime_module, "port_is_available", lambda _host, _port: True)
+    monkeypatch.setattr(runtime_module, "_SERVE_ON_SELECTOR_LOOP", True)
+
+    class PlatformDefaultLoop(asyncio.SelectorEventLoop):
+        """Stands in for Windows' Proactor default."""
+
+    monkeypatch.setattr(
+        runtime_module.uvicorn.Config, "get_loop_factory", lambda _self: PlatformDefaultLoop
+    )
+    served_on: list[asyncio.AbstractEventLoop] = []
+
+    async def fake_serve(self, sockets=None) -> None:
+        served_on.append(asyncio.get_running_loop())
+
+    monkeypatch.setattr(runtime_module.uvicorn.Server, "serve", fake_serve)
+
+    assert run(["--no-browser", "--port", "8199", "--skip-frontend-build"]) == 0
+
+    assert len(served_on) == 1
+    assert isinstance(served_on[0], asyncio.SelectorEventLoop)
+    assert not isinstance(served_on[0], PlatformDefaultLoop)
+
+
+def test_abortive_connection_burst_leaves_the_listener_serving(monkeypatch) -> None:
+    """The exact F-2 reproducer shape (back-to-back `Connection: close`
+    requests, each aborted with RST via `SO_LINGER 0`) against a real server
+    started the way the real launch path starts it. On Linux this is a
+    regression guard for the selector-loop listener; the native-Windows proof
+    is the acceptance script."""
+
+    import socket
+    import struct
+    import time
+
+    from fastapi import FastAPI
+
+    probe_app = FastAPI()
+
+    @probe_app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    port = _free_loopback_port()
+    server, thread = _start_real_server(probe_app, port, monkeypatch)
+    try:
+        for _burst in range(3):
+            for _ in range(30):
+                client = socket.create_connection(("127.0.0.1", port))
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                client.sendall(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                client.close()
+            time.sleep(0.2)
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as check:
+                check.sendall(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                assert check.recv(20).startswith(b"HTTP/1.1 200")
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+    assert not thread.is_alive()
