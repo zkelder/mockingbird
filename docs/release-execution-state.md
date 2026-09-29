@@ -877,6 +877,19 @@ at `38dfac47…`. Core passed 6249 / 0 failed, and the candidate was
 accepted on native Windows. Gate G remains **waived, not passed**. Phase
 label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
 
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1* executed, classification **B**.
+- **Target specs closed.** The two target specs were stale demo-Stream
+  fixtures, not product defects. `b946932` corrects them, and they are now
+  green and repeatable.
+- **Suite still not green.** The complete browser suite is 187 passed, 7
+  failed, and all 7 are pre-existing and disclosed.
+- **Candidate unchanged.** The candidate is still `215069b` / `d1050b99…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See
+§3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3983,6 +3996,104 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **Authorization: NONE.** The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Final Release
+Hardening -- Reviewed-Truth Browser Closure v1 ran, this line read
+"Authorization: Owner-Only Final Release Hardening -- Reviewed-Truth
+Browser Closure v1". Before that it read "Authorization: NONE. The owner
+must decide the next step.", the state after Owner-Only Release Polish &
+Acceptance v1, whose closure entry follows further below.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1** (see
+[owner-only-final-release-hardening-reviewed-truth-browser-closure-v1-report.md](owner-only-final-release-hardening-reviewed-truth-browser-closure-v1-report.md)).
+**Status: EXECUTED -- classification B.**
+
+- **Root cause (both specs): stale test assumption, not a product
+  defect.**
+  - `review-queue-reviewed-tab.spec.ts` imported onto the seeded demo
+    Stream.
+  - `reviewed-product-loop.spec.ts` suggested on the seeded demo Visit and
+    targeted a removed inline "Review bird visit" card.
+  - Demo-Source activity is excluded from Review Queue, Bird Log and
+    exports by accepted contract, so neither spec could reach its subject.
+- **Fix:** `b946932` changes only the two spec files. They use a real
+  Source, Stream and Zone, drive today's path (Review Queue -> Visit Detail
+  -> Identification Assistant prefill -> Confirm species), keep every
+  original claim, add explicit no-truth-before-save checks, and scope
+  their assertions to their own Visit or camera.
+  - No product, backend or schema change.
+- **Evidence:**
+  - Red, captured before the change.
+  - Green alone in 3 fresh instances each.
+  - 60/60 at `--repeat-each=30` on one shared instance.
+  - A mutation that removes the Reviewed tab's Status-filter exemption
+    turns both specs red.
+- **Complete shared browser suite (194 tests):**
+  - Baseline, with the original specs: 185 passed, 9 failed.
+  - After the fix: **187 passed, 7 failed**.
+  - The 7 are identical on the baseline, so there are 0 new failures.
+  - The "82" in the previous closure was an unrecorded 13-spec subset.
+- **Not met: complete-suite green.** Seven pre-existing failures remain,
+  disclosed and not fixed, by the owner's decision to close at the two
+  target specs:
+  - 3 are shared-instance accumulation and pass when run fresh:
+    `review-queue-count-demo-exclusion`,
+    `review-queue-fast-review-keyboard`, and `today-report`'s empty state.
+  - 3 fail even on a fresh instance and are likely the same demo-Stream
+    fixture cause, but were not root-caused:
+    `broader-wildlife-maturity-review` x2 and
+    `review-queue-bulk-correct-stale-write`.
+  - 1 is the Lane D `notification-preferences` insight-alert gap.
+  - These are a named candidate follow-up, **not authorized**.
+- **Also disclosed:** Review Queue's collapsed "Reviewed history" panel
+  lists demo-seed ReviewLabels as "Correction truth". This is a
+  presentation-only leak. It creates no truth write and does not affect
+  Bird Log or exports.
+- **Validation:**
+  - `tsc` and `vite build` are clean.
+  - Backend and Core were not run, because the change is test-only
+    (`git diff 215069b` touches only `docs/` and `web/e2e/`).
+- **Artifact:** none. Candidate `215069b` and ZIP `d1050b99…` remain valid
+  (`build_local_product.py` excludes `e2e/`), with no rebuild and no
+  native-Windows rerun.
+- **Unchanged:**
+  - Gate G is **waived, not passed**, and the owner is the sole
+    pre-release tester.
+  - Nothing was pushed, tagged, signed, published or uploaded.
+  - The protected files and `uv.lock` are untouched.
+  - §6 lanes are unchanged. **Authorization: NONE.**
+
+---
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1*, by ChatGPT global sequencing following
+acceptance of Owner-Only Release Polish & Acceptance v1 at classification
+A. Starts from record HEAD `b47c5bd`; candidate source `215069b` and the
+accepted Owner-Only Release Polish work stay frozen except where a
+reproduced defect directly requires a correction. Mission: bring the full
+shared browser suite to green (82/82, no quarantine or skip) by
+root-causing and closing exactly `web/e2e/reviewed-product-loop.spec.ts`
+and `web/e2e/review-queue-reviewed-tab.spec.ts` -- each reproduced red in
+a clean isolated instance first, classified as product defect, isolation/
+stale state, invalid fixture, or stale test assumption, and never fixed
+by weakening an assertion. Invariants: human-reviewed truth stays
+authoritative; suggestions never silently become Reviewed truth; the
+Reviewed tab shows applicable reviewed Visits without contradictory
+hidden filters; a correction propagates coherently through Review Queue,
+Bird Log and reviewed-data export; Local Only complete. Non-goals: new
+features, reopening O-1/O-2 or other accepted milestones without a
+reproduced dependency, Pi/Camera Node hardware work, Gate G or
+recruitment, signing keys, publish/tag/upload/push, detector or
+identification policy changes. Gate G remains **waived, not passed**; the
+owner remains the sole pre-release tester. Protected files and `uv.lock`
+untouched. **Status: IN PROGRESS** (this record). *(Superseded
+2026-09-29: executed, classification B -- see the closure entry above;
+authorization returned to NONE.)*
+
+---
+
+**Authorization after Owner-Only Release Polish & Acceptance v1: NONE.**
+The owner must decide the next step. See the
 closure entry immediately below. *(While Owner-Only Release Polish &
 Acceptance v1 ran, this line read "Authorization: Owner-Only Release
 Polish & Acceptance v1". The line that
