@@ -1426,6 +1426,51 @@ def _research_acquisition_type_for_provider_key(provider_key: str | None) -> str
     return RESEARCH_OFFLINE_PROVIDER_KEYS.get(provider_key, "continuous_live")
 
 
+# Owner-Only Release Polish & Acceptance v1 (O-1): a recording imported with
+# no capture-time fact is analysed on the 1970 epoch anchor (see "Frame-time
+# semantics" in docs/offline-recorded-media-observation-contract.md and
+# `acoustic_ingest.EPOCH_ANCHOR`). Whether a Visit's time is that placeholder
+# is decided only by recorded provenance -- the offline/acoustic acquisition
+# path *and* the source recording's own absent `MediaAssetModel.captured_at`
+# -- never by "the date looks old": a recording that genuinely states a 1970
+# capture time stays known. This ceiling is only a query-avoidance
+# prefilter: an Event starting at or after it cannot be epoch-anchored (every
+# recording is far shorter than a year), so ordinary Visits cost no extra
+# query.
+CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING = datetime(1971, 1, 1, tzinfo=UTC)
+ACOUSTIC_CANDIDATE_EVENT_TYPE = "acoustic_observation_candidate"
+
+
+@dataclass(frozen=True)
+class VisitCaptureTimeFacts:
+    """Presentation facts about a Visit's own time. `capture_time_known` is
+    False only when the Visit's timestamps are the epoch placeholder for a
+    recording with no capture-time fact; the raw timestamps themselves are
+    never altered. `acquisition_type` reuses the research-export mapping
+    (`recorded_video`/`continuous_live`/`unknown`)."""
+
+    acquisition_type: str
+    capture_time_known: bool
+
+
+def _offline_source_media_asset_ids(ledger: ObservationCandidateVisitModel) -> set[str]:
+    """The imported recording(s) an offline-ingest candidate was decoded
+    from. Offline frame ids are `"<source media_asset_id>:<index:08d>"` by
+    construction (`recorded_video_source.frame_packets_from_recorded_video`),
+    persisted on the ledger's own frame-lineage fields."""
+
+    source_ids: set[str] = set()
+    for raw in (ledger.supporting_frame_ids_json, ledger.source_capture_frame_ids_json):
+        try:
+            frame_ids = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            continue
+        for frame_id in frame_ids if isinstance(frame_ids, list) else ():
+            if isinstance(frame_id, str) and ":" in frame_id:
+                source_ids.add(frame_id.rsplit(":", 1)[0])
+    return source_ids
+
+
 RESEARCH_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "observations.csv": "text/csv",
     "observations.jsonl": "application/x-ndjson",
@@ -19092,6 +19137,66 @@ class ProductRepository:
                 for visit, event in rows
             ]
 
+    def visit_capture_time_facts(self, visit_ids: Iterable[str]) -> dict[str, VisitCaptureTimeFacts]:
+        """Owner-Only Release Polish & Acceptance v1 (O-1): see
+        `VisitCaptureTimeFacts`. Unknown ids are simply absent."""
+
+        facts: dict[str, VisitCaptureTimeFacts] = {}
+        with self.session_factory() as session:
+            for visit_id in dict.fromkeys(visit_ids):
+                visit = session.get(VisitModel, visit_id)
+                event = session.get(EventModel, visit.event_id) if visit is not None else None
+                if visit is None or event is None:
+                    continue
+                ledger = session.scalars(
+                    select(ObservationCandidateVisitModel).where(ObservationCandidateVisitModel.visit_id == visit.id)
+                ).first()
+                facts[visit_id] = VisitCaptureTimeFacts(
+                    acquisition_type=_research_acquisition_type_for_provider_key(
+                        ledger.provider_key if ledger is not None else None
+                    ),
+                    capture_time_known=self._visit_capture_time_known(session, visit, event),
+                )
+        return facts
+
+    def event_capture_time_known(self, event_id: str) -> bool:
+        with self.session_factory() as session:
+            event = session.get(EventModel, event_id)
+            return True if event is None else self._event_capture_time_known(session, event)
+
+    def _event_capture_time_known(self, session: Session, event: EventModel) -> bool:
+        if _as_utc(event.started_at) >= CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING:
+            return True
+        visits = session.scalars(select(VisitModel).where(VisitModel.event_id == event.id)).all()
+        return all(self._visit_capture_time_known(session, visit, event) for visit in visits)
+
+    def _visit_capture_time_known(self, session: Session, visit: VisitModel, event: EventModel) -> bool:
+        """False only on positive provenance that this Visit's time is the
+        epoch placeholder; anything unresolvable keeps the prior
+        presentation (known) rather than guessing."""
+
+        if _as_utc(event.started_at) >= CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING:
+            return True
+        if event.event_type == ACOUSTIC_CANDIDATE_EVENT_TYPE:
+            # An acoustic candidate's evidence link *is* its source audio
+            # asset (`create_acoustic_candidate_visit`).
+            source_assets = session.scalars(
+                select(MediaAssetModel)
+                .join(VisitEvidenceLinkModel, VisitEvidenceLinkModel.media_asset_id == MediaAssetModel.id)
+                .where(VisitEvidenceLinkModel.visit_id == visit.id, MediaAssetModel.media_type == "audio")
+            ).all()
+            return not (source_assets and all(asset.captured_at is None for asset in source_assets))
+        ledger = session.scalars(
+            select(ObservationCandidateVisitModel).where(ObservationCandidateVisitModel.visit_id == visit.id)
+        ).first()
+        if ledger is None or _research_acquisition_type_for_provider_key(ledger.provider_key) != "recorded_video":
+            return True
+        source_ids = _offline_source_media_asset_ids(ledger)
+        if len(source_ids) != 1:
+            return True
+        source = session.get(MediaAssetModel, next(iter(source_ids)))
+        return not (source is not None and source.media_type == "video" and source.captured_at is None)
+
     def _stream_visit_summary_from_models(
         self,
         session: Session,
@@ -19178,6 +19283,7 @@ class ProductRepository:
             evidence_modality=(
                 "acoustic" if event.event_type == "acoustic_observation_candidate" else "visual"
             ),
+            capture_time_known=self._visit_capture_time_known(session, visit, event),
         )
 
     def _visit_activity_window(
@@ -35386,6 +35492,8 @@ class ProductRepository:
                         observation_count=self._deduplicated_observation_count(session, ordered),
                         first_observed_at=ordered[0]["observed_at"],
                         latest_observed_at=ordered[-1]["observed_at"],
+                        first_capture_time_known=ordered[0]["summary"].capture_time_known,
+                        latest_capture_time_known=ordered[-1]["summary"].capture_time_known,
                         stream_count=len({record["summary"].stream_id for record in ordered}),
                         zone_count=len(
                             {
@@ -35755,6 +35863,7 @@ class ProductRepository:
                     collection_count=collection_counts.get(record["summary"].id, 0),
                     tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
                     evidence_modality=record["summary"].evidence_modality,
+                    capture_time_known=record["summary"].capture_time_known,
                 )
                 for record in page_records
             ]
@@ -36884,6 +36993,7 @@ class ProductRepository:
             display_name=selected["display_name"],
             observed_at=selected["observed_at"],
             primary_evidence=primary_evidence,
+            capture_time_known=summary.capture_time_known,
         )
 
     # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a Visit
@@ -37036,11 +37146,18 @@ class ProductRepository:
             else None
         )
         # `MediaAssetModel.captured_at` (not `VisitEvidenceFrame.captured_at`,
-        # which always carries a fallback value) is `None` precisely when the
-        # underlying frame's real capture time was unknown -- see "Frame-time
-        # semantics" in docs/offline-recorded-media-observation-contract.md.
+        # which always carries a fallback value) is `None` when a frame's own
+        # capture time was never recorded. That alone is not sufficient for
+        # offline recorded video: the frame-driven provider's epoch fallback
+        # persists `1970 + offset` as the evidence asset's own `captured_at`,
+        # so the same source-recording provenance fact every product surface
+        # uses (`capture_time_known`, Owner-Only Release Polish & Acceptance
+        # v1) must also hold before a research export may call the time
+        # "recorded".
         capture_timestamp_known = (
-            primary_evidence_asset is not None and primary_evidence_asset.captured_at is not None
+            primary_evidence_asset is not None
+            and primary_evidence_asset.captured_at is not None
+            and summary.capture_time_known
         )
 
         candidate_ledger = session.scalars(
@@ -40463,6 +40580,7 @@ class ProductRepository:
                 target_type="visit",
                 target_id=visit.id,
                 title=f"Review {visit.subject_label} visit",
+                capture_time_known=self._visit_capture_time_known(session, visit_model, event_model),
                 stream_id=event.stream_id,
                 stream_name=stream_name,
                 source_id=source_id,

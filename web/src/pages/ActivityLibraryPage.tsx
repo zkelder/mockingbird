@@ -14,7 +14,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatLabel } from "../utils";
 
 const MAX_SELECTION = 50;
 
@@ -740,7 +740,7 @@ export function ActivityLibraryPage({
                   )}
                   <div className="activity-visit-summary">
                     <div className="activity-visit-title">
-                      <strong>{formatDateTime(visit.activity_started_at)}</strong>
+                      <strong>{formatCaptureDateTime(visit.activity_started_at, visit.capture_time_known)}</strong>
                       <StatusPill label={formatLabel(visit.review_outcome)} tone={outcomeTone(visit.review_outcome)} />
                     </div>
                     <span>{durationLabel(visit.duration_seconds)} · {visit.stream_name} · {visit.source_name}</span>

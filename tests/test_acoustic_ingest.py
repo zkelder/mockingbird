@@ -305,6 +305,48 @@ class TestRunAcousticAnalysis:
         visit_evidence = repository.list_species_suggestions(visit_id=result.visit_ids[0])[0]
         assert visit_evidence.created_at == acoustic_ingest.EPOCH_ANCHOR
 
+    def test_unknown_capture_time_is_disclosed_to_visit_read_surfaces(
+        self, repository: ProductRepository, tmp_path: Path,
+    ) -> None:
+        """Owner-Only Release Polish & Acceptance v1 (O-1): the imported
+        recording's own absent `captured_at` -- not the old-looking epoch
+        date -- is what marks the Visit's time as a placeholder."""
+
+        audio_path = tmp_path / "clip.wav"
+        _generate_tone(audio_path)
+        _seed_audio_media_asset(
+            repository, media_asset_id="media-audio-1", audio_path=audio_path, captured_at=None,
+        )
+        result = acoustic_ingest.run_acoustic_analysis(
+            repository, media_asset_id="media-audio-1",
+            recording=FakeRecording(detections=[CARDINAL_DETECTION], duration=9.0),
+        )
+        visit_id = result.visit_ids[0]
+        assert repository.visit_capture_time_facts([visit_id])[visit_id].capture_time_known is False
+        visit = repository.get_visit(visit_id)
+        summary = next(
+            item for item in repository.recent_visits_for_stream(repository.get_event(visit.event_id).stream_id)
+            if item.id == visit_id
+        )
+        assert summary.capture_time_known is False
+        assert summary.activity_started_at.year == 1970  # raw anchor preserved
+
+    def test_known_capture_time_is_reported_known_to_visit_read_surfaces(
+        self, repository: ProductRepository, tmp_path: Path,
+    ) -> None:
+        audio_path = tmp_path / "clip.wav"
+        _generate_tone(audio_path, duration_seconds=9.0)
+        _seed_audio_media_asset(
+            repository, media_asset_id="media-audio-1", audio_path=audio_path,
+            captured_at=datetime(2026, 8, 20, 7, 30, 0, tzinfo=UTC),
+        )
+        result = acoustic_ingest.run_acoustic_analysis(
+            repository, media_asset_id="media-audio-1",
+            recording=FakeRecording(detections=[CARDINAL_DETECTION], duration=9.0),
+        )
+        visit_id = result.visit_ids[0]
+        assert repository.visit_capture_time_facts([visit_id])[visit_id].capture_time_known is True
+
     def test_capture_time_known_offsets_from_real_capture_start(
         self, repository: ProductRepository, tmp_path: Path,
     ) -> None:

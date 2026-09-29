@@ -42,7 +42,7 @@ import {
   isUnknownBirdLabel,
   taxonomyKey,
 } from "../components/taxonomy";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatDateTime, formatLabel } from "../utils";
 
 type ReviewTriageCategory =
   | "animal_evidence"
@@ -3376,6 +3376,7 @@ export function ReviewQueuePage({
                   <div className="review-candidate-media">
                     <VisitEvidenceSequence
                       frames={evidenceFrames}
+                      captureTimeKnown={item.capture_time_known}
                       surfaceOverlay={
                         <>
                           {focusCropOverlay}
@@ -3389,6 +3390,7 @@ export function ReviewQueuePage({
                     <MediaAssetPreview
                       asset={item.media_asset}
                       compact
+                      captureTimeKnown={item.capture_time_known}
                       surfaceOverlay={
                         <>
                           {focusCropOverlay}
@@ -3484,9 +3486,9 @@ export function ReviewQueuePage({
                         <span>Session: {item.activity_session_id ?? "n/a"}</span>
                         <span>
                           Window:{" "}
-                          {item.activity_started_at ? formatDateTime(item.activity_started_at) : "n/a"} -{" "}
+                          {item.activity_started_at ? formatCaptureDateTime(item.activity_started_at, item.capture_time_known) : "n/a"} -{" "}
                           {item.activity_last_seen_at
-                            ? formatDateTime(item.activity_last_seen_at)
+                            ? formatCaptureDateTime(item.activity_last_seen_at, item.capture_time_known)
                             : "n/a"}
                         </span>
                         <span>
@@ -3864,7 +3866,7 @@ function ProductReviewCard({
       data-target-id={reviewQueueTargetId(item)}
     >
       {item.media_asset ? (
-        <MediaAssetPreview asset={item.media_asset} compact />
+        <MediaAssetPreview asset={item.media_asset} compact captureTimeKnown={item.capture_time_known} />
       ) : (
         <div className="review-product-image-unavailable">
           Primary evidence unavailable
@@ -3875,7 +3877,7 @@ function ProductReviewCard({
           <div className="queue-card-heading-text">
             <strong>{productReviewTitle(item, taxonomyLabels)}</strong>
             <span className="meta-text">
-              {capturedAt ? formatDateTime(capturedAt) : "Capture time unavailable"} · {location}
+              {capturedAt ? formatCaptureDateTime(capturedAt, item.capture_time_known) : "Capture time unavailable"} · {location}
             </span>
           </div>
           <EvidenceBadge
@@ -4645,9 +4647,9 @@ function FastReviewPanel({
           <span>Visit time</span>
           <strong>
             {activeItem.activity_started_at
-              ? formatDateTime(activeItem.activity_started_at)
+              ? formatCaptureDateTime(activeItem.activity_started_at, activeItem.capture_time_known)
               : activeItem.media_asset?.created_at
-                ? formatDateTime(activeItem.media_asset.created_at)
+                ? formatCaptureDateTime(activeItem.media_asset.created_at, activeItem.capture_time_known)
                 : "Unavailable"}
           </strong>
           <small>Duration {fastReviewDuration(activeItem)}</small>
@@ -4669,9 +4671,10 @@ function FastReviewPanel({
             <VisitEvidenceSequence
               frames={activeItem.evidence_frames}
               keyboardControls
+              captureTimeKnown={activeItem.capture_time_known}
             />
           ) : activeItem.media_asset ? (
-            <MediaAssetPreview asset={activeItem.media_asset} compact />
+            <MediaAssetPreview asset={activeItem.media_asset} compact captureTimeKnown={activeItem.capture_time_known} />
           ) : (
             <div className="fast-review-no-evidence">No saved evidence frame is available for this Visit.</div>
           )}

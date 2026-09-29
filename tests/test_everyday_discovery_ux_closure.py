@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import time
 
 import httpx
 import pytest
@@ -48,6 +49,23 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
     configure_repository(repository)
     yield repository
     configure_repository(None)
+
+
+def _midnight_stable_scenario_anchor() -> tuple[str, datetime]:
+    """Return ``(local_date, anchor)``: local noon of the previous local
+    calendar day, in the process's current local zone, as a UTC instant.
+
+    Today's window is a whole local calendar day. Dating fixture Visits a
+    few minutes before the real "now" put them in the previous local day
+    for the first minutes after local midnight; anchoring at the previous
+    day's noon keeps every Visit (up to ~1 hour before the anchor) in the
+    past *and* on one local date at any wall-clock time, and the caller
+    asks Today about that date explicitly, as the browser always does."""
+
+    local_now = datetime.now().astimezone()
+    local_date = local_now.date() - timedelta(days=1)
+    anchor = datetime.combine(local_date, datetime.min.time().replace(hour=12), local_now.tzinfo)
+    return local_date.isoformat(), anchor.astimezone(UTC)
 
 
 @pytest.fixture
@@ -326,15 +344,18 @@ async def test_acoustic_visit_appears_in_todays_confirmed_bird_count(
     never the acoustic sibling `"acoustic_observation_candidate"`."""
 
     add_graph(isolated_repository)
+    # Same midnight-stable anchor as `phase_f_scenario`: local noon of the
+    # previous local day, queried by explicit `local_date`.
+    local_date, anchor = _midnight_stable_scenario_anchor()
     visit_id, _event_id = await create_acoustic_visit(
         isolated_repository,
         visit_id_hint="wren-audio",
         common_name="Carolina Wren",
-        observed_at=datetime.now(UTC) - timedelta(minutes=15),
+        observed_at=anchor - timedelta(minutes=15),
     )
     await review(client, visit_id, "carolina_wren")
 
-    summary = await client.get("/api/dashboard/summary")
+    summary = await client.get("/api/dashboard/summary", params={"local_date": local_date})
     assert summary.status_code == 200
     today = summary.json()["today"]
     assert today["confirmed_bird_visit_count"] == 1
@@ -639,11 +660,20 @@ async def add_suggestion(
 
 @pytest.fixture
 async def phase_f_scenario(client: httpx.AsyncClient, isolated_repository: ProductRepository):
-    """Five deterministic Visits covering every Phase F required case,
-    dated "now" so they surface in Today's real (unmocked) time window."""
+    """Five deterministic Visits covering every Phase F required case, all
+    inside one local calendar day that Today's real (unmocked) window is
+    then asked about explicitly via `local_date`.
+
+    The anchor is local noon of the previous local day, so every Visit
+    (10-50 minutes before the anchor) is always in the past and always on
+    the same local date -- at any wall-clock time, including just after
+    local midnight, and in any process time zone. Previously the Visits
+    were dated relative to the real "now" and fell into the previous local
+    day for the first ~50 minutes after midnight, failing the Today check
+    without any product defect."""
 
     add_graph(isolated_repository)
-    now = datetime.now(UTC)
+    scenario_local_date, now = _midnight_stable_scenario_anchor()
 
     # 1. Provisional: a suggestion exists, nothing reviewed yet.
     add_visit_with_media(
@@ -742,13 +772,41 @@ async def phase_f_scenario(client: httpx.AsyncClient, isolated_repository: Produ
     )
     await review(client, audio_outcome.visit_id, "carolina_wren")
 
-    return {"audio_visit_id": audio_outcome.visit_id}
+    return {"audio_visit_id": audio_outcome.visit_id, "local_date": scenario_local_date}
 
 
-async def test_today_dashboard_shows_only_corrected_truth(
-    client: httpx.AsyncClient, phase_f_scenario: dict
-) -> None:
-    response = await client.get("/api/dashboard/summary")
+@pytest.fixture
+def local_clock_just_after_midnight(monkeypatch: pytest.MonkeyPatch):
+    """Owner-Only Release Polish & Acceptance v1: pin the process's local
+    zone to a synthetic fixed offset under which the real wall clock reads
+    00:20 local -- the exact window in which this file's Today assertion
+    used to fail (its Visits, dated 10-50 minutes before "now", fell into
+    the previous local day). Requested *before* `phase_f_scenario` so the
+    whole scenario is built and queried under this clock. POSIX only
+    (`time.tzset`); skipped where the C-library zone cannot be switched."""
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("local zone cannot be switched on this platform")
+    utc_now = datetime.now(UTC)
+    offset_minutes = (20 - (utc_now.hour * 60 + utc_now.minute)) % 1440
+    if offset_minutes > 720:
+        offset_minutes -= 1440
+    # POSIX TZ signs are inverted: "MBT+05:00" means UTC-05:00.
+    sign = "-" if offset_minutes >= 0 else "+"
+    magnitude = abs(offset_minutes)
+    monkeypatch.setenv("TZ", f"MBT{sign}{magnitude // 60:02d}:{magnitude % 60:02d}")
+    time.tzset()
+    assert datetime.now().astimezone().strftime("%H:%M") in {"00:20", "00:21"}
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+async def _assert_today_shows_only_corrected_truth(client: httpx.AsyncClient, scenario: dict) -> None:
+    # The browser always sends its own local calendar date; the scenario's
+    # Visits are all on `scenario["local_date"]`, so this is a stable query
+    # at any wall-clock time, not only away from local midnight.
+    response = await client.get("/api/dashboard/summary", params={"local_date": scenario["local_date"]})
     assert response.status_code == 200
     payload = response.json()
     rendered = str(payload)
@@ -774,6 +832,18 @@ async def test_today_dashboard_shows_only_corrected_truth(
     # The corrected Visit's *current* truth (species B) is present wherever
     # its reviewed_label is surfaced; nothing claims "blue_jay".
     assert "blue_jay" not in confirmed_labels
+
+
+async def test_today_dashboard_shows_only_corrected_truth(
+    client: httpx.AsyncClient, phase_f_scenario: dict
+) -> None:
+    await _assert_today_shows_only_corrected_truth(client, phase_f_scenario)
+
+
+async def test_today_dashboard_corrected_truth_holds_just_after_local_midnight(
+    local_clock_just_after_midnight: None, client: httpx.AsyncClient, phase_f_scenario: dict
+) -> None:
+    await _assert_today_shows_only_corrected_truth(client, phase_f_scenario)
 
 
 async def test_visit_detail_shows_only_corrected_truth(

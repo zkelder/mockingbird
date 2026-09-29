@@ -2792,6 +2792,12 @@ class StreamVisitSummary(BaseModel):
     # was collapsed into this row -- see `VisitCrossCameraPartnerSummary`'s
     # own docstring. Independent of `multimodal_partner` above.
     cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
+    # Owner-Only Release Polish & Acceptance v1 (O-1): False only when this
+    # Visit's times are the 1970 epoch placeholder for a recording imported
+    # with no capture-time fact (see `ProductRepository._visit_capture_time_
+    # known`). The raw timestamps above are unchanged; a surface shows
+    # "Capture time unknown" instead of formatting the placeholder.
+    capture_time_known: bool = True
 
 
 class ActivityLibraryReviewFilter(str, Enum):
@@ -4206,6 +4212,9 @@ class ReviewQueueItem(BaseModel):
     evidence_count: int = Field(default=0, ge=0)
     is_demo_source: bool = False
     is_legacy_activity: bool = False
+    # Owner-Only Release Polish & Acceptance v1 (O-1): see
+    # `StreamVisitSummary.capture_time_known`.
+    capture_time_known: bool = True
 
 
 class ReviewQueueProductTab(str, Enum):
@@ -6497,6 +6506,8 @@ class WildlifeJournalRepresentative(BaseModel):
     display_name: str
     observed_at: datetime
     primary_evidence: VisitEvidenceFrame | None = None
+    # Same contract as `StreamVisitSummary.capture_time_known` (O-1).
+    capture_time_known: bool = True
 
 
 class WildlifeJournalRecentDay(BaseModel):
@@ -6510,6 +6521,11 @@ class WildlifeJournalLabelSummary(BaseModel):
     observation_count: int = Field(ge=1)
     first_observed_at: datetime
     latest_observed_at: datetime
+    # Owner-Only Release Polish & Acceptance v1 (O-1): whether the Visit
+    # behind `first_observed_at`/`latest_observed_at` has a real capture
+    # time, per `StreamVisitSummary.capture_time_known`.
+    first_capture_time_known: bool = True
+    latest_capture_time_known: bool = True
     stream_count: int = Field(ge=0)
     zone_count: int = Field(ge=0)
     recent_activity: list[WildlifeJournalRecentDay] = Field(default_factory=list, max_length=14)
@@ -6624,6 +6640,8 @@ class WildlifeJournalObservation(BaseModel):
     evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
     multimodal_partner: VisitMultimodalPartnerSummary | None = None
     cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
+    # Identical contract to `StreamVisitSummary.capture_time_known`.
+    capture_time_known: bool = True
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -7894,6 +7912,10 @@ class EventDetail(BaseModel):
     review_state_token: str = ""
     dataset_ready: bool
     review_summary: str
+    # Owner-Only Release Polish & Acceptance v1 (O-1): see
+    # `StreamVisitSummary.capture_time_known`; False when this Event's Visits
+    # carry the epoch placeholder for an unknown capture time.
+    capture_time_known: bool = True
 
 
 class VisitMultimodalAssociation(BaseModel):
@@ -8001,6 +8023,13 @@ class VisitDetail(BaseModel):
     review_state_token: str
     dataset_ready: bool
     review_summary: str
+    # Owner-Only Release Polish & Acceptance v1: see `StreamVisitSummary.
+    # capture_time_known` (O-1). `acquisition_type` reuses the research-
+    # export mapping of the candidate ledger's `provider_key` -- how this
+    # Visit was found (offline analysis of an imported recording vs. live
+    # observation), so the evidence panel can say so honestly (O-2).
+    capture_time_known: bool = True
+    acquisition_type: Literal["recorded_video", "continuous_live", "unknown"] = "unknown"
 
 
 class VisitOrganizationState(BaseModel):

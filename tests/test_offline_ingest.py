@@ -749,3 +749,174 @@ async def test_offline_ingest_processing_order_is_deterministic_across_reruns(
     second_outcomes = tuple(sorted(second.outcome_counts.items()))
 
     assert first_outcomes == second_outcomes == (("created", 2),)
+
+
+# ---------------------------------------------------------------------------
+# Owner-Only Release Polish & Acceptance v1 (O-1): a recording without a
+# capture-time fact is anchored at the 1970 epoch by design; every read
+# surface must say so via `capture_time_known`, never let the placeholder
+# pass for a real date. The raw timestamps themselves stay unchanged.
+# ---------------------------------------------------------------------------
+
+
+async def _ingest_one_visit(
+    repository: ProductRepository, video_path: Path, *, captured_at: datetime | None, stream_id: str = STREAM_ID,
+):
+    _seed_media_asset(
+        repository, media_asset_id="media-video-under-test", video_path=video_path, captured_at=captured_at,
+        stream_id=stream_id,
+    )
+    frame_ids = _peek_sampled_frame_ids(video_path, sample_fps=2.0, stream_id=stream_id)
+    loader, _fake = _fake_provider_loader_factory(
+        {frame_id: (_subject_for_id(frame_id),) for frame_id in frame_ids}
+    )
+    result = await offline_ingest.run_offline_video_ingest(
+        repository, media_asset_id="media-video-under-test", sample_fps=2.0, provider_loader=loader,
+    )
+    assert result.status == "completed"
+    return result.visit_ids[0], result.event_ids[0]
+
+
+async def _capture_time_known_on_every_surface(repository: ProductRepository, visit_id: str, event_id: str) -> set:
+    from mockingbird.api import main as api_main
+
+    facts = repository.visit_capture_time_facts([visit_id])[visit_id]
+    summary = next(item for item in repository.recent_visits_for_stream(STREAM_ID) if item.id == visit_id)
+    queue_item = next(
+        item for item in repository.review_queue_items(include_reviewed=True) if item.visit_id == visit_id
+    )
+    api_main.configure_repository(repository)
+    try:
+        visit_detail = await api_main.get_visit_detail(visit_id)
+        event_detail = await api_main.get_event_detail(event_id)
+    finally:
+        api_main.configure_repository(None)
+    assert visit_detail.acquisition_type == "recorded_video"
+    return {
+        facts.capture_time_known,
+        summary.capture_time_known,
+        queue_item.capture_time_known,
+        visit_detail.capture_time_known,
+        event_detail.capture_time_known,
+    }
+
+
+async def test_unknown_capture_time_is_disclosed_on_every_visit_read_surface(
+    repository: ProductRepository, four_second_clip: Path,
+) -> None:
+    visit_id, event_id = await _ingest_one_visit(repository, four_second_clip, captured_at=None)
+
+    assert await _capture_time_known_on_every_surface(repository, visit_id, event_id) == {False}
+    # Raw timestamps, ordering keys and evidence are preserved unchanged:
+    # only presentation learns the time is a placeholder.
+    event = repository.get_event(event_id)
+    assert event.started_at.year == 1970
+    summary = next(item for item in repository.recent_visits_for_stream(STREAM_ID) if item.id == visit_id)
+    assert summary.captured_at.year == 1970
+    assert summary.activity_started_at == event.started_at
+
+
+async def test_known_capture_time_offline_visit_is_reported_as_known(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    if not _has_real_ffmpeg_suite():
+        pytest.skip("ffmpeg/ffprobe not available in this environment")
+    video_path = tmp_path / "historical-clip.mp4"
+    _generate_clip(video_path, duration_seconds=4.0, creation_time="2024-05-01T14:23:01.000000Z")
+    visit_id, event_id = await _ingest_one_visit(
+        repository, video_path, captured_at=datetime(2024, 5, 1, 14, 23, 1, tzinfo=UTC),
+    )
+
+    assert await _capture_time_known_on_every_surface(repository, visit_id, event_id) == {True}
+
+
+async def test_a_real_epoch_capture_time_is_never_reinterpreted_as_unknown(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    """The distinction is the recorded provenance fact (the source
+    recording's own `captured_at` is absent), never "the date looks old":
+    a recording that genuinely states a 1970 capture time stays known."""
+
+    if not _has_real_ffmpeg_suite():
+        pytest.skip("ffmpeg/ffprobe not available in this environment")
+    video_path = tmp_path / "epoch-clip.mp4"
+    _generate_clip(video_path, duration_seconds=4.0)
+    visit_id, event_id = await _ingest_one_visit(
+        repository, video_path, captured_at=datetime(1970, 1, 1, tzinfo=UTC),
+    )
+    assert repository.get_event(event_id).started_at.year == 1970
+
+    assert await _capture_time_known_on_every_surface(repository, visit_id, event_id) == {True}
+
+
+def _add_real_import_stream(repository: ProductRepository) -> str:
+    """Bird Log and research export deliberately exclude the seeded demo
+    Source this file otherwise uses; these checks need a real, user-created
+    Stream."""
+
+    from mockingbird.storage.models import CameraSourceModel, StreamModel
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(CameraSourceModel(
+                id="source-owner-import", name="Imported recordings", kind="manual_upload", status="connected",
+                description="Owner-imported recordings.",
+            ))
+            session.add(StreamModel(
+                id="stream-owner-import", source_id="source-owner-import", name="Imported recordings",
+                description="Owner-imported recordings.", is_live=False,
+            ))
+    return "stream-owner-import"
+
+
+async def test_reviewed_unknown_capture_time_visit_is_disclosed_in_bird_log(
+    repository: ProductRepository, four_second_clip: Path,
+) -> None:
+    """A confirmed recorded-video Visit with no capture-time fact must not
+    show the placeholder as a real date in Bird Log's label summary,
+    first/latest observations, or gallery."""
+
+    from mockingbird.api.schemas import WildlifeJournalHistoryRequest, WildlifeJournalOverviewRequest
+
+    visit_id, _event_id = await _ingest_one_visit(
+        repository, four_second_clip, captured_at=None, stream_id=_add_real_import_stream(repository),
+    )
+    repository.create_review_label(
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="northern_cardinal", review_origin="human")
+    )
+
+    overview = repository.wildlife_journal_overview(WildlifeJournalOverviewRequest())
+    summary = next(item for item in overview.labels if item.representative and item.representative.visit_id == visit_id)
+    assert summary.first_capture_time_known is False
+    assert summary.latest_capture_time_known is False
+    assert summary.representative.capture_time_known is False
+    assert summary.first_observed_at.year == 1970  # raw fact preserved
+
+    history = repository.wildlife_journal_history(summary.label, WildlifeJournalHistoryRequest())
+    assert history is not None
+    assert history.first_observation is not None and history.first_observation.capture_time_known is False
+    assert [item.capture_time_known for item in history.gallery.observations] == [False]
+
+
+async def test_research_export_does_not_claim_a_recorded_capture_time_for_the_placeholder(
+    repository: ProductRepository, four_second_clip: Path,
+) -> None:
+    """Offline evidence frames persist the 1970 anchor as their own
+    `captured_at` (the frame-driven provider's epoch fallback), so "evidence
+    `captured_at` is present" alone must not certify a real capture time in
+    a research export. Uses the same provenance fact as every other surface."""
+
+    from mockingbird.api.schemas import ResearchExportFilters
+
+    visit_id, _event_id = await _ingest_one_visit(
+        repository, four_second_clip, captured_at=None, stream_id=_add_real_import_stream(repository),
+    )
+    repository.create_review_label(
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="northern_cardinal", review_origin="human")
+    )
+    observations, _excluded = repository.research_export_eligibility_preview(ResearchExportFilters())
+    observation = next(item for item in observations if item.observation_id == visit_id)
+    assert observation.acquisition_type == "recorded_video"
+    assert observation.capture_timestamp_confidence == "unknown"
+    # Still exported: an uncertain timestamp is a recommended gap, not a blocker.
+    assert "capture_timestamp_uncertain" in observation.eligibility.recommended_reasons

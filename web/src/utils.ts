@@ -244,6 +244,46 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+// Owner-Only Release Polish & Acceptance v1 (O-1): a recording imported with
+// no capture-time fact is anchored internally at 1970 (the raw timestamp is
+// kept for ordering and provenance). `formatDateTime` omits the year, so that
+// placeholder used to read as a real recent date ("Dec 31, 7:00 PM"). The
+// server's `capture_time_known` fact -- never the date's age -- decides.
+export const CAPTURE_TIME_UNKNOWN_LABEL = "Capture time unknown";
+
+export function formatCaptureDateTime(value: string, captureTimeKnown: boolean | undefined): string {
+  return captureTimeKnown === false ? CAPTURE_TIME_UNKNOWN_LABEL : formatDateTime(value);
+}
+
+// Owner-Only Release Polish & Acceptance v1 (O-2): what an empty
+// `detections` list actually means. Those are separate stored detection
+// records; Visits found by the Observation Engine (live or by offline
+// analysis of an imported recording) and by sound analysis never carry any
+// -- their saved evidence frames/clips are the evidence. Only a manual or
+// folder media import is honestly a "manual media" record.
+export function noDetectionRecordsMessage(
+  eventType: string,
+  acquisitionType: "recorded_video" | "continuous_live" | "unknown" | undefined,
+  scope: "visit" | "event",
+): string {
+  if (eventType === "observation_engine_candidate") {
+    const foundBy =
+      acquisitionType === "recorded_video"
+        ? "Found by offline analysis of an imported recording."
+        : acquisitionType === "continuous_live"
+          ? "Found by live observation."
+          : "Found by automatic analysis.";
+    return `${foundBy} No separate detection records are stored for this ${scope}; review its saved evidence frames instead.`;
+  }
+  if (eventType === "acoustic_observation_candidate") {
+    return `Found by sound analysis. No separate detection records are stored for this ${scope}; review its saved recording instead.`;
+  }
+  if (eventType === "manual_media_import" || eventType === "folder_media_import") {
+    return `No detections are attached to this manual media ${scope}.`;
+  }
+  return `No detection records are attached to this ${scope}.`;
+}
+
 // Environmental Context Foundation v1: sunrise/sunset are already known to
 // be "today" (or the Visit's own day) from context, so showing the date
 // again would be redundant -- nearest-minute precision only, matching how

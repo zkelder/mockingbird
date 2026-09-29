@@ -34,7 +34,14 @@ import {
   isUnidentifiedWildlifeLabel,
 } from "../components/taxonomy";
 import { explainMultimodalAssociation } from "../components/suggestionExplanation";
-import { formatDateTime, formatLabel, formatTimeOfDay, formatWeatherLine } from "../utils";
+import {
+  formatCaptureDateTime,
+  formatDateTime,
+  formatLabel,
+  formatTimeOfDay,
+  formatWeatherLine,
+  noDetectionRecordsMessage,
+} from "../utils";
 
 interface VisitDetailPageProps {
   visitId: string;
@@ -1009,7 +1016,7 @@ export function VisitDetailPage({
           <EvidenceBadge label="Evidence only" tone="evidence" />
         </div>
         <div className="visit-evidence-context-line">
-          <span>{formatDateTime(detail.event.started_at)}</span>
+          <span>{formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)}</span>
           <span>
             {detail.stream.name}
             {detail.primary_zone
@@ -1044,9 +1051,10 @@ export function VisitDetailPage({
             frames={detail.evidence_frames}
             recommendedMediaAssetId={recommendedMediaAssetId}
             recommendationNote={recommendationNote}
+            captureTimeKnown={detail.capture_time_known}
           />
         ) : detail.media_asset ? (
-          <MediaAssetPreview asset={detail.media_asset} />
+          <MediaAssetPreview asset={detail.media_asset} captureTimeKnown={detail.capture_time_known} />
         ) : (
           <div className="notice-panel compact-notice">
             <strong>Evidence unavailable</strong>
@@ -1276,7 +1284,7 @@ export function VisitDetailPage({
           <button className="text-action" onClick={() => onOpenEvent(detail.event.id)}>
             {detail.event.title}
           </button>
-          <span className="meta-text">{formatDateTime(detail.event.started_at)}</span>
+          <span className="meta-text">{formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)}</span>
         </div>
         <div className="panel case-summary-card">
           <span className="meta-text">Stream and zone</span>
@@ -1425,7 +1433,7 @@ export function VisitDetailPage({
               shown in Visit evidence above.
             </p>
           ) : (
-            <MediaAssetPreview asset={detail.media_asset} />
+            <MediaAssetPreview asset={detail.media_asset} captureTimeKnown={detail.capture_time_known} />
           )}
           <div className="attached-media-provenance">
             <strong>Correction boundary</strong>
@@ -1514,7 +1522,9 @@ export function VisitDetailPage({
                 />
               ))
             ) : (
-              <span className="meta-text">No detections are attached to this manual media visit.</span>
+              <span className="meta-text">
+                {noDetectionRecordsMessage(detail.event.event_type, detail.acquisition_type, "visit")}
+              </span>
             )}
           </div>
         </div>
@@ -1654,7 +1664,7 @@ export function VisitDetailPage({
                     tone="evidence"
                   />
                 </div>
-                <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} />
+                <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} captureTimeKnown={detail.capture_time_known} />
               </section>
             ) : null}
             {isLoadingSpeciesSuggestions ? (
@@ -1822,7 +1832,7 @@ export function VisitDetailPage({
                       : "Unzoned"
                   }
                 />
-                <ContextItem label="Visit date and time" value={formatDateTime(detail.event.started_at)} />
+                <ContextItem label="Visit date and time" value={formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)} />
                 <ContextItem
                   label="Suggestions"
                   value={
@@ -1837,9 +1847,10 @@ export function VisitDetailPage({
                   frames={detail.evidence_frames}
                   recommendedMediaAssetId={recommendedMediaAssetId}
                   recommendationNote={recommendationNote}
+                  captureTimeKnown={detail.capture_time_known}
                 />
               ) : detail.media_asset ? (
-                <MediaAssetPreview asset={detail.media_asset} />
+                <MediaAssetPreview asset={detail.media_asset} captureTimeKnown={detail.capture_time_known} />
               ) : (
                 <span className="meta-text">No saved evidence frame is attached to this Visit.</span>
               )}
@@ -2221,7 +2232,7 @@ function VisitCurationPanel({
       setMergeCandidates(
         result.candidates.map((candidate) => ({
           id: candidate.visit.id,
-          label: `${formatDateTime(candidate.visit.captured_at)} · ${candidate.visit.zone_name ?? "Zone"}`,
+          label: `${formatCaptureDateTime(candidate.visit.captured_at, candidate.visit.capture_time_known)} · ${candidate.visit.zone_name ?? "Zone"}`,
           gapSeconds: candidate.gap_seconds,
         })),
       );
@@ -2363,7 +2374,7 @@ function VisitCurationPanel({
                   return (
                     <label className="history-item" key={frame.media_asset_id}>
                       <span>
-                        Frame {index + 1} · {formatDateTime(frame.captured_at)}
+                        Frame {index + 1} · {formatCaptureDateTime(frame.captured_at, detail.capture_time_known)}
                       </span>
                       <span className="detail-actions">
                         <input
@@ -2386,7 +2397,7 @@ function VisitCurationPanel({
                   );
                 })}
               </div>
-              {previewFrames.length > 0 ? <VisitEvidenceSequence frames={previewFrames} /> : null}
+              {previewFrames.length > 0 ? <VisitEvidenceSequence frames={previewFrames} captureTimeKnown={detail.capture_time_known} /> : null}
               <div className="detail-actions">
                 <button className="primary-action" disabled={isSaving} onClick={() => void saveEvidence()} type="button">
                   {isSaving ? "Saving..." : "Save evidence"}
@@ -2412,7 +2423,7 @@ function VisitCurationPanel({
             Split after evidence frame
             <select onChange={(event) => { setSplitBoundaryId(event.target.value); setSplitPreview(null); }} value={splitBoundaryId}>
               {detail.evidence_frames.slice(0, -1).map((frame, index) => (
-                <option key={frame.media_asset_id} value={frame.media_asset_id}>Frame {index + 1} · {formatDateTime(frame.captured_at)}</option>
+                <option key={frame.media_asset_id} value={frame.media_asset_id}>Frame {index + 1} · {formatCaptureDateTime(frame.captured_at, detail.capture_time_known)}</option>
               ))}
             </select>
           </label>

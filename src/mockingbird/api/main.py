@@ -13522,6 +13522,7 @@ async def get_event_detail(event_id: str) -> EventDetail:
         review_labels=repository.review_labels_for_event_tree(event.id),
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
+        capture_time_known=repository.event_capture_time_known(event.id),
     )
 
 
@@ -13908,6 +13909,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
     sibling_visits = [
         sibling for sibling in repository.visits_for_event(event.id) if sibling.id != visit.id
     ]
+    capture_time_facts = repository.visit_capture_time_facts([visit.id]).get(visit.id)
     return VisitDetail(
         visit=_redact_visit(visit),
         event=event,
@@ -13952,6 +13954,8 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         review_state_token=review_history.review_state_token,
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
+        capture_time_known=capture_time_facts.capture_time_known if capture_time_facts else True,
+        acquisition_type=capture_time_facts.acquisition_type if capture_time_facts else "unknown",
     )
 
 

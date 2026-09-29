@@ -1996,6 +1996,10 @@ export interface StreamVisitSummary {
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
   cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
+  // Owner-Only Release Polish & Acceptance v1 (O-1): false only when this
+  // Visit's times are the 1970 placeholder for a recording imported with no
+  // capture-time fact. Show "Capture time unknown" via `formatCaptureDateTime`.
+  capture_time_known?: boolean;
 }
 
 export interface DashboardVisitSummary extends StreamVisitSummary {
@@ -3379,6 +3383,8 @@ export interface ReviewQueueItem {
   evidence_count: number;
   is_demo_source: boolean;
   is_legacy_activity: boolean;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 // Review Queue Scale Closure v1. `GET /api/review-queue/page` is the
@@ -3980,6 +3986,8 @@ export interface EventDetail {
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 // Multimodal Observation & Soundscape v1 (see docs/multimodal-observation-
@@ -4088,6 +4096,12 @@ export interface VisitDetail {
   review_state_token: string;
   dataset_ready: boolean;
   review_summary: string;
+  // Owner-Only Release Polish & Acceptance v1: see `StreamVisitSummary.
+  // capture_time_known` (O-1). `acquisition_type` says how this Visit was
+  // found -- offline analysis of an imported recording vs. live
+  // observation -- so the evidence panel can say so honestly (O-2).
+  capture_time_known?: boolean;
+  acquisition_type?: "recorded_video" | "continuous_live" | "unknown";
 }
 
 export interface VisitOrganizationState {
@@ -5041,6 +5055,8 @@ export interface WildlifeJournalRepresentative {
   display_name: string;
   observed_at: string;
   primary_evidence?: VisitEvidenceFrame | null;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 export interface WildlifeJournalRecentDay {
@@ -5054,6 +5070,9 @@ export interface WildlifeJournalLabelSummary {
   observation_count: number;
   first_observed_at: string;
   latest_observed_at: string;
+  // Owner-Only Release Polish & Acceptance v1 (O-1).
+  first_capture_time_known?: boolean;
+  latest_capture_time_known?: boolean;
   stream_count: number;
   zone_count: number;
   recent_activity: WildlifeJournalRecentDay[];
@@ -5135,6 +5154,8 @@ export interface WildlifeJournalObservation {
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
   cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 export interface WildlifeJournalGallery {

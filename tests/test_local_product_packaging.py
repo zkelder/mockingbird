@@ -2509,3 +2509,81 @@ def test_third_party_notices_no_longer_calls_the_source_license_undecided() -> N
     assert "CC BY-NC-SA 4.0" in notices
     assert "verify_no_bundled_ffmpeg_binary" in notices
     assert "verify_no_nc_licensed_acoustic_model_redistribution" in notices
+
+
+# Owner-Only Release Polish & Acceptance v1: README-FIRST.txt is the only
+# document an unpacked end user is guaranteed to have. Gate G -- Launch
+# Package Refresh v1 found it still described four-step onboarding and a
+# Task-Manager-only stop path after the product had moved on; these checks
+# tie each statement to the product source it describes so the text cannot
+# silently go stale again.
+README_FIRST = _MODULE["README_FIRST"]
+
+
+def _readme_first_text() -> str:
+    return README_FIRST.replace("\r\n", "\n")
+
+
+def test_readme_first_describes_every_onboarding_step_in_product_order() -> None:
+    wizard_source = (ROOT / "web" / "src" / "components" / "OnboardingWizard.tsx").read_text(encoding="utf-8")
+    order_match = re.search(r"WIZARD_STEP_ORDER: WizardStep\[\] = \[([^\]]*)\]", wizard_source)
+    assert order_match is not None
+    steps = re.findall(r'"([a-z]+)"', order_match.group(1))
+    assert steps == ["welcome", "account", "storage", "camera", "observe"]
+    readme = _readme_first_text()
+    # One visible name per real wizard step, in the wizard's own order.
+    step_names = ["Welcome", "Account", "Storage", "Add a camera", "Start observing"]
+    assert len(step_names) == len(steps)
+    assert f"{len(steps)} short steps" in readme or "five short steps" in readme
+    positions = [readme.index(name) for name in step_names]
+    assert positions == sorted(positions)
+    assert "administrator" in readme.lower()
+
+
+def test_readme_first_makes_in_app_shutdown_the_primary_stop_path() -> None:
+    local_data_source = (ROOT / "web" / "src" / "pages" / "LocalDataPage.tsx").read_text(encoding="utf-8")
+    assert '"Shut down MockingBird"' in local_data_source
+    assert '"Confirm shut down"' in local_data_source
+    readme = _readme_first_text()
+    assert "Local Data" in readme
+    assert '"Shut down MockingBird"' in readme
+    assert '"Confirm shut down"' in readme
+    # Task Manager/restart remain only a forced-stop recovery, described
+    # after the in-app path -- never the primary instruction.
+    assert "Task Manager" in readme
+    assert readme.index('"Shut down MockingBird"') < readme.index("Task Manager")
+    assert "forced" in readme.lower()
+    assert "Closing the browser tab does not stop MockingBird" in readme
+
+
+def test_readme_first_describes_local_only_precisely() -> None:
+    readme = _readme_first_text()
+    # The absolute claim is not true: optional network features exist and
+    # are opt-in (weather, iNaturalist taxonomy lookup, a camera/image URL
+    # the user enters, phone access on the home network).
+    assert "Nothing is uploaded anywhere" not in readme
+    assert "no network activity" not in readme.lower()
+    assert "opt-in" in readme.lower() or "turn on" in readme.lower()
+    for feature in ("weather", "iNaturalist", "phone"):
+        assert feature in readme
+    assert "no account, cloud service, or telemetry" in readme
+
+
+def test_readme_first_states_ffmpeg_and_birdnet_weights_are_not_bundled() -> None:
+    readme = _readme_first_text()
+    assert "FFmpeg is not included" in readme
+    assert "BirdNET" in readme
+    assert "not included" in readme[readme.index("BirdNET") - 200 : readme.index("BirdNET") + 300]
+    # The build machinery that makes these statements true.
+    assert callable(verify_no_bundled_ffmpeg_binary)
+    assert callable(verify_no_nc_licensed_acoustic_model_redistribution)
+
+
+def test_readme_first_keeps_accurate_uninstall_and_data_retention_guidance() -> None:
+    readme = _readme_first_text()
+    assert "To remove MockingBird" in readme
+    remove_section = readme[readme.index("To remove MockingBird") :]
+    assert '"Shut down MockingBird"' in remove_section
+    assert readme.count("%LOCALAPPDATA%\\MockingBird") >= 2
+    assert "cannot be undone" in remove_section
+    assert "Revoke current pairing" in remove_section

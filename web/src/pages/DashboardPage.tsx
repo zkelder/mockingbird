@@ -42,6 +42,7 @@ import {
   cameraHealthLabel,
   cameraHealthTone,
   effectiveSpeciesText,
+  formatCaptureDateTime,
   formatDateTime,
   formatLabel,
   historicalStatusBadge,
@@ -191,7 +192,7 @@ function VisitPreview({ visit }: { visit: DashboardVisitSummary }) {
   return (
     <div className="dashboard-visit-preview-wrap">
       <img
-        alt={`Visit from ${formatDateTime(visit.captured_at)}`}
+        alt={`Visit from ${formatCaptureDateTime(visit.captured_at, visit.capture_time_known)}`}
         className="dashboard-visit-preview"
         onError={() => setUnavailable(true)}
         src={`${apiClient.baseUrl}${visit.primary_evidence.preview_url}`}
@@ -726,7 +727,7 @@ export function DashboardPage({
                         </strong>
                         <VisitContext visit={visit} />
                         <ModalityNote visit={visit} />
-                        <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
+                        <span className="meta-text">{formatCaptureDateTime(visit.captured_at, visit.capture_time_known)}</span>
                       </div>
                       <button className="text-action" onClick={() => onOpenVisit(visit.id)} type="button">View</button>
                     </article>
@@ -807,7 +808,7 @@ export function DashboardPage({
                 <VisitPreview visit={visit} />
                 <div>
                   <strong>{outcomeLabel(visit)}</strong>
-                  <span>{formatDateTime(visit.captured_at)}</span>
+                  <span>{formatCaptureDateTime(visit.captured_at, visit.capture_time_known)}</span>
                   <VisitContext visit={visit} />
                   <ModalityNote visit={visit} />
                 </div>

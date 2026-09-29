@@ -26,6 +26,7 @@ import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import {
   changeStatusBadge,
+  formatCaptureDateTime,
   formatDateTime,
   historicalStatusBadge,
   modalityBadge,
@@ -185,17 +186,19 @@ function hourLabel(hour: number): string {
   return `${hour % 12 || 12} ${suffix}`;
 }
 
-function thumbnailAlt(label: string, observedAt: string): string {
-  return `${label}, reviewed observation ${formatDateTime(observedAt)}`;
+function thumbnailAlt(label: string, observedAt: string, captureTimeKnown?: boolean): string {
+  return `${label}, reviewed observation ${formatCaptureDateTime(observedAt, captureTimeKnown)}`;
 }
 
 function JournalThumbnail({
   label,
   observedAt,
+  captureTimeKnown,
   representative,
 }: {
   label: string;
   observedAt: string;
+  captureTimeKnown?: boolean;
   representative?: WildlifeJournalRepresentative | WildlifeJournalObservation | null;
 }) {
   const [failed, setFailed] = useState(false);
@@ -208,14 +211,14 @@ function JournalThumbnail({
   // seen" state, never the same copy a genuinely missing image uses.
   if (evidence.content_type.startsWith("audio/")) {
     return (
-      <div className="journal-thumbnail-fallback journal-thumbnail-audio" aria-label={`${label}, heard ${formatDateTime(observedAt)}`}>
+      <div className="journal-thumbnail-fallback journal-thumbnail-audio" aria-label={`${label}, heard ${formatCaptureDateTime(observedAt, captureTimeKnown)}`}>
         🔊 Heard
       </div>
     );
   }
   return (
     <img
-      alt={thumbnailAlt(label, observedAt)}
+      alt={thumbnailAlt(label, observedAt, captureTimeKnown)}
       loading="lazy"
       onError={() => setFailed(true)}
       src={`${apiClient.baseUrl}${evidence.preview_url}`}
@@ -677,7 +680,7 @@ export function BirdLogPage({
             {overview.labels.map((item) => (
               <article className="journal-label-card" key={item.label}>
                 <button className="journal-label-image" onClick={() => navigateJournalLabel(item.label)} type="button">
-                  <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} representative={item.representative} />
+                  <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} captureTimeKnown={item.latest_capture_time_known} representative={item.representative} />
                 </button>
                 <div className="journal-label-card-body">
                   <div className="section-heading">
@@ -708,8 +711,8 @@ export function BirdLogPage({
                     <Sparkline activity={item.recent_activity} />
                   </div>
                   <div className="journal-label-facts">
-                    <span>First: <strong>{formatDateTime(item.first_observed_at)}</strong></span>
-                    <span>Latest: <strong>{formatDateTime(item.latest_observed_at)}</strong></span>
+                    <span>First: <strong>{formatCaptureDateTime(item.first_observed_at, item.first_capture_time_known)}</strong></span>
+                    <span>Latest: <strong>{formatCaptureDateTime(item.latest_observed_at, item.latest_capture_time_known)}</strong></span>
                     <span>Seen on {item.stream_count} camera{item.stream_count === 1 ? "" : "s"} · {item.zone_count} area{item.zone_count === 1 ? "" : "s"}</span>
                   </div>
                   <button className="secondary-action" onClick={() => navigateJournalLabel(item.label)} type="button">Open history</button>
@@ -907,8 +910,8 @@ export function BirdLogPage({
                 </div>
               ) : null}
               <section className="journal-history-grid">
-                <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatDateTime(activeHistory.first_observation.observed_at)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
-                <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatDateTime(activeHistory.latest_observation.observed_at)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
+                <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.first_observation.observed_at, activeHistory.first_observation.capture_time_known)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
+                <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.latest_observation.observed_at, activeHistory.latest_observation.capture_time_known)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
               </section>
               {activeHistory.place_context ? (
                 // Biodiversity & Place Intelligence v1: context tied to the
@@ -979,9 +982,9 @@ export function BirdLogPage({
                 {activeHistory.gallery.observations.length === 0 ? <EmptyState title="No observations match this tag" description="The reviewed-label counts and milestones above remain unchanged by tag filtering." /> : null}
                 {activeHistory.gallery.observations.map((observation) => (
                   <article className="journal-gallery-card" key={observation.visit_id}>
-                    <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
+                    <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} captureTimeKnown={observation.capture_time_known} representative={observation} /></button>
                     <div className="journal-gallery-body">
-                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}{(() => {
+                      <div className="section-heading"><div><h3>{formatCaptureDateTime(observation.observed_at, observation.capture_time_known)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}{(() => {
                         // Everyday Discovery / Product Experience v2 (Phase
                         // B): a confidently-associated visual+acoustic pair
                         // already collapsed into this one card server-side
