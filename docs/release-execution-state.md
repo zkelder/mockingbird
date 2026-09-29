@@ -923,6 +923,21 @@ stays **waived, not passed**. Phase label unchanged: **FEATURE FREEZE**.
 **Authorization: Owner-Only Final Release Hardening -- Fast Review
 Queue-End Undo v1** while it runs. See §3.
 
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1* executed, classification **A**.
+- **Defect closed:** the "Filtered queue complete" screen keeps the
+  "Saved <label>." confirmation and **Undo last correction**, and `Z`
+  works there, through the existing undo path. Frontend only.
+- **Browser gate:** complete default suite **198/198**; the three
+  separate configurations pass.
+- **New candidate:** source `d7e61c1`, Windows ZIP `75d998f7…` (build
+  `c901ac14bce22fe4`), accepted on native Windows. It **supersedes**
+  `02443ea` / `785f3f37…`. The Camera Node wheel is unchanged at
+  `38dfac47…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -4028,11 +4043,49 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: Owner-Only Final Release Hardening -- Fast Review
-Queue-End Undo v1.** See the authorization entry immediately below.
-*(Before this milestone, this line read "Authorization: NONE. The owner
+**Authorization: NONE.** The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Final Release
+Hardening -- Fast Review Queue-End Undo v1 ran, this line read
+"Authorization: Owner-Only Final Release Hardening -- Fast Review
+Queue-End Undo v1". Before that it read "Authorization: NONE. The owner
 must decide the next step.", the state after Browser Suite Determinism &
 Demo-Boundary Closure v1, whose closure entry follows further below.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Fast Review Queue-End Undo v1** (see
+[owner-only-final-release-hardening-fast-review-queue-end-undo-v1-report.md](owner-only-final-release-hardening-fast-review-queue-end-undo-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Commits:** `1d325f5` (authorization record); `d7e61c1` (fix and
+  focused browser spec, frontend only). **New candidate source.**
+- **Root cause:** `FastReviewPanel` rendered the undo block only in its
+  active-item branch, and its keydown effect bailed without an active
+  item, so the final save's still-valid undo token was unreachable.
+- **Fix:** the existing undo block is shared by both branches; `Z` runs
+  the existing `undoLastCorrection()` on either screen after the
+  unchanged typing-target check; every other shortcut still requires an
+  active item. No backend, schema or truth-semantics change.
+- **Validation:** red then green on a new real-Source spec (click Undo,
+  keyboard `Z`, inert shortcuts, typing-target protection, superseded
+  token -> honest 409 error); affected specs 10/10; repeat-each=10 40/40;
+  complete default suite **198/198**; configs 4/4, 6/6, 2/2; `tsc` and
+  `vite build` clean. Full Core not run: Tier 3 justification recorded
+  (no Python, script or test change; 212 packaged `.py` byte-identical).
+- **Artifact:** ZIP
+  `75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`,
+  build `c901ac14bce22fe4`; checksums, verifier, SBOM (59, identical) and
+  package parity verified; accepted on native Windows (both undo paths,
+  clean shutdown x2, restart with `previous_shutdown_clean: true`, Doctor
+  HEALTHY x2, 0 page errors, 0 5xx). Supersedes `02443ea` / `785f3f37…`.
+- **Open, disclosed:** F-2 duplicate alert pollers (out of scope). Gate G
+  waived, not passed.
+
+**Authorization after Fast Review Queue-End Undo v1: NONE.**
+
+---
+
+*(The authorization entry for Fast Review Queue-End Undo v1, retained as
+recorded:)*
 
 **Authorized, 2026-09-29.** *Owner-Only Final Release Hardening -- Fast
 Review Queue-End Undo v1*, by ChatGPT global sequencing. It accepts
@@ -4083,8 +4136,7 @@ Starts from `main` at `b11cc66`.
   touching the protected untracked files or `uv.lock`; self-authorizing
   another milestone.
 
-**Status: IN PROGRESS** (this record). Authorization returns to NONE on
-closure.
+**Status: EXECUTED -- classification A** (see the closure entry above).
 
 ---
 
@@ -15235,15 +15287,15 @@ rather than rewriting accepted history in place.
 *(Added 2026-09-29, because the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** Owner-Only Final Release Hardening -- Fast Review
-  Queue-End Undo v1, **IN PROGRESS**. It returns to NONE on closure.
-- **Record HEAD at authorization:** `b11cc66`. The last accepted
-  milestone is Browser Suite Determinism & Demo-Boundary Closure v1
-  (classification A, candidate source `02443ea`).
-- **Candidate source:** `02443ea` (Windows ZIP `785f3f37…`, build
-  `5200ec77a7221902`). It supersedes `215069b` / `d1050b99…`. The Camera
+- **Authorization:** **NONE.** The owner must decide the next step.
+- **Latest milestone:** Owner-Only Final Release Hardening -- Fast Review
+  Queue-End Undo v1, executed with classification A, awaiting acceptance.
+  The previous accepted milestone is Browser Suite Determinism &
+  Demo-Boundary Closure v1 (A).
+- **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
+  `c901ac14bce22fe4`). It supersedes `02443ea` / `785f3f37…`. The Camera
   Node wheel is unchanged at `38dfac47…`. **Schema:** `v61`.
-- **Browser gate:** complete default suite 196/196, plus the onboarding,
+- **Browser gate:** complete default suite 198/198, plus the onboarding,
   bounded Review Queue and bounded media configurations.
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
