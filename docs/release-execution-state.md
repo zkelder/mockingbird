@@ -899,6 +899,21 @@ candidate source stays `215069b` and the schema stays `v61`. Gate G stays
 **Authorization: Owner-Only Final Release Hardening -- Browser Suite
 Determinism & Demo-Boundary Closure v1** while it runs. See §3.
 
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening -- Browser
+Suite Determinism & Demo-Boundary Closure v1* executed, classification
+**A**.
+- **Browser suite green:** the complete default suite is **196/196**, and
+  the three separate configurations pass.
+- **Demo leak closed:** the Reviewed-history demo leak is closed at the
+  product seam.
+- **New candidate:** source `02443ea`, Windows ZIP `785f3f37…` (build
+  `5200ec77a7221902`), accepted on native Windows. It **supersedes**
+  `215069b` / `d1050b99…`. The Camera Node wheel is unchanged at
+  `38dfac47…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -4004,12 +4019,87 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: Owner-Only Final Release Hardening -- Browser Suite
-Determinism & Demo-Boundary Closure v1.** See the authorization entry
-immediately below. *(Before this milestone, this line read
+**Authorization: NONE.** The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Final Release
+Hardening -- Browser Suite Determinism & Demo-Boundary Closure v1 ran,
+this line read "Authorization: Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1". Before that it read
 "Authorization: NONE. The owner must decide the next step.", the state
 after Reviewed-Truth Browser Closure v1, whose closure entry follows
 further below.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1** (see
+[owner-only-final-release-hardening-browser-suite-determinism-demo-boundary-closure-v1-report.md](owner-only-final-release-hardening-browser-suite-determinism-demo-boundary-closure-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Commits:**
+  - `ccb6131`: product fix and tests;
+  - `02443ea`: test-only spec fixes. **New candidate source.**
+  - Authorization record `3f51e60`.
+- **Seven disclosed failures, all root-caused and closed:**
+  - `broader-wildlife-maturity-review` x2 and
+    `review-queue-bulk-correct-stale-write` imported onto the demo Stream,
+    which never reaches the Review Queue. They now use real-Source
+    fixtures.
+  - `review-queue-count-demo-exclusion`, `review-queue-fast-review-
+    keyboard` and the `today-report` empty state were shared-instance
+    accumulation. They are now scoped to data each test owns.
+  - `notification-preferences` insight alert: **stale test assumption,
+    not a product defect.** Place Story Deep Dives routes a
+    taxon-bearing alert to that taxon's Story. The fixture carried
+    `taxon_label`, and each path now has its own test.
+- **Three latent races found under stress and fixed (test-only):**
+  - notification live-delivery poll counting (two always-mounted
+    `AlertsControl` pollers plus `TodayAttentionSummary`);
+  - `dataset-export-download` clicking the preloaded seed manifest;
+  - demo controls under shared-suite demo-Source repurposing.
+- **Reviewed-history leak:**
+  - `GET /api/review-labels?real_sources_only=true` is additive and
+    opt-in, filtered through the `_real_stream_ids` seam. The raw default
+    is unchanged.
+  - `ReviewQueuePage` opts in.
+  - Seed records, truth resolution, the Reviewed-truth boundary and
+    schema `v61` are unchanged.
+- **Evidence:**
+  - Baseline 187/7.
+  - Final complete default suite **196/196**: 194 plus the new
+    Reviewed-history spec plus the split notification test.
+  - Stress 210/210 past pagination with the demo Source repurposed
+    mid-run.
+  - Notification spec 240/240 at `--repeat-each=20`.
+  - Onboarding, bounded Review Queue and bounded media: 6, 4 and 2, all
+    passed.
+  - `tsc` and `vite build` clean; 224 focused backend tests passed.
+  - Full Core: run 1 had 6252 passed and 1 failed, the load-induced
+    `test_transport_worker.py` flake of record (unrelated, byte-identical
+    code). Run 2 had **6253 passed, 0 failed**.
+- **Artifact:**
+  - ZIP `785f3f37d206cf5de1078c1ef6ad193f23b8152c406c82d3111b8fb7e0b7b462`,
+    build `5200ec77a7221902`, `source_clean`.
+  - 212/212 packaged `.py` files are byte-identical to `02443ea`, and the
+    SBOM is identical.
+  - Native Windows:
+    - Reviewed history listed the owner's human correction and **not**
+      the restored demo label ("1 reviewed"); `215069b` read "2 reviewed"
+      with the squirrel.
+    - Both deep-link paths routed correctly.
+    - Three clean in-app shutdowns, `previous_shutdown_clean: true`, and
+      Doctor HEALTHY on the stopped home.
+    - 0 page errors and 0 HTTP 5xx.
+- **Disclosed, not fixed:**
+  - F-1: Fast Review drops Undo on the "queue complete" panel.
+  - F-2: two always-mounted alert pollers (coalesced by notification
+    tag).
+  - Designed 401/404 console resource messages during first run.
+- **Unchanged:**
+  - Gate G is **waived, not passed**, and the owner is the sole
+    pre-release tester.
+  - Nothing was pushed, tagged, signed, published or uploaded.
+  - The protected files and `uv.lock` are untouched.
+  - §6 lanes are unchanged. **Authorization: NONE.**
+
+---
 
 **Authorized, 2026-09-29.** *Owner-Only Final Release Hardening --
 Browser Suite Determinism & Demo-Boundary Closure v1*, by ChatGPT global
@@ -4064,7 +4154,8 @@ passed**, and the owner stays the sole pre-release tester. Starts from
   self-authorizing another milestone.
 
 **Status: IN PROGRESS** (this record). Authorization returns to NONE on
-closure.
+closure. *(Superseded 2026-09-29: executed, classification A -- see the
+closure entry above; authorization returned to NONE.)*
 
 ---
 
@@ -15074,14 +15165,16 @@ rather than rewriting accepted history in place.
 *(Added 2026-09-29, because the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** Owner-Only Final Release Hardening -- Browser Suite
-  Determinism & Demo-Boundary Closure v1, **IN PROGRESS**. It returns to
-  NONE on closure.
-- **Record HEAD at authorization:** `9e0e113`. The last accepted
-  milestone is Reviewed-Truth Browser Closure v1 (classification B,
-  implementation `b946932`).
-- **Candidate source:** `215069b` (Windows ZIP `d1050b99…`). **Schema:**
-  `v61`.
+- **Authorization:** **NONE.** The owner must decide the next step.
+- **Latest milestone:** Owner-Only Final Release Hardening -- Browser Suite
+  Determinism & Demo-Boundary Closure v1, executed with classification A,
+  awaiting acceptance. The previous accepted milestone is Reviewed-Truth
+  Browser Closure v1 (B).
+- **Candidate source:** `02443ea` (Windows ZIP `785f3f37…`, build
+  `5200ec77a7221902`). It supersedes `215069b` / `d1050b99…`. The Camera
+  Node wheel is unchanged at `38dfac47…`. **Schema:** `v61`.
+- **Browser gate:** complete default suite 196/196, plus the onboarding,
+  bounded Review Queue and bounded media configurations.
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** FEATURE FREEZE.
