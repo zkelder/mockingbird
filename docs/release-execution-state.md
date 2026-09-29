@@ -838,6 +838,14 @@ also found: F-2, listener death, and F-3, a false Doctor `UNHEALTHY` after
 onboarding. The correction contract is proposed, not authorized. Phase label
 unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
 
+**Correction, 2026-09-29:** *Native-Windows Runtime Shutdown & Listener
+Resilience Correction v1*, authorized by the owner, executed and
+**complete**. The owner rejected `661d054` and classified F-1 and F-2 as
+v0.1 release blockers and F-3 as P1 before Gate G. All three are closed on
+a rebuilt, independently verified candidate at `2272126`, which was
+re-accepted on native Windows. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3945,6 +3953,94 @@ exactly as open as stated.
 
 **Authorization: NONE.** The owner must decide the next step. See the
 closure entry immediately below.
+
+**Closure recorded, 2026-09-29, by Native-Windows Runtime Shutdown &
+Listener Resilience Correction v1** (see
+[native-windows-runtime-shutdown-listener-resilience-correction-v1-report.md](native-windows-runtime-shutdown-listener-resilience-correction-v1-report.md)).
+
+**Accepted delta -- the owner's decision, recorded here, not decided
+here.** The Internal Release Candidate Rebuild & Native-Windows Acceptance
+v1 report is accepted as valid evidence. Candidate `661d054` is
+**rejected**. F-1 and F-2 are v0.1 **release blockers**; F-3 is a **P1**
+that must close before Gate G. Only the bounded correction was authorized:
+no Gate G, Pi work, feature development, publishing, tagging, signing or
+pushing.
+
+**Status: EXECUTED -- CORRECTION COMPLETE.** No release blocker from the
+prior acceptance remains open.
+
+- **Fixes:**
+  - **F-2:** on Windows, the uvicorn server now runs on a selector event
+    loop instead of the bundled CPython 3.12.7 Proactor loop. The change is
+    scoped to the server loop only; other platforms are unchanged. The
+    premise was verified: nothing on that loop needs Proactor.
+  - **F-1:** the selector loop removes the trigger. In addition, a bounded
+    `timeout_graceful_shutdown` of 5 s was selected from measured native
+    teardown (drain + lifespan 0.45-0.59 s, exit 0.83-1.06 s). It also
+    ends a previously unbounded wait on an open MJPEG-style stream.
+    `mark_clean_shutdown()` still runs last in the unchanged lifespan
+    teardown.
+  - **F-3:** the existing Doctor Storage check blocks on a missing media
+    root only once a MediaAsset has been recorded.
+  - Tests were written first: one red-then-green focused test per finding.
+    `scripts/native_windows_runtime_resilience_acceptance.py` was added.
+- **Candidate identity:**
+  - Frozen source SHA `2272126bfed784b48862fd59b99e19e03202b26f`, version
+    `0.1.0`, schema `v61`.
+  - Windows ZIP SHA-256
+    `124939b96bde155fceb34595a8ab41d7ca65ef2c3ff9a1d4a6bdeaeecc8dc650`
+    (`build_id c1b25f79d2db3f10`, `source_clean: true`, 19,284 files /
+    4,923,709,105 bytes, unsigned, SBOM 59 components identical to
+    `661d054`).
+  - Camera Node wheel SHA-256
+    `38dfac47a6ea6b164fe82e94642540d02be213506b7ee7d6e1090afe93f6d904`,
+    byte-identical to the `661d054` wheel.
+  - Both artifacts are private under ignored
+    `dist/native-windows-runtime-correction-v1-2272126*/`.
+- **Verification:**
+  - Verifier OK; `SHA256SUMS` all OK; a native `Get-FileHash` and the
+    native extraction match the manifest.
+  - Model provenance and all dependency lists are identical to the
+    accepted values. The only content changes against `661d054` are
+    `runtime.py`, `doctor.py` and build metadata.
+  - No FFmpeg or BirdNET weights in the ZIP.
+  - All packaged modules and Camera Node modules are byte-identical to
+    `2272126`.
+- **Native-Windows acceptance (disposable homes, ports 8141-8145, port 8000
+  untouched):**
+  - **F-2:** the exact prior burst gave 0/3 listener deaths (900 abortive
+    connections, health reachable after every burst); the untouched
+    `661d054` gave 3/3.
+  - **Resets then in-app shutdown:** 3/3 clean (exit < 0.9 s, nothing
+    remaining, relaunch a single process with
+    `previous_shutdown_clean: true`).
+  - **Ctrl+C after resets:** 3/3 clean.
+  - **Real Edge sessions:** 3 consecutive sessions with navigation, UI
+    media upload/use and in-app shutdown, each exiting cleanly in <= 3.3 s.
+  - **F-3:** Doctor after default onboarding is `HEALTHY` (no false
+    `FAIL`), and with stored media and the media root removed it is still
+    `FAIL`/blocking.
+  - **Prior rows 1-3 and 6-9:** repeated and passed -- identity, install
+    and onboarding, the product loop with an honest BioCLIP abstention and
+    human truth, abrupt recovery with byte-identical data, America/New_York
+    DST, and v59 -> v61 upgrade/restore with the downgrade guard.
+  - Live camera and Observation resume were not exercisable.
+- **Validation:**
+  - Tier 2: 639 passed / 1 skipped / 0 failed.
+  - Core: 6235 passed / **1 failed**. The failure is non-attributable: a
+    pre-existing midnight-boundary fixture defect in
+    `test_today_dashboard_shows_only_corrected_truth`, reproduced
+    identically on unmodified `673ccf1`.
+  - Protected files and `uv.lock` are byte-identical and untracked.
+- **Pi:** still unavailable; **no new Pi evidence was produced**; no
+  Camera Node code changed. Previously accepted hardware evidence remains
+  frozen and is not re-attributed.
+- **Verdict:** candidate `2272126` is corrected and re-accepted on native
+  Windows within the scope above. The next release decision belongs to the
+  owner. **Gate G remains unexecuted and unwaived.** Nothing was pushed,
+  tagged, signed, published or distributed. §6 lanes A-S are unchanged.
+
+---
 
 **Closure recorded, 2026-09-28, by Internal Release Candidate Rebuild &
 Native-Windows Acceptance v1** (see
@@ -13349,6 +13445,17 @@ rather than cleaned up; re-verify their presence untouched at the start of
 each session that touches this repository.
 
 ## 14. Validation baselines
+
+**Latest Core run (Native-Windows Runtime Shutdown & Listener Resilience
+Correction v1, working tree committed as `2272126`, 2026-09-29):** 6235
+passed / 1 failed / 4 skipped / 35 deselected / 11 xfailed (42m16s). The
+single failure,
+`test_everyday_discovery_ux_closure.py::test_today_dashboard_shows_only_corrected_truth`,
+is a pre-existing midnight-boundary fixture defect: its Visits are dated
+30-50 minutes before "now". It reproduces with the local clock at 00:20 on
+unmodified `673ccf1`, and the file passes 19/19 otherwise. Tier 2 (18
+runtime/shutdown/Doctor/packaging/recovery/backup/upgrade/installation
+files): 639 passed / 1 skipped / 0 failed. See the correction report, §6.
 
 **Latest accepted Core checkpoint (Pre-Release Trust & Correctness
 Correction v1):** 6057 passed / **5 failed** / 4 skipped / 35 deselected
