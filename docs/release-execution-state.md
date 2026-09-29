@@ -914,6 +914,15 @@ Suite Determinism & Demo-Boundary Closure v1* executed, classification
 
 Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
 
+**Authorized, 2026-09-29:** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1*, by ChatGPT global sequencing after it accepted
+Browser Suite Determinism & Demo-Boundary Closure v1 at classification
+**A** (candidate source `02443ea`, record `b11cc66`, Windows ZIP
+`785f3f37…`, build `5200ec77a7221902`). The schema stays `v61`. Gate G
+stays **waived, not passed**. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: Owner-Only Final Release Hardening -- Fast Review
+Queue-End Undo v1** while it runs. See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -4019,7 +4028,68 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE.** The owner must decide the next step. See the
+**Authorization: Owner-Only Final Release Hardening -- Fast Review
+Queue-End Undo v1.** See the authorization entry immediately below.
+*(Before this milestone, this line read "Authorization: NONE. The owner
+must decide the next step.", the state after Browser Suite Determinism &
+Demo-Boundary Closure v1, whose closure entry follows further below.)*
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1*, by ChatGPT global sequencing. It accepts
+Browser Suite Determinism & Demo-Boundary Closure v1 at classification
+**A**: candidate source `02443ea`, record HEAD `b11cc66`, Windows ZIP
+`785f3f37d206cf5de1078c1ef6ad193f23b8152c406c82d3111b8fb7e0b7b462`, build
+`5200ec77a7221902`, schema `v61`, browser gate 196/196. Gate G stays
+**waived, not passed**, and the owner stays the sole pre-release tester.
+Starts from `main` at `b11cc66`.
+
+- **Mission: close the reproduced Fast Review queue-end undo defect.**
+  After the final Visit of a filtered Fast Review session is saved, the
+  UI switches to "Filtered queue complete" and drops the "Saved <label>."
+  confirmation and the "Undo last correction" control, although an undo
+  token is still available. The fix reuses the existing undo mechanism; no
+  second correction or reversal path.
+- **Required behavior:** the completion screen keeps the saved-label
+  confirmation and an operable "Undo last correction"; undo restores the
+  exact Visit to its prior review state and makes it the active Fast
+  Review item again; queue and processed counts return to their correct
+  values; focus stays accessible; the documented `Z` shortcut works from
+  the completion screen; other correction shortcuts do not run without an
+  active item; typing-target protection stays intact; an expired or
+  superseded undo token still shows the existing honest error.
+- **Scope:** frontend-only is preferred. If a backend or schema change
+  appears necessary, the milestone stops and reports why before expanding
+  scope.
+- **Validation:** a focused real-Source browser test, red before the fix;
+  clickable Undo and keyboard `Z` at queue completion; authoritative
+  correction creation and reversal, restored Visit state, queue count and
+  resumed Fast Review UI; an invalidated-token case if practical; the
+  affected Fast Review and reviewed-truth specs; the complete default
+  browser suite (196/196 or better, no retries, skips, quarantine or order
+  dependence); the bounded Review Queue and other affected configurations;
+  `tsc` and the production frontend build; a concrete Tier 3 justification
+  in place of full Core if the change is genuinely frontend-only.
+- **Artifact:** packaged frontend input changes, so `02443ea` will be
+  superseded (it stays accepted evidence). A new private Windows ZIP is
+  built from the clean implementation commit, verified for provenance,
+  checksums, package parity and SBOM, and accepted on native Windows with
+  a disposable home: one real Visit, Fast Review, final-item save, Undo
+  retained and working, a repeat with keyboard `Z`, clean shutdown,
+  restart and Doctor, and recorded browser errors.
+- **Non-goals:** the duplicate alert-poller efficiency finding; new
+  features or a Fast Review redesign; reviewed-truth semantics; detector,
+  threshold or identification policy; Pi or Camera Node work; Gate G or
+  participant work; signing, publishing, uploading, tagging or pushing;
+  touching the protected untracked files or `uv.lock`; self-authorizing
+  another milestone.
+
+**Status: IN PROGRESS** (this record). Authorization returns to NONE on
+closure.
+
+---
+
+**Authorization after Browser Suite Determinism & Demo-Boundary Closure
+v1: NONE.** The owner must decide the next step. See the
 closure entry immediately below. *(While Owner-Only Final Release
 Hardening -- Browser Suite Determinism & Demo-Boundary Closure v1 ran,
 this line read "Authorization: Owner-Only Final Release Hardening --
@@ -15165,11 +15235,11 @@ rather than rewriting accepted history in place.
 *(Added 2026-09-29, because the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE.** The owner must decide the next step.
-- **Latest milestone:** Owner-Only Final Release Hardening -- Browser Suite
-  Determinism & Demo-Boundary Closure v1, executed with classification A,
-  awaiting acceptance. The previous accepted milestone is Reviewed-Truth
-  Browser Closure v1 (B).
+- **Authorization:** Owner-Only Final Release Hardening -- Fast Review
+  Queue-End Undo v1, **IN PROGRESS**. It returns to NONE on closure.
+- **Record HEAD at authorization:** `b11cc66`. The last accepted
+  milestone is Browser Suite Determinism & Demo-Boundary Closure v1
+  (classification A, candidate source `02443ea`).
 - **Candidate source:** `02443ea` (Windows ZIP `785f3f37…`, build
   `5200ec77a7221902`). It supersedes `215069b` / `d1050b99…`. The Camera
   Node wheel is unchanged at `38dfac47…`. **Schema:** `v61`.
