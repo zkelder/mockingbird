@@ -830,6 +830,14 @@ change or Gate G. Phase label unchanged: **FEATURE FREEZE**. See §3 for
 the record. **Authorization: Internal Release Candidate Rebuild &
 Native-Windows Acceptance v1** while it runs; **NONE** on its closure.
 
+**Closure, 2026-09-28:** executed, **NOT ACCEPTED**. The frozen candidate
+`661d054` verified intact and completed the bounded product loop on native
+Windows. The in-app graceful shutdown then hung after client connection
+resets (F-1, a release-blocker candidate). Two further genuine defects were
+also found: F-2, listener death, and F-3, a false Doctor `UNHEALTHY` after
+onboarding. The correction contract is proposed, not authorized. Phase label
+unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3935,6 +3943,106 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Authorization: NONE.** The owner must decide the next step. See the
+closure entry immediately below.
+
+**Closure recorded, 2026-09-28, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1** (see
+[internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md](internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md)).
+
+**Status: EXECUTED -- NOT ACCEPTED.** It reproduced one release-blocker
+candidate on the exact frozen candidate, plus two further genuine defects.
+None was fixed (non-goal). A bounded correction contract is proposed in the
+report's §9; it is not authorized.
+
+- **Frozen source SHA:** `661d0540ad6b832db47539232ec7b1cc6d2594e2`, version
+  `0.1.0`, schema `v61`. The source is unchanged by this closure; only
+  documentation changed.
+- **Artifacts (reused, not rebuilt -- integrity passed):** Windows
+  `MockingBird-windows-x64.zip` SHA-256
+  `c63fea5a62eda5397651c3d492a392768ced6e2be921fa3f802ba18645c65645`
+  (`build_id b4630af21a31c341`, `source_clean: true`, 19,284 files /
+  4,923,707,741 bytes, unsigned, CycloneDX SBOM 59 components). Camera Node
+  wheel SHA-256
+  `38dfac47a6ea6b164fe82e94642540d02be213506b7ee7d6e1090afe93f6d904`.
+  Both kept private under ignored `dist/` paths.
+- **Verifier results:** `scripts/verify_release_artifact.py` returned OK on
+  the `dist/` copy and on the copy staged to Windows. A native
+  `Get-FileHash` matched. Native extraction matched the manifest's file count
+  and bytes. For the Camera Node, all 19 wheel entries matched the manifest,
+  all 15 modules and the installer were byte-identical to `661d054`, and every
+  `SHA256SUMS` entry was OK.
+- **Native-Windows evidence (disposable homes under `C:\MBRC`, ports
+  8123-8127; port 8000 untouched):**
+  - **Identity:** the running identity matched the manifest.
+  - **Install and first run:** native unpack; the `.vbs` launch; all
+    five onboarding steps completed in real Microsoft Edge.
+  - **Media setup:** Manual-media setup, folder preview (a true dry run)
+    and imports, using real recorded field inputs from the reference Pi
+    captured 2026-09-25.
+  - **Detector:** MDv5a ONNX at `score_threshold 0.1`, `cuda_only_verified`
+    (1772 CUDA / 0 CPU nodes) on an RTX 4060 Ti.
+  - **Classifier:** BioCLIP-2 loaded from the packaged bundle with hashes
+    equal to the manifest.
+  - **Product loop:** recorded ingest (2 candidate Visits,
+    `creates_truth: false`) -> evidence -> Review Queue -> BioCLIP
+    suggestion, which honestly abstained -> explicit human "Unknown Bird"
+    corrections (authoritative) -> Bird Log (4 confirmed) -> Today, which
+    held its count (5 -> 5, "2 visits confirmed today").
+  - **Recovery:** abrupt-termination recovery was honest
+    (`previous_shutdown_clean: false`) with all data and media
+    byte-identical. A graceful restart with no connection reset was
+    clean.
+  - **Time:** `Eastern Standard Time` -> `America/New_York`, with both DST
+    transitions correct.
+  - **Upgrade:** v59 (`039ce7d`) -> v61 on disposable copies, with an
+    automatic verified `pre_migration` backup and human truth preserved.
+    Restoring that backup rolled back a post-upgrade change, first creating a
+    verified `pre_restore` safety backup, and the restored database
+    re-migrated. The v59 binary safely refused the v61 database.
+  - **Browser evidence:** 35 real-browser screenshots.
+  - **Not exercisable here, and not claimed:** live camera preview and
+    readiness, and Observation start/resume. No live camera was available:
+    the webcam was disconnected and the Pi unavailable.
+- **Findings:**
+  - **F-1 -- RELEASE-BLOCKER CANDIDATE.** The in-app *Shut down MockingBird*
+    hangs forever on native Windows after any client connection reset. It
+    happened organically in 2/2 real-browser sessions, and in 0/11 sessions
+    with no reset. Root cause: in the bundled CPython 3.12.7, Proactor
+    `_call_connection_lost` raises `WinError 10054` before
+    `server._detach()`, so uvicorn 0.54's `server.wait_closed()` waits
+    forever. `runtime.py` leaves `timeout_graceful_shutdown` unbounded.
+  - **F-2 -- genuine defect, deterministic 3/3.** A burst of abortive
+    connections makes the Proactor accept loop close the listening socket
+    (`WinError 64`), leaving a live but unreachable process.
+  - **F-3 -- genuine defect, deterministic 2/2.** Doctor reports
+    `UNHEALTHY` / BLOCKING "media storage folder does not exist" right after
+    default onboarding, until the first media write.
+  - Five non-blocking observations are disclosed in the report's §7.
+    Classification of F-2/F-3 as blocking is the owner's decision.
+- **Pi limitation (precise):** the exact candidate wheel was
+  package-verified this session. The handoff records that it *reportedly*
+  passed a read-only `--preflight` against the reference Pi earlier in this
+  milestone, and that result was not re-observed. The Pi is no longer
+  available. The candidate was **not** freshly installed, upgraded, paired,
+  streamed or field-run on any Camera Node. Previously accepted Camera Node
+  hardware evidence is preserved and is not re-attributed to this artifact.
+- **Validation:** Tier 1 passed. Tier 2 focused
+  packaging/verification/installation/upgrade/recovery/runtime/Doctor
+  suites at `661d054`: **604 passed, 0 failed**. These suites do not cover
+  F-1/F-2, which are Windows-Proactor-only, or F-3. Tier 3 reuses the
+  accepted CI & Core Validation Closure v1 baseline (source unchanged).
+  Protected files and `uv.lock` are byte-identical and untracked.
+- **Verdict:** the candidate at `661d054` is **not accepted** for
+  release-candidate status. The single next release decision belongs to the
+  owner: whether to authorize the report's §9 correction (*Native-Windows
+  Runtime Shutdown & Listener Resilience Correction v1*, which would need a
+  new SHA, a rebuild and a repeat of this acceptance), or to classify
+  otherwise. **Gate G remains unexecuted and unwaived.** Nothing was pushed,
+  tagged, signed, published or distributed. §6 lanes A-S are unchanged.
+
+---
+
 **Recorded, 2026-09-26, by Internal Release Candidate Rebuild &
 Native-Windows Acceptance v1.**
 
@@ -3994,7 +4102,9 @@ unchanged. Normal scoped documentation commits and pushes to the existing
 private repository authorized; no force-push or history rewrite. Protected
 files and `uv.lock` preserved byte-for-byte and untracked.
 
-**Status: IN PROGRESS** (this correction commit). The closure record --
+**Status: IN PROGRESS** (this correction commit). *(Superseded
+2026-09-28: executed, NOT ACCEPTED -- see the closure entry above;
+authorization returned to NONE.)* The closure record --
 frozen SHA, artifact hashes, verifier results, native-Windows evidence,
 Camera Node verification limits, exceptions/blockers, verdict and the
 single next release decision -- is added here and in
