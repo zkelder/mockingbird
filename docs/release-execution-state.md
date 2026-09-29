@@ -870,6 +870,13 @@ fixture, and a fresh private candidate accepted on native Windows). Phase
 label unchanged: **FEATURE FREEZE**. **Authorization: Owner-Only Release
 Polish & Acceptance v1** while it runs; **NONE** on its closure.
 
+**Closure, 2026-09-29:** *Owner-Only Release Polish & Acceptance v1*
+executed, classification **A**. The new private candidate is source
+`215069b`, Windows ZIP `d1050b99…`, with the Camera Node wheel unchanged
+at `38dfac47…`. Core passed 6249 / 0 failed, and the candidate was
+accepted on native Windows. Gate G remains **waived, not passed**. Phase
+label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3975,11 +3982,70 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: Owner-Only Release Polish & Acceptance v1** while it runs;
-**NONE** on its closure. See the entry immediately below. *(The line that
+**Authorization: NONE.** The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Release Polish &
+Acceptance v1 ran, this line read "Authorization: Owner-Only Release
+Polish & Acceptance v1". The line that
 stood here before this entry -- "Authorization: NONE. The owner must decide
 the next step." -- recorded the state after Gate G -- Launch Package
 Refresh v1, whose closure entry follows.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Release Polish & Acceptance
+v1** (see
+[owner-only-release-polish-acceptance-v1-report.md](owner-only-release-polish-acceptance-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Gate G:** **waived by the owner, not passed.** The owner is the sole
+  pre-release tester. No participant was recruited or contacted, and
+  nothing was sent.
+- **Fixes:**
+  - **O-1:** "Capture time unknown", decided by provenance only: the
+    offline/acoustic path plus the source recording's absent
+    `captured_at`. This also applies to the research export, which had
+    certified the placeholder as `recorded`.
+  - **O-2:** offline-analysis wording instead of "manual media".
+  - **README-FIRST:** rewritten, with tests tied to product source.
+  - **Midnight fixture:** fixed, plus its sibling test in the same file.
+  - No schema, model, threshold, dependency or Camera Node change.
+- **Candidate:** source `215069b3f95e54fee8c660d53013e665dd67877c`
+  (`0.1.0`, `v61`).
+  - Windows ZIP SHA-256
+    `d1050b99d3eee93e0096e5ea5b6a3e982224860a4f904afa8a3892172f01bb9d`
+    (`build_id 85b92328bb185cba`, `source_clean: true`, 19,284 files /
+    4,923,721,175 bytes, unsigned).
+  - Camera Node wheel `38dfac47…`, byte-identical to the accepted wheel.
+  - Both are private under ignored
+    `dist/owner-only-release-polish-v1-215069b*/`.
+  - Verifier OK. Dependencies, models and SBOM (59) are identical to
+    `2272126`. 212/212 packaged modules equal the source.
+- **Validation:**
+  - Focused tests were red, then green.
+  - Affected suites: 576 passed / 0 failed.
+  - `tsc` and `vite build` are clean.
+  - e2e: 80 passed / 2 failed. Both failures are pre-existing, and one of
+    them was reproduced on the untouched `c02ffd5`.
+  - **Core: 6249 passed / 0 failed.**
+- **Native Windows** (exact ZIP, disposable home on `D:`, port 8151):
+  - Identity matched.
+  - Five-step onboarding completed, and Doctor was HEALTHY.
+  - A real field recording without `creation_time` was imported and
+    analysed into 2 Visits (`capture_time_known: false`).
+  - "Capture time unknown" appears on Review Queue, Visit, Event, Activity
+    Library and Today, with zero "Dec 31"/"7:00 PM".
+  - The offline wording is correct.
+  - Human authoritative Unknown Bird corrections gave Bird Log 2
+    confirmed.
+  - Two UI shutdowns and relaunches were clean
+    (`previous_shutdown_clean: true`, data intact).
+  - Doctor CLI on the stopped home is HEALTHY.
+  - 0 browser errors.
+- **Not claimed:** live camera, Observation resume, any Pi or Camera Node
+  hardware evidence, or external validation.
+- Nothing was pushed, tagged, signed, published or uploaded. The
+  protected files and `uv.lock` are byte-identical. §6 lanes A-S are
+  unchanged apart from the §6.S Gate G note. **Authorization: NONE.**
+
+---
 
 **Recorded, 2026-09-29, by Owner-Only Release Polish & Acceptance v1.**
 
@@ -4047,7 +4113,9 @@ dependencies, Pi work, reopening accepted milestones. No push, tag,
 signature, publication, upload, recruitment or contact. Protected files
 and `uv.lock` untouched.
 
-**Status: IN PROGRESS** (this record). The closure -- candidate SHA,
+**Status: IN PROGRESS** (this record). *(Superseded 2026-09-29: executed,
+classification A -- see the closure entry above; authorization returned to
+NONE.)* The closure -- candidate SHA,
 artifact identities, native-Windows evidence, validation, limitations and
 classification -- is added here and in
 `docs/owner-only-release-polish-acceptance-v1-report.md` when the
