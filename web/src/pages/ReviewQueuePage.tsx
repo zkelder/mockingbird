@@ -4486,11 +4486,23 @@ function FastReviewPanel({
   }
 
   useEffect(() => {
-    if (!isOpen || !activeItem) {
+    if (!isOpen) {
       return undefined;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isFastReviewTypingTarget(event.target)) {
+        return;
+      }
+      // Fast Review Queue-End Undo v1: `Z` must also work from the
+      // "Filtered queue complete" screen, because saving the final item is
+      // exactly what lands there while its undo token is still live. Every
+      // other shortcut acts on the active item, so none runs without one.
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undoLastCorrection();
+        return;
+      }
+      if (!activeItem) {
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -4522,9 +4534,6 @@ function FastReviewPanel({
       } else if (event.key.toLowerCase() === "u") {
         event.preventDefault();
         void saveAndNext("ambiguous", "Marked ambiguous activity in Fast Review.");
-      } else if (event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        void undoLastCorrection();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -4544,6 +4553,18 @@ function FastReviewPanel({
   if (targets.length === 0 && !isOpen) {
     return null;
   }
+
+  // Shared by the active-item and "Filtered queue complete" screens: the
+  // last save of a filtered queue lands on the latter, and its undo token
+  // stays valid there (Fast Review Queue-End Undo v1).
+  const undoControl = undoState ? (
+    <div className="fast-review-undo">
+      <span>Saved {displayTaxonomyLabel(undoState.label, taxonomyLabels)}.</span>
+      <button className="text-action" disabled={isSaving} onClick={() => void undoLastCorrection()} type="button">
+        Undo last correction
+      </button>
+    </div>
+  ) : null;
 
   if (!isOpen) {
     return (
@@ -4578,6 +4599,7 @@ function FastReviewPanel({
           <span className="eyebrow">Fast Review</span>
           <h2 ref={completeHeadingRef} tabIndex={-1}>Filtered queue complete</h2>
           <p>{message ?? "No unresolved Visits remain in this filtered queue."}</p>
+          {undoControl}
         </div>
         <button className="secondary-action" onClick={() => setIsOpen(false)} type="button">
           Return to Review Queue
@@ -4818,14 +4840,7 @@ function FastReviewPanel({
               Ambiguous / unknown
             </button>
           </div>
-          {undoState ? (
-            <div className="fast-review-undo">
-              <span>Saved {displayTaxonomyLabel(undoState.label, taxonomyLabels)}.</span>
-              <button className="text-action" disabled={isSaving} onClick={() => void undoLastCorrection()} type="button">
-                Undo last correction
-              </button>
-            </div>
-          ) : null}
+          {undoControl}
           <details className="fast-review-shortcuts">
             <summary>Keyboard shortcuts</summary>
             <span>Left / Right: evidence frame · Space: play/pause · Ctrl/Cmd+Enter: save & next</span>
