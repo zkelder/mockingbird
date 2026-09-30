@@ -28,6 +28,18 @@ false claim. Gate G remains **waived, not passed**. This strategy record does
 not authorize a particular implementation milestone; §3 remains
 authoritative for authorization.
 
+**Audit completed and first milestone authorized, 2026-09-29 -- Pre-1.0
+Software Gap Audit & Contract Lock v1:** direct current-code inspection removed
+two stale promoted areas: Remote/Intermittent-WAN Transport Foundation v1
+already delivered resumable/idempotent chunk transport, bounded pacing/backlog,
+fault-injected outage/restart coverage, ledger, and low-level diagnostics; and
+evidence-honest stored-acoustic soundscape analytics already exist. The
+surviving queue is split into fourteen dependency-ordered milestones in
+[pre-1.0-software-gap-audit-contract-lock-v1-report.md](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
+The first bounded milestone, **Attention Integrity & Health Reliability v1**,
+is authorized in §3. This documentation-only audit changed no product code,
+schema, version, package, artifact, or accepted capability.
+
 **Corrected 2026-09-06 by Global Remaining Product-Development &
 Release-Queue Reconciliation v1** (see
 [global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)).
@@ -970,12 +982,22 @@ release target is `1.0.0`, after the software-completable roadmap queue in
 [Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md)
 is delivered and Final Release Hardening is rerun. State changes from `READY
 FOR OWNER RELEASE DECISION` to **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**.
-Authorization remains **NONE** pending bounded implementation sequencing.
+At this strategy checkpoint authorization remained **NONE** pending bounded
+implementation sequencing; the later software-gap audit record above and §3
+supersede that checkpoint state.
 
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Current sequencing correction, 2026-09-29, by Pre-1.0 Software Gap Audit &
+Contract Lock v1:** the accepted implementation/artifact facts below remain the
+frozen internal baseline. The audit removed already-delivered remote-transport
+and soundscape-analytics work, locked the surviving dependency-ordered queue,
+and authorized **Attention Integrity & Health Reliability v1** only. Current
+phase: **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**. Version/schema remain
+`0.1.0` / `v61` until implementation changes them; see §3 and §8.
 
 **Staleness correction, 2026-09-29, by Final Product Release Scope
 Reconciliation v1:** the immediately following acceptance record remains
@@ -984,7 +1006,8 @@ RELEASE DECISION` state is superseded. The owner will not publish `0.1.0`.
 Source `d7e61c1`, ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`,
 and their validation remain the frozen internal baseline for renewed
 development. Public target: `1.0.0`. Current phase: **PRE-1.0 PRODUCT
-COMPLETION -- SOFTWARE-FIRST**. Current authorization: **NONE** (§3).
+COMPLETION -- SOFTWARE-FIRST**. The authorization recorded at this earlier
+strategy checkpoint is superseded by the audit correction above and §3.
 
 **Staleness correction, 2026-09-29, by the Fast Review Queue-End Undo v1
 acceptance reconciliation (documentation only):** the notes below are
@@ -999,7 +1022,8 @@ bounded-media configurations green; the exact artifact accepted on native
 Windows. **State: READY FOR OWNER RELEASE DECISION.** Gate G is
 **waived, not passed**; the owner remains the sole pre-release tester.
 Working tree: the seven preserved untracked detector files (§13) and
-`uv.lock`, untouched. Current authorization: **NONE** (§3).
+`uv.lock`, untouched. That acceptance checkpoint's authorization was
+**NONE**; the current authorization is in the audit correction above and §3.
 
 **Staleness correction, 2026-09-26, by Internal Release Candidate Rebuild &
 Native-Windows Acceptance v1:** the note immediately below is superseded on
@@ -4101,13 +4125,24 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE.** The owner has selected the new release shape, but
-no implementation milestone is authorized yet. The next global sequencing
-action is the bounded **Pre-1.0 Software Gap Audit & Contract Lock** named in
-[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md),
-which must verify the promoted queue against current repository evidence
-before any feature implementation begins. The acceptance entry below is
-retained as the accepted internal baseline, not as a release authorization.
+**Authorization: Attention Integrity & Health Reliability v1.** The owner
+authorized the Pre-1.0 Software Gap Audit & Contract Lock on 2026-09-29; that
+audit is complete and its first bounded implementation milestone is now
+authorized. The governing task packet and acceptance contract are in
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md#first-authorized-implementation-milestone).
+
+The milestone makes product-alert read/dismiss state per-user while preserving
+observatory-global alert condition/resolution/evidence, replaces duplicate
+app-shell unread/recent fetch paths with one shared source, adds a sustained and
+resolving production-detector/model-unavailable Observatory Health alert from
+existing facts, and adds bounded attention-sync diagnostics. Expected schema:
+`v62`. Validation: Tier 2 affected subsystem plus Core. It explicitly excludes
+Web Push, cross-camera grouping, broad UX redesign, detector/model/truth-policy
+changes, hardware validation, packaging, versioning, signing, tagging, pushing,
+and release. No later milestone in the locked queue is authorized.
+
+The acceptance entry below remains the accepted internal baseline, not a
+release authorization.
 
 **Acceptance recorded, 2026-09-29 (documentation-only reconciliation; no
 rebuild, no validation rerun).** ChatGPT global sequencing accepts
@@ -14017,26 +14052,36 @@ LTE/solar/custom field hardware are not release blockers.
 
 ## 8. Pre-1.0 promoted software queue
 
-The detailed, governing inventory and split criteria are in
-[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md).
-In summary, promote before `1.0.0`:
+The audit required by the scope reconciliation is complete. The detailed
+evidence, removals, task contract, and dependency order are in
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
 
-- everyday-product, Attention, mobile-web, accessibility, and diagnostics
-  gaps that are reproducible in the browser/test harness;
-- multi-camera attribution/grouping/filter consolidation, the legacy
-  two-Stream software cap, and bounded multi-site/local-instance semantics;
-- store-and-forward resume granularity, explicit pending-sync state,
-  bandwidth policy, outage simulation, and remote-operator diagnostics;
-- repository-completable ecological/export filters and media bundles,
-  provider-neutral sensor ingestion, intervention/habitat/land-management
-  workflows, and evidence-honest stored-acoustic analytics;
-- orphan-media detection/recovery, first-class Linux end-user distribution,
-  public documentation/site/support artifacts, and version-language closure;
-- one fresh Final `1.0.0` Hardening and artifact-acceptance pass after all
-  promoted work is accepted.
+**Removed as stale/already delivered:** generic soundscape analytics and the
+Remote/Intermittent-WAN foundation's resumable/idempotent chunks, pacing,
+bounded backlog, outage/restart simulation, ledger, and low-level diagnostics.
+Remote operator-facing configuration/backlog visibility remains; real LTE/Pi/
+carrier/power acceptance remains external.
 
-Every item is subject to a current-code audit first. Historical gaps already
-closed by later work are removed, not rebuilt.
+**Surviving bounded sequence:**
+
+1. Attention Integrity & Health Reliability v1 -- **authorized in §3**.
+2. Everyday UX & Accessibility Closure v1.
+3. Orphan Media Integrity & Recovery v1.
+4. Research Export & Ecological Workflow Completion v1.
+5. Environmental Sensor Ingestion Foundation v1.
+6. Intervention & Habitat Outcomes v1.
+7. Ecosystem UX Closure v1, limited to then-reproduced residuals.
+8. Multi-Camera Attribution & Filter Consolidation v1.
+9. Legacy Local-Camera Concurrency & Remote Operator UX v1.
+10. Multi-Observatory Software Model v1.
+11. Optional Background Notification Transport v1.
+12. Linux Host Distribution & Service Lifecycle v1.
+13. Public Product, Deployment & Support Closure v1.
+14. Final 1.0 Hardening & Launch Candidate.
+
+Only item 1 is authorized. Each later item requires acceptance of its
+predecessor and an explicit scheduler update; this list is not blanket
+authorization.
 
 ## 9. External-dependency and later queue
 
@@ -15370,8 +15415,9 @@ rather than rewriting accepted history in place.
 *(Added 2026-09-29, because the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE.** The owner has selected the release shape;
-  bounded implementation sequencing remains required.
+- **Authorization:** **Attention Integrity & Health Reliability v1.** The
+  bounded task packet and acceptance contract are in
+  [Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md#first-authorized-implementation-milestone).
 - **Latest accepted milestone:** Owner-Only Final Release Hardening --
   Fast Review Queue-End Undo v1, classification A.
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
@@ -15385,5 +15431,5 @@ authoritative record.)*
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
-- **Next sequencing action:** Pre-1.0 Software Gap Audit & Contract Lock;
-  not yet authorized as an implementation milestone.
+- **Next action:** implement and validate Attention Integrity & Health
+  Reliability v1. No later pre-1.0 milestone is authorized.

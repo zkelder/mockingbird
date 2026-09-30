@@ -81,20 +81,22 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
 **Current strategy supersession (2026-09-29):** Phase 1 and the historical
 release gates remain accepted evidence, but `READY FOR OWNER RELEASE
 DECISION` is superseded. Current phase is **PRE-1.0 PRODUCT COMPLETION --
-SOFTWARE-FIRST**. The immediate planning task is to audit the promoted queue
-against current code, because many old roadmap gaps were already delivered by
-later milestones. No individual implementation milestone is authorized by
-this roadmap edit alone.
+SOFTWARE-FIRST**. The promoted-queue audit is complete: it removed already-
+delivered remote-transport and soundscape-analytics work, split the surviving
+software into bounded dependency-ordered milestones, and authorized
+**Attention Integrity & Health Reliability v1** first. See
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md)
+and `release-execution-state.md` §3/§8.
 
 - **Current phase:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
 - **Current exit gate:** every surviving item in the promoted software queue
   is accepted, its externally gated boundary is accurately disclosed, and a
   fresh Final `1.0.0` Hardening pass is ready for the owner's release decision.
 - **Release-gate mapping:** the accepted historical gates below remain
-  evidence, not the complete new exit condition. The promoted queue must be
-  converted into bounded milestones by the Pre-1.0 Software Gap Audit before
-  implementation is authorized. Phase numbering below is preserved as
-  historical record, not renumbered.
+  evidence, not the complete new exit condition. The promoted queue is now
+  converted into bounded milestones by the Pre-1.0 Software Gap Audit; only
+  the first is authorized. Phase numbering below is preserved as historical
+  record, not renumbered.
 - **Already complete** (see [roadmap-history.md](roadmap-history.md) for
   detail): the real Camera Node path; the native ONNX Runtime CUDA
   detection/tracking/evidence Observation Engine, hardened through repeated
@@ -3524,6 +3526,12 @@ user/hardware/external-evidence dependencies. The old Phase 5/6/7/8 headings
 above remain historical/structural record. Do not undo accepted engineering
 milestones while sequencing this: everything already shipped under old
 Phase 1-4 and Phase 7, and every Gate C slice already delivered, stands.
+
+**Current execution overlay:** the current-code audit is complete. Use
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md)
+for the surviving bounded sequence and `release-execution-state.md` §3 for the
+single currently authorized milestone. The capability layers below remain the
+full product inventory; they do not independently authorize work.
 
 These are major capability layers, not a strict waterfall -- later layers
 may pull forward bounded slices ahead of an earlier layer's full

@@ -48,6 +48,28 @@ whose requirements or acceptance would be invented without external evidence
 stays gated. Product doctrine, Local Only operation, Reviewed-truth authority,
 abstention, and the existing explicit-deprioritization list remain in force.
 
+## Audit result -- 2026-09-29
+
+The required current-code audit is complete. Its evidence, bounded milestone
+sequence, and first task contract are recorded in
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
+
+Two parts of the provisional queue below were already delivered and are
+removed rather than rebuilt:
+
+- Remote/Intermittent-WAN Transport Foundation v1 already provides chunk-level
+  resume, idempotency, bounded pacing/backlog, outage/restart fault injection,
+  a Host ledger, and low-level diagnostics. Only operator-facing setup,
+  pending-sync/backlog visibility, and data-budget controls survive as software
+  work; real LTE/Pi/carrier/power acceptance remains external.
+- Evidence-honest stored-acoustic soundscape analytics already exist. No
+  further generic analytics milestone is authorized without a specific unmet
+  question or new evidence.
+
+The provisional queue remains below as the owner decision that initiated the
+audit. The audit report and `release-execution-state.md` §3/§8 supersede it for
+implementation scope and sequencing.
+
 ## Promoted pre-1.0 software queue
 
 Every item below must first be checked against current repository evidence;
@@ -165,20 +187,11 @@ reason to invent their product contracts before that evidence exists.
 
 ## Sequencing
 
-Implementation remains bounded and sequential:
-
-1. **Pre-1.0 Software Gap Audit & Contract Lock** -- verify each promoted
-   item against current code, remove already-closed/stale entries, identify
-   exact dependencies, and turn the surviving queue into bounded milestones.
-2. **Everyday Product / Attention / Accessibility completion.**
-3. **Data integrity, ecological workflow, habitat, and land-management
-   completion.**
-4. **Remote-operation, multi-camera, and bounded multi-site software.**
-5. **Platform, distribution, and public-product completion.**
-6. **Final 1.0 hardening, artifact rebuild, owner acceptance, and release
-   decision.**
-
-Later steps do not self-authorize. After every accepted milestone the global
-scheduler must be reconciled before the next begins. Accepted work remains
-frozen except for a reproduced dependency, correctness/security issue, or
-explicit authorization.
+The software-gap audit is complete. Its fourteen bounded, dependency-ordered
+milestones now control sequencing; only **Attention Integrity & Health
+Reliability v1** is presently authorized. See the
+[audit report](pre-1.0-software-gap-audit-contract-lock-v1-report.md#locked-milestone-sequence)
+and `release-execution-state.md` §3/§8. Later steps do not self-authorize.
+After every accepted milestone the global scheduler must be reconciled before
+the next begins. Accepted work remains frozen except for a reproduced
+dependency, correctness/security issue, or explicit authorization.
