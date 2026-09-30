@@ -9,7 +9,24 @@ work is presently authorized.
 Claude's "next natural milestone" suggestions are advisory only. They do
 not authorize future work.
 
-## CURRENT PHASE: FEATURE FREEZE -- EVIDENCE, RELEASE READINESS & HOUSEKEEPING
+## CURRENT PHASE: PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST
+
+**Owner strategy decision, 2026-09-29 -- Final Product Release Scope
+Reconciliation v1:** the accepted `0.1.0` artifact is **not** being
+published. The first public MockingBird product release is targeted as
+**`1.0.0`**, after all named roadmap work that can be responsibly
+implemented and meaningfully validated without real users or unavailable
+physical hardware is complete. Candidate source `d7e61c1` / ZIP
+`75d998f7…` remains an accepted internal baseline, not the final public
+release candidate. Feature freeze is reopened only for the promoted,
+software-completable queue in
+[final-product-release-scope-reconciliation-v1.md](final-product-release-scope-reconciliation-v1.md).
+Work whose requirements or acceptance depend on real users, field evidence,
+unavailable hardware, external credentials/institutions, legal action, or
+real demand remains externally gated rather than being simulated into a
+false claim. Gate G remains **waived, not passed**. This strategy record does
+not authorize a particular implementation milestone; §3 remains
+authoritative for authorization.
 
 **Corrected 2026-09-06 by Global Remaining Product-Development &
 Release-Queue Reconciliation v1** (see
@@ -946,10 +963,28 @@ Windows ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`, version
 product-development or hardening milestone is authorized. Phase label
 unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
 
+**Superseding owner release strategy, 2026-09-29:** the accepted facts above
+remain valid, but `d7e61c1` is now an **internal product baseline**, not a
+public release candidate. No public `0.1.0` will be shipped. The first public
+release target is `1.0.0`, after the software-completable roadmap queue in
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md)
+is delivered and Final Release Hardening is rerun. State changes from `READY
+FOR OWNER RELEASE DECISION` to **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**.
+Authorization remains **NONE** pending bounded implementation sequencing.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-29, by Final Product Release Scope
+Reconciliation v1:** the immediately following acceptance record remains
+the latest accepted implementation evidence, but its `READY FOR OWNER
+RELEASE DECISION` state is superseded. The owner will not publish `0.1.0`.
+Source `d7e61c1`, ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`,
+and their validation remain the frozen internal baseline for renewed
+development. Public target: `1.0.0`. Current phase: **PRE-1.0 PRODUCT
+COMPLETION -- SOFTWARE-FIRST**. Current authorization: **NONE** (§3).
 
 **Staleness correction, 2026-09-29, by the Fast Review Queue-End Undo v1
 acceptance reconciliation (documentation only):** the notes below are
@@ -4066,13 +4101,13 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE.** The owner must decide the next step. See the
-acceptance entry immediately below. *(While Owner-Only Final Release
-Hardening -- Fast Review Queue-End Undo v1 ran, this line read
-"Authorization: Owner-Only Final Release Hardening -- Fast Review
-Queue-End Undo v1". Before that it read "Authorization: NONE. The owner
-must decide the next step.", the state after Browser Suite Determinism &
-Demo-Boundary Closure v1, whose closure entry follows further below.)*
+**Authorization: NONE.** The owner has selected the new release shape, but
+no implementation milestone is authorized yet. The next global sequencing
+action is the bounded **Pre-1.0 Software Gap Audit & Contract Lock** named in
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md),
+which must verify the promoted queue against current repository evidence
+before any feature implementation begins. The acceptance entry below is
+retained as the accepted internal baseline, not as a release authorization.
 
 **Acceptance recorded, 2026-09-29 (documentation-only reconciliation; no
 rebuild, no validation rerun).** ChatGPT global sequencing accepts
@@ -10785,52 +10820,34 @@ contributor/research provenance.
 This is the most important section. Lanes are not removed merely because
 they are not next.
 
-**Four release-shape categories.** Every lane below already sorts into one
-of four categories; renaming the release model (§7, above) does not change
-which lanes are release-critical, deferred, or later -- it only fixes the
-words used to describe them:
+**Superseding release-shape categories (owner decision, 2026-09-29).** The
+earlier `release-critical / after release` split is superseded for the first
+public launch. The lettered lanes below remain the historical and technical
+inventory; this grouping controls their current scheduling:
 
-- **A. Release-critical** -- must be complete/credible before the one
-  public launch. Lanes marked **RELEASE-CRITICAL** below carry this:
-  representative field correctness/whole-product acceptance (Lane R),
-  camera/source golden path (Lane G), storage/retention/recovery (Lane M),
-  Local Only/privacy (Lane N), platform/runtime support truth (Lane O),
-  release/distribution closure (Lane P), accessibility/performance (Lane
-  Q), appliance/update/recovery (Lane L) -- plus, as the internal gates
-  above become credible, External Pre-Release Acceptance and Final
-  Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
-- **B. Pre-release decisions** -- decisions required before launch, not
-  necessarily implementation milestones: the codebase `LICENSE` --
-  **RESOLVED**: the owner selected MIT and mechanical adoption (a real
-  `LICENSE` file, package metadata, README truth, distribution inclusion)
-  is now complete, per MIT Source License Adoption & Lane P Mechanical
-  Closure v1 (Lane P now **CLOSED** -- see Lane P, below; full ffmpeg
-  distribution licensing, the item this line previously named alongside
-  it, is fully resolved); the still-open BirdNET
-  commercial-adjacent legal posture (§2, above -- blocks only
-  commercial-adjacent use of the optional acoustic feature, per the
-  2026-09-06 reconciliation below, not all public launch); platform-support
-  declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
-  Integrations scope (Lane K, resolved -- see Lane K, below); any other
-  genuine unresolved release decision as it surfaces.
-- **C. After release** -- real product development explicitly not
-  required for launch, kept so it is not lost: complete remote/
-  intermittent-WAN/LTE, solar/battery, custom CM4/CM5 (Lane B, and §8,
-  below); research-grade remote-field acceptance; broad multi-site (Lane
-  F's own explicitly-deferred remainder); native mobile (Lane E's own
-  explicitly-out-of-scope remainder); advanced acoustic analytics (Lane
-  A's own remaining bounded follow-up); mature automatic mammal species
-  identification (Lane I).
-- **D. Later / evidence-driven** -- the long-range, demand-driven queue in
-  §9, below: GenICam, GigE Vision, USB3 Vision, radiometric thermal,
-  specialized industrial cameras, individual-animal recognition,
-  population estimates, behavior prediction, causal ecological modeling,
-  large cloud/fleet infrastructure.
+- **A. Pre-1.0 software-completable** -- every named gap whose contract,
+  implementation, and meaningful acceptance can be completed with current
+  repository code, deterministic fixtures/simulation, CI, local services,
+  and available packaged-host environments. The exact promoted inventory is
+  §8 and
+  [final-product-release-scope-reconciliation-v1.md](final-product-release-scope-reconciliation-v1.md).
+- **B. External-dependency gated** -- work requiring real users,
+  representative field data, unavailable physical hardware, sustained field
+  conditions, external credentials/institutions, legal action, signing
+  authority, or a production service that cannot be honestly simulated.
+  These dependencies remain disclosed and must never be described as passed.
+- **C. Later / demand-and-evidence gated** -- industrial/specialized camera
+  protocols, individual-animal recognition, population/behavior/causal
+  claims, provider-specific adapters, and large cloud/fleet infrastructure.
+  Although prototypes could be typed in software, their valid product
+  contracts require demand, hardware, or evidence that does not exist.
+- **D. Accepted/frozen** -- completed lanes remain frozen unless the promoted
+  queue exposes a concrete dependency, correctness/security issue, or the
+  owner explicitly reopens them.
 
-This is a navigational grouping over the existing lettered lanes (A-S), not
-a new or renumbered lane system: no lane is removed, renamed, or promoted
-between categories by this grouping, and each lane's own status text below
-remains authoritative over this summary.
+This is a sequencing change, not permission for one giant implementation.
+Each surviving software gap is authorized only as a bounded milestone after
+the Pre-1.0 Software Gap Audit confirms it is genuinely still open.
 
 ### A. Acoustic / BirdNET Productization
 
@@ -13959,6 +13976,15 @@ lane's status remains **LAST**.
 
 ## 7. One-release doctrine
 
+**Owner correction, 2026-09-29:** "one release" now means one complete first
+public **`1.0.0`** launch, not publication of the accepted internal
+`0.1.0` baseline followed by completion later. Maintenance, security,
+compatibility, and future evidence-driven updates after `1.0.0` remain
+possible; "final product" is a launch-scope decision, not a promise that
+software will never change. The release includes all responsibly testable
+software work promoted in §8. Hardware/user/external dependencies in §9 are
+disclosed boundaries, not silently claimed capabilities.
+
 MockingBird's public release target is a trustworthy single-site/home
 observatory with:
 
@@ -13989,36 +14015,44 @@ observatory with:
 Acoustics may ship as the now-accepted optional capability. Remote
 LTE/solar/custom field hardware are not release blockers.
 
-## 8. After-release queue
+## 8. Pre-1.0 promoted software queue
 
-Explicitly keep:
+The detailed, governing inventory and split criteria are in
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md).
+In summary, promote before `1.0.0`:
 
-- complete remote/intermittent-WAN/LTE field deployment;
-- solar/battery;
-- custom CM4/CM5 hardware;
-- research-grade remote-field acceptance;
-- broad multi-site;
-- native mobile;
-- advanced acoustic analytics;
-- mature automatic mammal species identification.
+- everyday-product, Attention, mobile-web, accessibility, and diagnostics
+  gaps that are reproducible in the browser/test harness;
+- multi-camera attribution/grouping/filter consolidation, the legacy
+  two-Stream software cap, and bounded multi-site/local-instance semantics;
+- store-and-forward resume granularity, explicit pending-sync state,
+  bandwidth policy, outage simulation, and remote-operator diagnostics;
+- repository-completable ecological/export filters and media bundles,
+  provider-neutral sensor ingestion, intervention/habitat/land-management
+  workflows, and evidence-honest stored-acoustic analytics;
+- orphan-media detection/recovery, first-class Linux end-user distribution,
+  public documentation/site/support artifacts, and version-language closure;
+- one fresh Final `1.0.0` Hardening and artifact-acceptance pass after all
+  promoted work is accepted.
 
-Unless new evidence creates a dependency, do not promote these into
-release scope.
+Every item is subject to a current-code audit first. Historical gaps already
+closed by later work are removed, not rebuilt.
 
-## 9. Later / demand-driven queue
+## 9. External-dependency and later queue
 
-Examples:
+Externally gated: real LTE/carrier/remote-Pi acceptance; solar/battery/BMS,
+CM4/CM5/custom hardware, specialized cameras and sustained field operation;
+real GPU/driver soak; acoustic field calibration; site-specific learning or
+mammal identification lacking representative reviewed field evidence;
+professional/research and user-diversity claims; native mobile device/store
+acceptance; live external OAuth/institutional workflows; legal/trademark and
+signing-certificate decisions.
 
-- GenICam;
-- GigE Vision;
-- USB3 Vision;
-- radiometric thermal;
-- specialized industrial cameras;
-- individual-animal recognition;
-- population estimates;
-- behavior prediction;
-- causal ecological modeling;
-- large cloud-first infrastructure.
+Demand/evidence gated: GenICam, GigE Vision, USB3 Vision, radiometric
+thermal, individual-animal recognition, population estimates, behavior
+prediction, causal ecological modeling, provider-specific adapters, and
+large cloud/fleet infrastructure. These are not promoted merely because a
+mock implementation could be written without the missing evidence.
 
 ## 10. Observability cross-cutting requirements
 
@@ -15336,16 +15370,20 @@ rather than rewriting accepted history in place.
 *(Added 2026-09-29, because the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE.** The owner must decide the next step.
+- **Authorization:** **NONE.** The owner has selected the release shape;
+  bounded implementation sequencing remains required.
 - **Latest accepted milestone:** Owner-Only Final Release Hardening --
   Fast Review Queue-End Undo v1, classification A.
-- **State:** READY FOR OWNER RELEASE DECISION. No further
-  product-development or hardening milestone is authorized.
+- **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
+  `0.1.0` release; first public target `1.0.0`.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
-  `c901ac14bce22fe4`). It supersedes `02443ea` / `785f3f37…`. The Camera
-  Node wheel is unchanged at `38dfac47…`. **Schema:** `v61`.
+  `c901ac14bce22fe4`) is the accepted internal baseline, not the final
+  public candidate. The Camera Node wheel is unchanged at `38dfac47…`.
+  **Schema:** `v61`.
 - **Browser gate:** complete default suite 198/198, plus the onboarding,
   bounded Review Queue and bounded media configurations.
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
-- **Phase label:** FEATURE FREEZE.
+- **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
+- **Next sequencing action:** Pre-1.0 Software Gap Audit & Contract Lock;
+  not yet authorized as an implementation milestone.
