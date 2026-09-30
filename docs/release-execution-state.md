@@ -938,10 +938,33 @@ Review Queue-End Undo v1* executed, classification **A**.
 
 Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
 
+**Accepted, 2026-09-29:** ChatGPT global sequencing accepts *Owner-Only
+Final Release Hardening -- Fast Review Queue-End Undo v1* at
+classification **A** (candidate source `d7e61c1`, record `3cd3e4e`,
+Windows ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`, version
+`0.1.0`). **State: READY FOR OWNER RELEASE DECISION.** No further
+product-development or hardening milestone is authorized. Phase label
+unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-29, by the Fast Review Queue-End Undo v1
+acceptance reconciliation (documentation only):** the notes below are
+superseded on these facts. **Latest accepted milestone:** *Owner-Only
+Final Release Hardening -- Fast Review Queue-End Undo v1*, classification
+**A**. **Accepted candidate:** source `d7e61c1`; closure record HEAD
+`3cd3e4e`; version `0.1.0`; schema `v61`; Windows ZIP SHA-256
+`75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`; build
+`c901ac14bce22fe4`; Camera Node wheel unchanged at `38dfac47…`; complete
+default browser suite 198/198; bounded Review Queue, onboarding and
+bounded-media configurations green; the exact artifact accepted on native
+Windows. **State: READY FOR OWNER RELEASE DECISION.** Gate G is
+**waived, not passed**; the owner remains the sole pre-release tester.
+Working tree: the seven preserved untracked detector files (§13) and
+`uv.lock`, untouched. Current authorization: **NONE** (§3).
 
 **Staleness correction, 2026-09-26, by Internal Release Candidate Rebuild &
 Native-Windows Acceptance v1:** the note immediately below is superseded on
@@ -4044,12 +4067,38 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **Authorization: NONE.** The owner must decide the next step. See the
-closure entry immediately below. *(While Owner-Only Final Release
+acceptance entry immediately below. *(While Owner-Only Final Release
 Hardening -- Fast Review Queue-End Undo v1 ran, this line read
 "Authorization: Owner-Only Final Release Hardening -- Fast Review
 Queue-End Undo v1". Before that it read "Authorization: NONE. The owner
 must decide the next step.", the state after Browser Suite Determinism &
 Demo-Boundary Closure v1, whose closure entry follows further below.)*
+
+**Acceptance recorded, 2026-09-29 (documentation-only reconciliation; no
+rebuild, no validation rerun).** ChatGPT global sequencing accepts
+*Owner-Only Final Release Hardening -- Fast Review Queue-End Undo v1* at
+classification **A**.
+
+- **Accepted candidate:** implementation/candidate source `d7e61c1`;
+  closure record HEAD `3cd3e4e`; version `0.1.0`; schema `v61`; Windows
+  ZIP SHA-256
+  `75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`;
+  build `c901ac14bce22fe4`; Camera Node wheel unchanged at `38dfac47…`.
+- **Accepted evidence:** complete default browser suite **198/198**;
+  bounded Review Queue, onboarding and bounded-media configurations green;
+  the exact artifact accepted on native Windows.
+- **Gate G** remains **waived, not passed**; the owner remains the sole
+  pre-release tester.
+- **Disclosed, not blocking:** duplicate alert pollers (F-2) remain
+  post-release efficiency debt, not a v0.1 blocker.
+- **State: READY FOR OWNER RELEASE DECISION.** Phase label unchanged:
+  **FEATURE FREEZE**. No further product-development or hardening
+  milestone is authorized. Signing, publishing, tagging and pushing remain
+  explicit owner decisions; none was taken here.
+
+**Authorization after this acceptance: NONE.**
+
+---
 
 **Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
 Fast Review Queue-End Undo v1** (see
