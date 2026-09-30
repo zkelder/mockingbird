@@ -15337,10 +15337,10 @@ rather than rewriting accepted history in place.
 authoritative record.)*
 
 - **Authorization:** **NONE.** The owner must decide the next step.
-- **Latest milestone:** Owner-Only Final Release Hardening -- Fast Review
-  Queue-End Undo v1, executed with classification A, awaiting acceptance.
-  The previous accepted milestone is Browser Suite Determinism &
-  Demo-Boundary Closure v1 (A).
+- **Latest accepted milestone:** Owner-Only Final Release Hardening --
+  Fast Review Queue-End Undo v1, classification A.
+- **State:** READY FOR OWNER RELEASE DECISION. No further
+  product-development or hardening milestone is authorized.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
   `c901ac14bce22fe4`). It supersedes `02443ea` / `785f3f37…`. The Camera
   Node wheel is unchanged at `38dfac47…`. **Schema:** `v61`.
