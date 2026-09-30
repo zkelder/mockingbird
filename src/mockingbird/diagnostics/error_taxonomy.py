@@ -519,6 +519,30 @@ _register(
     ),
 )
 
+# -- HOST_API: Attention Integrity & Health Reliability v1 -- the bounded
+#    attention-reconciliation diagnostics recorded by
+#    monitoring.attention_sync_service.AttentionSyncService. --
+_register(
+    "attention_sync_database_error",
+    ErrorTaxonomyEntry(
+        component=ErrorComponent.HOST_API,
+        message="Alert reconciliation could not read or write the local database, so alerts may be out of date.",
+        recoverability=ErrorRecoverability.DEGRADED,
+        retryable=True,
+        user_action="MockingBird retries automatically. If this persists, run MockingBird Doctor.",
+    ),
+)
+_register(
+    "attention_sync_failed",
+    ErrorTaxonomyEntry(
+        component=ErrorComponent.HOST_API,
+        message="Alert reconciliation did not complete, so alerts may be out of date.",
+        recoverability=ErrorRecoverability.DEGRADED,
+        retryable=True,
+        user_action="MockingBird retries automatically. If this persists, run MockingBird Doctor.",
+    ),
+)
+
 # -- HOST_API: a safe, honest fallback for a code this registry has no
 #    specific entry for yet (see `resolve_error`). --
 _register(

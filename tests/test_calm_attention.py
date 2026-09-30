@@ -300,10 +300,9 @@ def test_becoming_regular_produces_one_insight_alert(new_york_host_timezone, rep
     # Idempotency (Phase 26): re-running with the same `now` must not
     # create a second version of the same condition, and must not disturb
     # already-read state.
-    with repository.session_factory() as session:
-        with session.begin():
-            row = session.get(ProductAlertModel, regularity_alerts[0].id)
-            row.read_at = datetime(2025, 3, 12, tzinfo=UTC)
+    # Attention Integrity & Health Reliability v1: read state is per-user.
+    reader = _make_user(repository, user_id="regularity-reader", role=UserRole.administrator)
+    assert repository.mark_product_alert_read(regularity_alerts[0].id, user_id=reader.id)
 
     repository.sync_attention_signals(now=datetime(2025, 3, 12, tzinfo=UTC))
     with repository.session_factory() as session:
@@ -313,7 +312,9 @@ def test_becoming_regular_produces_one_insight_alert(new_york_host_timezone, rep
             select(ProductAlertModel).where(ProductAlertModel.deduplication_key == regularity_alerts[0].deduplication_key)
         ).all()
         assert len(replayed) == 1, "re-running the sync created a second version of an unchanged condition"
-        assert replayed[0].read_at is not None, "re-running the sync silently reset read state"
+    listed = repository.list_product_alerts(viewer=reader, page_size=50).items
+    replayed_view = next(item for item in listed if item.id == regularity_alerts[0].id)
+    assert replayed_view.status == "read", "re-running the sync silently reset read state"
 
 
 def test_stale_place_story_alert_is_resolved_on_next_sync(new_york_host_timezone, repository: ProductRepository) -> None:

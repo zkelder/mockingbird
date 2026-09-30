@@ -3771,7 +3771,10 @@ export type AlertActionType =
   | "open_storage_retention"
   | "open_wildlife_journal"
   | "open_place_story"
-  | "open_place_report";
+  | "open_place_report"
+  // Attention Integrity & Health Reliability v1: a model/runtime Observatory
+  // Health condition with no single affected Stream.
+  | "open_doctor";
 
 // Calm Attention & Notifications v1, Phase 2/3: the small, user-centered
 // taxonomy every `AlertCategory`/`AlertSeverity` pair presents as. Derived
@@ -5925,6 +5928,20 @@ export interface PlaceBiodiversitySummaryResponse {
   warnings: string[];
 }
 
+export interface ProductHealthAttentionSync {
+  status: "pending" | "healthy" | "failing";
+  running: boolean;
+  poll_interval_seconds: number;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  consecutive_failure_count: number;
+  success_count: number;
+  failure_count: number;
+}
+
 export interface ProductHealthStatus {
   app_version: string;
   ready: boolean;
@@ -5954,6 +5971,10 @@ export interface ProductHealthStatus {
     status: "not_configured" | "healthy" | "degraded" | "model_unavailable" | "microphone_unavailable";
     detail: string;
   };
+  // Attention Integrity & Health Reliability v1: whether background alert
+  // reconciliation is working, so "no alerts" can be told apart from
+  // "alert reconciliation is failing." Never a factor in `ready`.
+  attention_sync?: ProductHealthAttentionSync | null;
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;
   // Release Engineering Foundation v1: set only when this running process

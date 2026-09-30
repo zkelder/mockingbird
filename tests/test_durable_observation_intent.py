@@ -57,7 +57,7 @@ def repository(tmp_path: Path) -> ProductRepository:
 
 
 def test_schema_61_registers_the_intent_migration_and_stays_reachable() -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 61
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 62
     assert 61 in _SCHEMA_MIGRATIONS
     # Every earlier recorded schema must still be able to reach 61.
     assert database_schema_version_is_compatible(1)

@@ -2308,6 +2308,48 @@ def _interpret_media_integrity(gathered: dict[str, Any]) -> DoctorCheckResult:
 # --------------------------------------------------------------------------
 
 
+def model_runtime_health_checks(*, camera_node_configured: bool) -> list[tuple[DoctorCheckResult, bool]]:
+    """Attention Integrity & Health Reliability v1: run exactly Doctor's own
+    Detector model, Species identification and GPU / CUDA checks -- the same
+    bounded gather + pure interpret pairs `run_doctor` uses, unmodified --
+    for the background Observatory Health attention sync
+    (`mockingbird.monitoring.model_runtime_health`). Returns
+    `(result, completed)` pairs; `completed` is `False` when the gather
+    timed out or raised, so a caller can refuse to read "could not check"
+    as "unavailable" (or as "healthy"). Read-only, like every Doctor check."""
+
+    specs: tuple[tuple[DoctorCheckCode, str, Callable[[], dict[str, Any]], Callable[[dict[str, Any]], DoctorCheckResult], float], ...] = (
+        (
+            DoctorCheckCode.DETECTOR_MODEL,
+            "Detector model",
+            _gather_detector_model,
+            lambda gathered: _interpret_detector_model(gathered, camera_node_configured=camera_node_configured),
+            MODEL_CHECK_TIMEOUT_SECONDS,
+        ),
+        (
+            DoctorCheckCode.SPECIES_IDENTIFICATION,
+            "Species identification",
+            _gather_species_identification,
+            _interpret_species_identification,
+            DEFAULT_CHECK_TIMEOUT_SECONDS,
+        ),
+        (
+            DoctorCheckCode.GPU_CUDA,
+            "GPU / CUDA",
+            _gather_gpu_cuda,
+            lambda gathered: _interpret_gpu_cuda(gathered, camera_node_configured=camera_node_configured),
+            DEFAULT_CHECK_TIMEOUT_SECONDS,
+        ),
+    )
+    results: list[tuple[DoctorCheckResult, bool]] = []
+    for code, component, gather, interpret, timeout_seconds in specs:
+        result, gathered = _execute_check_returning_gathered(
+            code=code, component=component, gather=gather, interpret=interpret, timeout_seconds=timeout_seconds,
+        )
+        results.append((result, gathered is not None))
+    return results
+
+
 def _derive_overall_status(checks: list[DoctorCheckResult]) -> DoctorOverallStatus:
     """Deterministic derivation from constituent checks.
 

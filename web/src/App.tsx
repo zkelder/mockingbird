@@ -20,6 +20,7 @@ import type {
   UserRole,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { AttentionProvider } from "./attention/AttentionProvider";
 import { AlertsControl, AlertsInboxPage } from "./components/AlertsInbox";
 import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
@@ -640,6 +641,13 @@ export default function App() {
     if (action.action_type === "open_place_report") {
       window.history.pushState({}, "", "/place-report");
       applyRoute({ page: "place-activity-report" });
+      return;
+    }
+    if (action.action_type === "open_doctor") {
+      // Attention Integrity & Health Reliability v1: Doctor is
+      // Administrator-only (server-enforced); anyone else lands on Today,
+      // whose health panel shows the same basic condition.
+      setPage(currentUser && roleAtLeast(currentUser.role, "administrator") ? "doctor" : "dashboard");
     }
   }
 
@@ -1250,7 +1258,10 @@ export default function App() {
   ];
 
   return (
-    <>
+    // Attention Integrity & Health Reliability v1: one shared attention
+    // summary for this signed-in shell, keyed by user so a different
+    // account never inherits the previous one's counts or "seen" alerts.
+    <AttentionProvider key={currentUser.id} onAction={openAlertAction}>
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -1423,6 +1434,6 @@ export default function App() {
           More
         </button>
       </nav>
-    </>
+    </AttentionProvider>
   );
 }

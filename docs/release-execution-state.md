@@ -4141,6 +4141,38 @@ Web Push, cross-camera grouping, broad UX redesign, detector/model/truth-policy
 changes, hardware validation, packaging, versioning, signing, tagging, pushing,
 and release. No later milestone in the locked queue is authorized.
 
+**Closure recorded, 2026-09-30, by Attention Integrity & Health Reliability
+v1** (see
+[attention-integrity-health-reliability-v1-report.md](attention-integrity-health-reliability-v1-report.md)).
+**Status: EXECUTED -- proposed classification A, pending ChatGPT acceptance
+review. Acceptance is not recorded here.**
+
+- **Starting point:** `6acdeb1`. One local implementation commit, not
+  pushed. Schema `v61` → `v62`. Version `0.1.0` unchanged.
+- **Delivered:**
+  - per-user read/dismiss (`product_alert_acknowledgements`), with alert
+    condition, resolution, and deduplication still observatory-global;
+  - an explicit legacy upgrade rule: existing users inherit the legacy
+    state, a pre-identity install's state is adopted once by the bootstrap
+    Administrator, and the legacy columns are cleared;
+  - one shared app-shell attention source;
+  - a sustained, deduplicated, self-resolving model/runtime Observatory
+    Health alert built from existing Doctor and engine facts;
+  - bounded attention-sync diagnostics on `GET /api/product/health`.
+- **Evidence:**
+  - the defect was reproduced red on HEAD;
+  - Tier 2 affected set 1671 passed; Core **6278 passed / 0 failed**;
+  - build clean; complete default browser suite **203/203**; other
+    configs 6/4/2; repeat-each 85/85.
+- **Disclosed:** `CameraHealthSummary.unread_alert` now means "an open
+  camera alert exists" (it is global and computed with no viewer); the
+  sustained alert appears about 30 minutes after the problem is first
+  observed at the unchanged cadence.
+
+**Authorization after Attention Integrity & Health Reliability v1: pending
+ChatGPT acceptance review.** No later milestone in the locked queue is
+authorized by this record.
+
 The acceptance entry below remains the accepted internal baseline, not a
 release authorization.
 

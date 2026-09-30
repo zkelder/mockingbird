@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
-import type { AlertCategory, AttentionCategory, ProductAlert, ProductAlertAction, UserNotificationPreferences } from "../api/types";
-import {
-  deliverForegroundNotification,
-  shouldDeliverForegroundNotification,
-} from "../notifications/foregroundNotifications";
+import type { AlertCategory, AttentionCategory, ProductAlert, ProductAlertAction } from "../api/types";
+import { useAttention } from "../attention/AttentionProvider";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { StatusPill } from "./StatusPill";
@@ -41,6 +38,7 @@ function actionLabel(action: ProductAlertAction): string {
   if (action.action_type === "open_storage_retention") return "Open Storage & Retention";
   if (action.action_type === "open_place_story") return "View in Place Story";
   if (action.action_type === "open_place_report") return "View report";
+  if (action.action_type === "open_doctor") return "Open Doctor";
   return "Open Bird Log";
 }
 
@@ -57,17 +55,21 @@ function AlertRow({
 }: {
   alert: ProductAlert;
   onAction: (action: ProductAlertAction) => void;
-  onChanged: () => Promise<void>;
+  onChanged?: () => Promise<void>;
 }) {
+  const attention = useAttention();
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function update(kind: "read" | "dismiss") {
     setIsSaving(true);
     setError(null);
     try {
-      if (kind === "read") await apiClient.markAlertRead(alert.id);
-      else await apiClient.dismissAlert(alert.id);
-      await onChanged();
+      // The shared attention source applies the mutation's own response
+      // (this user's refreshed summary), so the badge and Today update
+      // together; the Inbox additionally reloads its own page.
+      if (kind === "read") await attention.markRead(alert.id);
+      else await attention.dismiss(alert.id);
+      await onChanged?.();
     } catch {
       setError("That alert could not be updated. Try again when the local app is ready.");
     } finally {
@@ -110,50 +112,10 @@ export function AlertsControl({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const controlRef = useRef<HTMLDivElement | null>(null);
-  const [alerts, setAlerts] = useState<ProductAlert[]>([]);
-  const [unread, setUnread] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  // Calm Attention & Notifications v1: `null` means "no poll has completed
-  // yet" -- deliberately distinct from an empty set, so the very first
-  // poll after opening the app never fires a flood of live notifications
-  // for attention items that already existed before this page loaded.
-  // Only an id that is genuinely new *since the previous poll* is ever
-  // eligible for a live interruption (Phase 8: cooldowns/hysteresis).
-  const seenAlertIdsRef = useRef<Set<string> | null>(null);
-  // A ref, not a `useCallback` dependency: `onAction` is a fresh function
-  // identity on every parent render (App.tsx does not memoize it), and
-  // `refresh`'s own identity must stay stable so the 60s poll interval
-  // below is not torn down and restarted on every unrelated re-render.
-  const onActionRef = useRef(onAction);
-  onActionRef.current = onAction;
-  const refresh = useCallback(async () => {
-    try {
-      const [result, preferences] = await Promise.all([
-        apiClient.getAlertUnread(),
-        apiClient.getNotificationPreferences().catch(() => null),
-      ]);
-      setUnread(result.unread_count);
-      setAlerts(result.recent);
-      setError(null);
-      const previouslySeen = seenAlertIdsRef.current;
-      seenAlertIdsRef.current = new Set(result.recent.map((alert) => alert.id));
-      if (previouslySeen && preferences) {
-        const now = new Date();
-        for (const alert of result.recent) {
-          if (previouslySeen.has(alert.id)) continue;
-          if (!shouldDeliverForegroundNotification(alert, preferences, now)) continue;
-          deliverForegroundNotification(alert, () => onActionRef.current(alert.action));
-        }
-      }
-    } catch {
-      setError("Recent alerts could not refresh. The last available alerts are still shown.");
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  // Attention Integrity & Health Reliability v1: read-only view of the one
+  // shared app-shell summary -- no poll of its own, however many of these
+  // controls are mounted (the mobile top bar and the sidebar each have one).
+  const { recent: alerts, unreadCount: unread, error } = useAttention();
   // UI/UX & First-Run Adoption v1: this popover could only be closed by
   // clicking its own button again -- no Escape, no outside click.
   useEffect(() => {
@@ -188,7 +150,7 @@ export function AlertsControl({
         <section className="alerts-drawer" aria-label="Recent alerts">
           <div className="section-heading"><div><h2>Alerts</h2><span className="meta-text">Local attention items only.</span></div><button className="text-action" onClick={onOpenInbox} type="button">Open inbox</button></div>
           {error ? <div className="error-panel">{error}</div> : null}
-          {!alerts.length ? <EmptyState title="Nothing worth noticing right now" description="A new species, a meaningful change, review work, or a real observatory issue will appear here — MockingBird stays quiet otherwise." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
+          {!alerts.length ? <EmptyState title="Nothing worth noticing right now" description="A new species, a meaningful change, review work, or a real observatory issue will appear here — MockingBird stays quiet otherwise." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} />)}
         </section>
       ) : null}
     </div>
@@ -213,9 +175,14 @@ export function AlertsInboxPage({ onAction }: { onAction: (action: ProductAlertA
     } finally { setIsLoading(false); }
   }, [category]);
   useEffect(() => { void load(); }, [load]);
+  const attention = useAttention();
   async function markVisibleRead() {
-    await apiClient.markVisibleAlertsRead(alerts.filter((item) => item.status === "unread").map((item) => item.id));
-    await load();
+    try {
+      await attention.markVisibleRead(alerts.filter((item) => item.status === "unread").map((item) => item.id));
+      await load();
+    } catch {
+      setError("Those alerts could not be marked read. Try again when the local app is ready.");
+    }
   }
   return (
     <div className="page-stack">

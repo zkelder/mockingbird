@@ -6743,6 +6743,9 @@ class AlertActionType(str, Enum):
     # Calm Attention & Notifications v1.
     open_place_story = "open_place_story"
     open_place_report = "open_place_report"
+    # Attention Integrity & Health Reliability v1: Observatory Health
+    # model/runtime conditions with no single affected Stream.
+    open_doctor = "open_doctor"
 
 
 class AttentionCategory(str, Enum):
@@ -7079,6 +7082,31 @@ class ProductHealthAcousticSummary(BaseModel):
     detail: str
 
 
+class ProductHealthAttentionSyncSummary(BaseModel):
+    """Attention Integrity & Health Reliability v1: whether the background
+    alert reconciliation (`AttentionSyncService`) is actually working, so
+    "no alerts" can be told apart from "alert reconciliation is failing."
+    `status` is `pending` before this process has attempted its first pass,
+    `failing` while the most recent pass failed, otherwise `healthy`.
+    `last_error_*` keep the most recent failure's registered code and safe
+    message (never raw exception text) even after a later success. Counters
+    are process-lifetime. Like acoustic status, never a factor in
+    `ProductHealthStatus.ready`: attention is presentation over product
+    state, not the product state itself."""
+
+    status: Literal["pending", "healthy", "failing"]
+    running: bool
+    poll_interval_seconds: float = Field(ge=0)
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    consecutive_failure_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+
+
 class ProductHealthStatus(BaseModel):
     """One bounded, basic-first product status aggregate.
 
@@ -7124,6 +7152,7 @@ class ProductHealthStatus(BaseModel):
     observation: ProductHealthObservationSummary
     backup: ProductHealthBackupSummary
     acoustic: ProductHealthAcousticSummary
+    attention_sync: ProductHealthAttentionSyncSummary | None = None
     previous_shutdown_clean: bool | None = None
     database_schema_version: int = Field(ge=1)
     # Release Engineering Foundation v1: set only when *this running

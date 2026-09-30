@@ -184,6 +184,19 @@ export function ProductHealthPanel({ storageSummary, onOpenLocalData }: ProductH
           </span>
         </div>
       ) : null}
+      {/* Attention Integrity & Health Reliability v1: an empty Alerts
+          drawer must not read as "all clear" while reconciliation itself is
+          failing. Shown only while failing; healthy/pending stay silent. */}
+      {health.attention_sync?.status === "failing" ? (
+        <div className="notice-panel" role="status">
+          <span>
+            {health.attention_sync.last_error_message ?? "Alert reconciliation did not complete, so alerts may be out of date."}{" "}
+            {health.attention_sync.last_success_at
+              ? `Alerts were last reconciled ${formatDateTime(health.attention_sync.last_success_at)}.`
+              : "Alerts have not been reconciled since MockingBird started."}
+          </span>
+        </div>
+      ) : null}
       {health.previous_shutdown_clean === false ? (
         <div className="notice-panel">
           <span>MockingBird did not shut down cleanly last time. Your local data is unaffected.</span>
@@ -210,6 +223,18 @@ export function ProductHealthPanel({ storageSummary, onOpenLocalData }: ProductH
           {health.log_path ? <span>Log file: {health.log_path}</span> : null}
           {health.backup.last_backup_at ? (
             <span>Last backup: {formatDateTime(health.backup.last_backup_at)}</span>
+          ) : null}
+          {health.attention_sync ? (
+            <span>
+              Alert reconciliation: {health.attention_sync.status}
+              {health.attention_sync.last_attempt_at ? ` · last attempt ${formatDateTime(health.attention_sync.last_attempt_at)}` : ""}
+              {health.attention_sync.last_success_at ? ` · last success ${formatDateTime(health.attention_sync.last_success_at)}` : ""}
+              {` · ${health.attention_sync.success_count} succeeded, ${health.attention_sync.failure_count} failed`}
+              {health.attention_sync.consecutive_failure_count > 0
+                ? ` · ${health.attention_sync.consecutive_failure_count} consecutive failure${health.attention_sync.consecutive_failure_count === 1 ? "" : "s"}`
+                : ""}
+              {health.attention_sync.last_error_code ? ` · last error ${health.attention_sync.last_error_code}` : ""}
+            </span>
           ) : null}
           {health.acoustic.status !== "not_configured" && health.acoustic.status !== "healthy" ? (
             <span>Acoustic: {health.acoustic.detail}</span>

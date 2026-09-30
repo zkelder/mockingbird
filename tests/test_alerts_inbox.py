@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import select
 
 from mockingbird.api.schemas import (
+    CurrentUser,
+    UserRole,
     ReviewCorrectionCreate,
     StorageRetentionFrequency,
     StorageRetentionSettingsUpdate,
@@ -18,7 +20,7 @@ from mockingbird.api.schemas import (
 from mockingbird.api.main import app, configure_repository
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import EventModel, MediaAssetModel, ProductAlertModel, StreamModel, VisitModel
+from mockingbird.storage.models import EventModel, MediaAssetModel, ProductAlertModel, StreamModel, UserModel, VisitModel
 from tests.conftest import LegacyAuthenticatedTestClient
 
 
@@ -51,6 +53,17 @@ def _add_reviewable_visit(repository: ProductRepository, visit_id: str = "visit-
             session.add_all((event, visit))
             session.flush()
             repository._sync_review_alert(session, visit, now)
+
+
+def _make_administrator(repository: ProductRepository, user_id: str = "alert-admin") -> CurrentUser:
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(UserModel(
+                id=user_id, display_name=user_id, login_identity=user_id, password_hash="scrypt$n=1,r=1,p=1$00$00",
+                role=UserRole.administrator.value, enabled=True, created_at=now, updated_at=now, password_updated_at=now,
+            ))
+    return CurrentUser(id=user_id, display_name=user_id, login_identity=user_id, role=UserRole.administrator, enabled=True)
 
 
 def _alerts(repository: ProductRepository, category: str) -> list[ProductAlertModel]:
@@ -239,11 +252,13 @@ def test_storage_warning_and_inbox_actions_are_bounded_and_idempotent(repository
     assert len(storage_alert) == 1 and storage_alert[0].action_type == "open_storage_retention"
     inbox = repository.list_product_alerts(page_size=1)
     assert len(inbox.items) == 1 and inbox.next_offset is not None
-    assert repository.mark_product_alert_read(storage_alert[0].id)
-    assert repository.mark_product_alert_read(storage_alert[0].id)
-    assert repository.dismiss_product_alert(storage_alert[0].id)
-    assert repository.dismiss_product_alert(storage_alert[0].id)
-    assert repository.product_alert_unread().unread_count == 1
+    # Attention Integrity & Health Reliability v1: acknowledgement is per-user.
+    viewer = _make_administrator(repository)
+    assert repository.mark_product_alert_read(storage_alert[0].id, user_id=viewer.id)
+    assert repository.mark_product_alert_read(storage_alert[0].id, user_id=viewer.id)
+    assert repository.dismiss_product_alert(storage_alert[0].id, user_id=viewer.id)
+    assert repository.dismiss_product_alert(storage_alert[0].id, user_id=viewer.id)
+    assert repository.product_alert_unread(viewer=viewer).unread_count == 1
 
 
 def test_empty_inbox_is_valid(repository: ProductRepository) -> None:

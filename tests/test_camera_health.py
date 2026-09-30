@@ -619,7 +619,7 @@ def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details
 
 
 def test_schema_v27_contains_empty_bounded_incident_configuration_and_exposure_storage(repository: ProductRepository) -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 61
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 62
     tables = set(inspect(repository.engine).get_table_names())
     assert "camera_health_incidents" in tables
     assert "camera_configuration_revisions" in tables

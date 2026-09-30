@@ -44,7 +44,7 @@ from mockingbird.api.camera_node_transport import (
     TRANSPORT_PROTOCOL_VERSION,
     build_camera_node_transport_router,
 )
-from mockingbird.diagnostics.doctor import DoctorReport, run_doctor
+from mockingbird.diagnostics.doctor import DoctorReport, DoctorStatus, model_runtime_health_checks, run_doctor
 from mockingbird.diagnostics.error_taxonomy import (
     ErrorComponent,
     ErrorCorrelation,
@@ -219,6 +219,7 @@ from mockingbird.api.schemas import (
     UserNotificationPreferences,
     UserNotificationPreferencesUpdate,
     ProductHealthAcousticSummary,
+    ProductHealthAttentionSyncSummary,
     ProductHealthBackupSummary,
     ProductHealthCameraSummary,
     ProductHealthObservationSummary,
@@ -515,6 +516,12 @@ from mockingbird.monitoring import (
     SourceMonitorState,
 )
 from mockingbird.monitoring.attention_sync_service import AttentionSyncService
+from mockingbird.monitoring.model_runtime_health import (
+    ENGINE_FAILURE_CATEGORY_KIND,
+    ModelRuntimeHealthFact,
+    ModelRuntimeHealthKind,
+    ModelRuntimeHealthMonitor,
+)
 from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
@@ -1979,6 +1986,61 @@ def _sync_local_storage_retention_service(*, enabled: bool) -> None:
         _local_storage_retention_service.shutdown()
 
 
+_DOCTOR_CHECK_KIND = {
+    "detector_model": ModelRuntimeHealthKind.detector_model,
+    "species_identification": ModelRuntimeHealthKind.species_model,
+    "gpu_cuda": ModelRuntimeHealthKind.gpu_runtime,
+}
+
+
+def _gather_model_runtime_health_facts(repository: ProductRepository) -> list[ModelRuntimeHealthFact]:
+    """Attention Integrity & Health Reliability v1: collect the existing
+    "configured production model/runtime is unavailable" facts -- Doctor's
+    own interpreted checks plus each Stream's in-memory Observation Engine
+    Start-failure category. Read-only: never constructs an Observation
+    Engine session manager, loads a model for inference, or starts
+    anything. Raises if a check could not complete, so an inconclusive
+    evaluation is recorded as a sync failure rather than read as healthy
+    (which would wrongly resolve a real alert)."""
+
+    streams = repository.list_streams()
+    sources = {source.id: source for source in repository.list_sources()}
+    camera_node_configured = any(
+        source.kind == "integration" for source in sources.values()
+    )
+    facts: list[ModelRuntimeHealthFact] = []
+    for result, completed in model_runtime_health_checks(camera_node_configured=camera_node_configured):
+        if not completed:
+            raise RuntimeError(f"model_runtime_health_check_incomplete:{result.code.value}")
+        kind = _DOCTOR_CHECK_KIND.get(result.code.value)
+        if kind is None or result.status in (DoctorStatus.PASS, DoctorStatus.SKIPPED):
+            continue
+        message = " ".join(part for part in (result.summary, result.detail) if part)
+        facts.append(ModelRuntimeHealthFact(kind=kind, code=f"doctor_{result.code.value}", message=message))
+    manager = _observation_engine_session_manager
+    if manager is not None:
+        for stream in streams:
+            status = manager.status(stream.id)
+            if status is None or status.state != "error":
+                continue
+            category = status.advanced.get("engine_error_category")
+            kind = ENGINE_FAILURE_CATEGORY_KIND.get(str(category)) if category else None
+            if kind is None:
+                continue
+            facts.append(
+                ModelRuntimeHealthFact(
+                    kind=kind,
+                    code=str(status.advanced.get("engine_error_code") or category),
+                    message=f"{stream.name}: {status.engine_message}",
+                    stream_id=stream.id,
+                )
+            )
+    return facts
+
+
+_model_runtime_health_monitor = ModelRuntimeHealthMonitor()
+
+
 def _run_attention_sync() -> None:
     # Reads the live repository fresh on every tick (never a reference
     # captured at service-construction time) -- the same discipline
@@ -1986,7 +2048,56 @@ def _run_attention_sync() -> None:
     # backup restore that swaps the underlying database out from under a
     # running process is reflected on this service's very next tick, not
     # a stale one.
-    get_repository().sync_attention_signals()
+    #
+    # Attention Integrity & Health Reliability v1: two independent steps.
+    # Either failing must not starve the other, but any failure is still
+    # re-raised so `AttentionSyncService` records it (never silent).
+    repository = get_repository()
+    first_error: Exception | None = None
+    try:
+        repository.sync_attention_signals()
+    except Exception as error:  # noqa: BLE001 - recorded by the service below
+        first_error = error
+    try:
+        now = datetime.now(UTC)
+        evaluation = _model_runtime_health_monitor.evaluate(
+            _gather_model_runtime_health_facts(repository), now=now
+        )
+        repository.sync_model_runtime_health_alerts(evaluation, now=now)
+    except Exception as error:  # noqa: BLE001 - recorded by the service below
+        first_error = first_error or error
+    if first_error is not None:
+        raise first_error
+
+
+def _attention_sync_health_summary() -> ProductHealthAttentionSyncSummary:
+    """Side-effect free: reports the existing service's diagnostics and
+    never constructs or starts it (a process without the lifespan-started
+    service honestly reports `pending`, not running)."""
+
+    service = _attention_sync_service
+    if service is None:
+        return ProductHealthAttentionSyncSummary(status="pending", running=False, poll_interval_seconds=0)
+    diagnostics = service.diagnostics()
+    if diagnostics.last_attempt_at is None:
+        status = "pending"
+    elif diagnostics.consecutive_failure_count > 0:
+        status = "failing"
+    else:
+        status = "healthy"
+    return ProductHealthAttentionSyncSummary(
+        status=status,
+        running=diagnostics.running,
+        poll_interval_seconds=diagnostics.poll_interval_seconds,
+        last_attempt_at=diagnostics.last_attempt_at,
+        last_success_at=diagnostics.last_success_at,
+        last_failure_at=diagnostics.last_failure_at,
+        last_error_code=diagnostics.last_error_code,
+        last_error_message=diagnostics.last_error_message,
+        consecutive_failure_count=diagnostics.consecutive_failure_count,
+        success_count=diagnostics.success_count,
+        failure_count=diagnostics.failure_count,
+    )
 
 
 def get_attention_sync_service() -> AttentionSyncService:
@@ -11216,6 +11327,7 @@ async def get_product_health() -> ProductHealthStatus:
             suggest_first_backup=suggest_first_backup,
         ),
         acoustic=acoustic,
+        attention_sync=_attention_sync_health_summary(),
         previous_shutdown_clean=previous_shutdown_was_clean(),
         database_schema_version=repository.schema_status.version,
         database_migrated_from_version=repository.schema_status.migrated_from_version,
@@ -15884,25 +15996,36 @@ async def update_notification_preferences(
 
 
 @app.post("/api/alerts/{alert_id}/read", response_model=ProductAlertUnreadResponse)
-async def mark_alert_read(alert_id: str) -> ProductAlertUnreadResponse:
-    if not get_repository().mark_product_alert_read(alert_id):
+async def mark_alert_read(alert_id: str, request: Request) -> ProductAlertUnreadResponse:
+    """Attention Integrity & Health Reliability v1: acknowledgement is the
+    signed-in user's own -- it never changes another user's view, nor the
+    shared alert condition/resolution. The response is this same user's
+    refreshed attention summary, so the app shell can apply it directly."""
+
+    current_user = current_user_or_401(request)
+    repository = get_repository()
+    if not repository.mark_product_alert_read(alert_id, user_id=current_user.id):
         raise _not_found("Alert", alert_id)
-    return get_repository().product_alert_unread()
+    return repository.product_alert_unread(viewer=current_user)
 
 
 @app.post("/api/alerts/read-visible", response_model=ProductAlertUnreadResponse)
 async def mark_visible_alerts_read(
-    payload: ProductAlertMarkVisibleReadRequest,
+    payload: ProductAlertMarkVisibleReadRequest, request: Request,
 ) -> ProductAlertUnreadResponse:
-    get_repository().mark_product_alerts_read(payload.alert_ids)
-    return get_repository().product_alert_unread()
+    current_user = current_user_or_401(request)
+    repository = get_repository()
+    repository.mark_product_alerts_read(payload.alert_ids, user_id=current_user.id)
+    return repository.product_alert_unread(viewer=current_user)
 
 
 @app.post("/api/alerts/{alert_id}/dismiss", response_model=ProductAlertUnreadResponse)
-async def dismiss_alert(alert_id: str) -> ProductAlertUnreadResponse:
-    if not get_repository().dismiss_product_alert(alert_id):
+async def dismiss_alert(alert_id: str, request: Request) -> ProductAlertUnreadResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
+    if not repository.dismiss_product_alert(alert_id, user_id=current_user.id):
         raise _not_found("Alert", alert_id)
-    return get_repository().product_alert_unread()
+    return repository.product_alert_unread(viewer=current_user)
 
 
 @app.get("/api/bird-log/journal", response_model=WildlifeJournalOverviewResponse)

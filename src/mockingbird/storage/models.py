@@ -919,8 +919,21 @@ class ProductAlertModel(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Attention Integrity & Health Reliability v1 (schema 62): the
+    # physical `read_at`/`dismissed_at` columns are the pre-v62 *global*
+    # acknowledgement, kept only as the one-time migration source (see
+    # `_migrate_to_per_user_alert_acknowledgement` and
+    # `ProductRepository.create_first_administrator`). They are never read
+    # for presentation or written after v62 -- acknowledgement is per-user in
+    # `ProductAlertAcknowledgementModel`. The attribute names are prefixed
+    # `legacy_global_` so a stale caller fails loudly instead of silently
+    # reintroducing shared acknowledgement.
+    legacy_global_read_at: Mapped[datetime | None] = mapped_column(
+        "read_at", DateTime(timezone=True), nullable=True
+    )
+    legacy_global_dismissed_at: Mapped[datetime | None] = mapped_column(
+        "dismissed_at", DateTime(timezone=True), nullable=True
+    )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stream_id: Mapped[str | None] = mapped_column(String, nullable=True)
     zone_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -932,6 +945,31 @@ class ProductAlertModel(Base):
     condition_version: Mapped[int] = mapped_column(Integer, nullable=False)
     action_type: Mapped[str] = mapped_column(String, nullable=False)
     action_parameters_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ProductAlertAcknowledgementModel(Base):
+    """Attention Integrity & Health Reliability v1 (schema 62): one signed-in
+    user's own read/dismiss acknowledgement of one observatory-global
+    `ProductAlertModel`. Only acknowledgement lives here -- the alert's
+    condition, severity, evidence/action target, resolution and
+    deduplication stay on the shared alert row and are never copied, so one
+    user reading or dismissing an alert cannot change what any other user
+    sees. The composite primary key is the uniqueness guarantee (at most one
+    acknowledgement per user per alert). A missing row means "unread, not
+    dismissed" for that user; rows are created only by an explicit read/
+    dismiss mutation, never by a GET. See
+    docs/attention-integrity-health-reliability-v1-report.md."""
+
+    __tablename__ = "product_alert_acknowledgements"
+    __table_args__ = (Index("ix_product_alert_acknowledgements_user", "user_id", "alert_id"),)
+
+    alert_id: Mapped[str] = mapped_column(
+        ForeignKey("product_alerts.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class UserNotificationPreferenceModel(Base):

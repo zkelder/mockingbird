@@ -35,6 +35,7 @@ from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.monitoring.model_runtime_health import ModelRuntimeHealthEvaluation
 from mockingbird.repository.review_queue_filters import (
     ReviewQueueFilterIndex,
     is_bulk_correction_eligible,
@@ -918,6 +919,7 @@ from mockingbird.storage.models import (
     PlaceFeatureObservationLinkModel,
     PlaceHabitatFactModel,
     PlacePhenologyObservationModel,
+    ProductAlertAcknowledgementModel,
     ProductAlertModel,
     UserNotificationPreferenceModel,
     ResearchCollectionModel,
@@ -4513,6 +4515,7 @@ class ProductRepository:
                     )
                     session.add(user)
                     session.flush()
+                    self._adopt_legacy_alert_acknowledgement_in_session(session, user_id=user.id, now=now)
                     token = self._create_session_in_session(session, user_id=user.id, now=now)
                     self._record_audit_event_in_session(
                         session, now=now, actor_user_id=user.id, actor_display_name=user.display_name,
@@ -4520,6 +4523,40 @@ class ProductRepository:
                         metadata={"login_identity": login_identity},
                     )
                     return self._current_user(user), token
+
+    @staticmethod
+    def _adopt_legacy_alert_acknowledgement_in_session(session: Session, *, user_id: str, now: datetime) -> None:
+        """Attention Integrity & Health Reliability v1: the one deferred leg
+        of the schema-62 legacy-acknowledgement rule (see
+        `mockingbird.storage.database._migrate_to_per_user_alert_
+        acknowledgement`). A database upgraded before any user existed kept
+        its pre-v62 global read/dismiss state in the legacy columns; the
+        bootstrap Administrator is the pre-identity operator who produced
+        it, so they adopt it as their own -- once. The legacy columns are
+        cleared in the same transaction, so no later user can inherit it.
+        On every database migrated with users present, or created fresh,
+        the legacy columns are already empty and this is a no-op."""
+
+        legacy = session.scalars(
+            select(ProductAlertModel).where(
+                or_(
+                    ProductAlertModel.legacy_global_read_at.is_not(None),
+                    ProductAlertModel.legacy_global_dismissed_at.is_not(None),
+                )
+            )
+        ).all()
+        for alert in legacy:
+            read_at, dismissed_at = alert.legacy_global_read_at, alert.legacy_global_dismissed_at
+            if session.get(ProductAlertAcknowledgementModel, (alert.id, user_id)) is None:
+                session.add(ProductAlertAcknowledgementModel(
+                    alert_id=alert.id, user_id=user_id, read_at=read_at, dismissed_at=dismissed_at,
+                    updated_at=max(
+                        (_as_utc(value) for value in (read_at, dismissed_at) if value is not None),
+                        default=now,
+                    ),
+                ))
+            alert.legacy_global_read_at = None
+            alert.legacy_global_dismissed_at = None
 
     def authenticate_user(
         self, payload: SignInRequest, *, source_ip: str | None = None
@@ -15011,14 +15048,19 @@ class ProductRepository:
             state = CameraHealthState.starting
             message = "Monitoring is enabled and awaiting local supervision."
 
+        # Attention Integrity & Health Reliability v1: this camera-health
+        # fact is observatory-global (it is computed for every viewer and by
+        # the background health sync, with no signed-in user), so it now
+        # means "an open camera alert exists" rather than reading anyone's
+        # acknowledgement. Before v62 it read the shared read/dismiss
+        # state, which let one user's "Mark read" hide it from everyone.
+        # Per-user unread state lives in the Attention Center.
         unread_alert = bool(
             session.scalar(
                 select(ProductAlertModel.id)
                 .where(
                     ProductAlertModel.stream_id == stream.id,
                     ProductAlertModel.category == AlertCategory.monitoring.value,
-                    ProductAlertModel.read_at.is_(None),
-                    ProductAlertModel.dismissed_at.is_(None),
                     ProductAlertModel.resolved_at.is_(None),
                 )
                 .limit(1)
@@ -20597,11 +20639,14 @@ class ProductRepository:
         viewer: CurrentUser | None = None,
     ) -> ProductAlertListResponse:
         """Read bounded inbox history. Reading never reconciles product
-        conditions. `viewer` is optional only for internal/test callers
-        that pre-date Calm Attention & Notifications v1's per-user
-        preferences; every real route passes the signed-in user (Phase 16/
-        18: preferences and the Viewer Needs-Help ceiling are enforced
-        here, once, rather than in each caller)."""
+        conditions and never writes acknowledgement. `viewer` is optional
+        only for internal/test callers that pre-date Calm Attention &
+        Notifications v1's per-user preferences; every real route passes
+        the signed-in user (Phase 16/18: preferences and the Viewer
+        Needs-Help ceiling are enforced here, once, rather than in each
+        caller). Read/dismiss status is that viewer's own (Attention
+        Integrity & Health Reliability v1); with no viewer there is no one
+        to have acknowledged anything, so every item reads unacknowledged."""
 
         bounded_size = max(1, min(page_size, MAX_ALERT_PAGE_SIZE))
         bounded_offset = max(0, min(offset, 10_000))
@@ -20623,24 +20668,55 @@ class ProductRepository:
                 .offset(bounded_offset)
                 .limit(bounded_size + 1)
             ).all()
+            page = rows[:bounded_size]
+            acknowledgements = self._alert_acknowledgements(
+                session, user_id=viewer.id if viewer is not None else None, alert_ids=[row.id for row in page]
+            )
             return ProductAlertListResponse(
-                items=[self._product_alert_from_model(session, row) for row in rows[:bounded_size]],
+                items=[
+                    self._product_alert_from_model(session, row, acknowledgement=acknowledgements.get(row.id))
+                    for row in page
+                ],
                 next_offset=(bounded_offset + bounded_size if len(rows) > bounded_size else None),
             )
 
     def product_alert_unread(self, *, viewer: CurrentUser | None = None) -> ProductAlertUnreadResponse:
+        """The app-shell attention summary for one signed-in viewer: how many
+        current (unresolved) alerts *this user* has neither read nor
+        dismissed, plus the most recent alerts *this user* has not
+        dismissed. Another user's acknowledgement never enters either
+        query (Attention Integrity & Health Reliability v1). Side-effect
+        free: a GET never creates an acknowledgement row."""
+
         visible = (
             self._visible_alert_categories(viewer_role=viewer.role, user_id=viewer.id)
             if viewer is not None
             else None
         )
+        user_id = viewer.id if viewer is not None else None
+        acknowledgement = ProductAlertAcknowledgementModel
+        # An outer join restricted to *this* user's row: at most one match
+        # per alert (composite primary key), so the counts stay exact.
+        join_condition = and_(
+            acknowledgement.alert_id == ProductAlertModel.id,
+            acknowledgement.user_id == user_id,
+        )
         with self.session_factory() as session:
-            unread_query = select(func.count(ProductAlertModel.id)).where(
-                ProductAlertModel.read_at.is_(None),
-                ProductAlertModel.dismissed_at.is_(None),
-                ProductAlertModel.resolved_at.is_(None),
+            unread_query = (
+                select(func.count(ProductAlertModel.id))
+                .select_from(ProductAlertModel)
+                .outerjoin(acknowledgement, join_condition)
+                .where(
+                    ProductAlertModel.resolved_at.is_(None),
+                    acknowledgement.read_at.is_(None),
+                    acknowledgement.dismissed_at.is_(None),
+                )
             )
-            recent_query = select(ProductAlertModel).where(ProductAlertModel.dismissed_at.is_(None))
+            recent_query = (
+                select(ProductAlertModel)
+                .outerjoin(acknowledgement, join_condition)
+                .where(acknowledgement.dismissed_at.is_(None))
+            )
             if visible is not None:
                 allowed_values = [item.value for item in visible]
                 unread_query = unread_query.where(ProductAlertModel.category.in_(allowed_values))
@@ -20650,50 +20726,86 @@ class ProductRepository:
                 recent_query.order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
                 .limit(MAX_RECENT_ALERTS)
             ).all()
+            acknowledgements = self._alert_acknowledgements(
+                session, user_id=user_id, alert_ids=[row.id for row in recent]
+            )
             return ProductAlertUnreadResponse(
                 unread_count=unread_count,
-                recent=[self._product_alert_from_model(session, row) for row in recent],
+                recent=[
+                    self._product_alert_from_model(session, row, acknowledgement=acknowledgements.get(row.id))
+                    for row in recent
+                ],
             )
 
-    def mark_product_alert_read(self, alert_id: str) -> bool:
+    @staticmethod
+    def _alert_acknowledgements(
+        session: Session, *, user_id: str | None, alert_ids: Sequence[str]
+    ) -> dict[str, ProductAlertAcknowledgementModel]:
+        if user_id is None or not alert_ids:
+            return {}
+        rows = session.scalars(
+            select(ProductAlertAcknowledgementModel).where(
+                ProductAlertAcknowledgementModel.user_id == user_id,
+                ProductAlertAcknowledgementModel.alert_id.in_(list(alert_ids)),
+            )
+        ).all()
+        return {row.alert_id: row for row in rows}
+
+    def _acknowledge_product_alerts(
+        self, alert_ids: Sequence[str], *, user_id: str, read: bool, dismiss: bool
+    ) -> int:
+        """Record one user's own acknowledgement. Never touches the shared
+        alert row (not even `updated_at`, which describes the condition),
+        so nothing about the alert changes for anyone else. Idempotent: an
+        existing timestamp is kept, never moved forward. Returns how many of
+        `alert_ids` named a real alert."""
+
         now = datetime.now(UTC)
         with self.session_factory() as session:
             with session.begin():
-                alert = session.get(ProductAlertModel, alert_id)
-                if alert is None:
-                    return False
-                if alert.read_at is None:
-                    alert.read_at = now
-                    alert.updated_at = now
-                return True
+                if session.get(UserModel, user_id) is None:
+                    raise ValueError("alert_acknowledgement_user_not_found")
+                existing_ids = list(
+                    session.scalars(
+                        select(ProductAlertModel.id).where(ProductAlertModel.id.in_(list(alert_ids)))
+                    ).all()
+                )
+                acknowledgements = self._alert_acknowledgements(session, user_id=user_id, alert_ids=existing_ids)
+                for alert_id in existing_ids:
+                    row = acknowledgements.get(alert_id)
+                    if row is None:
+                        row = ProductAlertAcknowledgementModel(
+                            alert_id=alert_id, user_id=user_id, read_at=None, dismissed_at=None, updated_at=now,
+                        )
+                        session.add(row)
+                    changed = False
+                    if read and row.read_at is None:
+                        row.read_at, changed = now, True
+                    if dismiss and row.dismissed_at is None:
+                        row.dismissed_at, changed = now, True
+                    if changed:
+                        row.updated_at = now
+                return len(existing_ids)
 
-    def mark_product_alerts_read(self, alert_ids: list[str]) -> int:
-        now = datetime.now(UTC)
-        seen = {alert_id.strip() for alert_id in alert_ids if alert_id.strip()}
-        with self.session_factory() as session:
-            with session.begin():
-                rows = session.scalars(
-                    select(ProductAlertModel).where(ProductAlertModel.id.in_(list(seen)[:50]))
-                ).all()
-                for alert in rows:
-                    if alert.read_at is None:
-                        alert.read_at = now
-                        alert.updated_at = now
-                return len(rows)
+    def mark_product_alert_read(self, alert_id: str, *, user_id: str) -> bool:
+        return self._acknowledge_product_alerts([alert_id], user_id=user_id, read=True, dismiss=False) == 1
 
-    def dismiss_product_alert(self, alert_id: str) -> bool:
-        now = datetime.now(UTC)
-        with self.session_factory() as session:
-            with session.begin():
-                alert = session.get(ProductAlertModel, alert_id)
-                if alert is None:
-                    return False
-                if alert.dismissed_at is None:
-                    alert.dismissed_at = now
-                    alert.updated_at = now
-                return True
+    def mark_product_alerts_read(self, alert_ids: list[str], *, user_id: str) -> int:
+        seen = sorted({alert_id.strip() for alert_id in alert_ids if alert_id.strip()})[:MAX_ALERT_PAGE_SIZE]
+        if not seen:
+            return 0
+        return self._acknowledge_product_alerts(seen, user_id=user_id, read=True, dismiss=False)
 
-    def _product_alert_from_model(self, session: Session, alert: ProductAlertModel) -> ProductAlert:
+    def dismiss_product_alert(self, alert_id: str, *, user_id: str) -> bool:
+        return self._acknowledge_product_alerts([alert_id], user_id=user_id, read=False, dismiss=True) == 1
+
+    def _product_alert_from_model(
+        self,
+        session: Session,
+        alert: ProductAlertModel,
+        *,
+        acknowledgement: ProductAlertAcknowledgementModel | None = None,
+    ) -> ProductAlert:
         stream = session.get(StreamModel, alert.stream_id) if alert.stream_id else None
         zone = session.get(ZoneModel, alert.zone_id) if alert.zone_id else None
         try:
@@ -20708,7 +20820,13 @@ class ProductRepository:
             if visit is None or visit.is_superseded:
                 action_type = AlertActionType.open_stream if stream is not None else AlertActionType.open_storage_retention
         elif action_type == AlertActionType.open_stream and stream is None:
-            action_type = AlertActionType.open_storage_retention
+            # A model/runtime health condition's recovery surface is Doctor,
+            # not storage (Attention Integrity & Health Reliability v1).
+            action_type = (
+                AlertActionType.open_doctor
+                if alert.deduplication_key.startswith("observatory-health:")
+                else AlertActionType.open_storage_retention
+            )
         action = ProductAlertAction(
             action_type=action_type,
             visit_id=alert.visit_id if action_type == AlertActionType.review_visit else None,
@@ -20718,10 +20836,14 @@ class ProductRepository:
             feature_id=(str(action_data["feature_id"]) if action_type == AlertActionType.open_place_story and action_data.get("feature_id") else None),
             story_kind=(str(action_data["story_kind"]) if action_type == AlertActionType.open_place_story and action_data.get("story_kind") else None),
         )
+        # Read/dismiss is the viewer's own acknowledgement; resolution is
+        # the shared condition. Precedence is unchanged from before v62.
+        read_at = acknowledgement.read_at if acknowledgement is not None else None
+        dismissed_at = acknowledgement.dismissed_at if acknowledgement is not None else None
         status = (
-            "dismissed" if alert.dismissed_at is not None else
+            "dismissed" if dismissed_at is not None else
             "resolved" if alert.resolved_at is not None else
-            "read" if alert.read_at is not None else "unread"
+            "read" if read_at is not None else "unread"
         )
         category = AlertCategory(alert.category)
         severity = AlertSeverity(alert.severity)
@@ -20733,8 +20855,8 @@ class ProductRepository:
             message=alert.message,
             created_at=_as_utc(alert.created_at),
             updated_at=_as_utc(alert.updated_at),
-            read_at=_as_utc(alert.read_at) if alert.read_at else None,
-            dismissed_at=_as_utc(alert.dismissed_at) if alert.dismissed_at else None,
+            read_at=_as_utc(read_at) if read_at else None,
+            dismissed_at=_as_utc(dismissed_at) if dismissed_at else None,
             resolved_at=_as_utc(alert.resolved_at) if alert.resolved_at else None,
             status=status,
             stream_id=alert.stream_id,
@@ -20838,7 +20960,7 @@ class ProductRepository:
         created = ProductAlertModel(
             id=f"alert-{uuid.uuid4().hex}", category=category.value, severity=severity.value,
             title=title, message=message, created_at=now, updated_at=now,
-            read_at=None, dismissed_at=None, resolved_at=None,
+            legacy_global_read_at=None, legacy_global_dismissed_at=None, resolved_at=None,
             stream_id=stream_id, zone_id=zone_id, visit_id=visit_id, source_id=source_id,
             cleanup_context=cleanup_context, deduplication_key=deduplication_key,
             condition_fingerprint=condition_fingerprint, condition_version=version,
@@ -20846,6 +20968,54 @@ class ProductRepository:
         )
         session.add(created)
         return created
+
+    _MODEL_RUNTIME_ALERT_TITLES = {
+        "detector_model": "Wildlife detection is unavailable",
+        "gpu_runtime": "Wildlife detection cannot use this computer's GPU",
+        "species_model": "Species suggestions are unavailable",
+    }
+
+    def sync_model_runtime_health_alerts(
+        self, evaluation: ModelRuntimeHealthEvaluation, *, now: datetime | None = None
+    ) -> None:
+        """Attention Integrity & Health Reliability v1: reconcile the
+        Observatory Health alert for each model/runtime kind from one
+        already-computed `ModelRuntimeHealthEvaluation`. One observatory-
+        global alert per kind (stable `deduplication_key`); a changed
+        underlying code or affected Stream is a new condition version via
+        the ordinary `_refresh_product_alert` path, and a kind the
+        evaluation positively observed healthy resolves automatically.
+        Only attention state is written -- never evidence, never truth."""
+
+        moment = now or datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                for kind in evaluation.cleared:
+                    self._resolve_product_alerts(session, f"observatory-health:model-runtime:{kind.value}", moment)
+                for condition in evaluation.sustained:
+                    stream = session.get(StreamModel, condition.stream_id) if condition.stream_id else None
+                    self._refresh_product_alert(
+                        session,
+                        category=AlertCategory.monitoring,
+                        # A Stream that was asked to observe and could not
+                        # start is losing observation right now; a Doctor-
+                        # only configuration fact is a degradation to fix.
+                        severity=AlertSeverity.high if stream is not None else AlertSeverity.warning,
+                        title=self._MODEL_RUNTIME_ALERT_TITLES[condition.kind.value],
+                        message=condition.message,
+                        deduplication_key=f"observatory-health:model-runtime:{condition.kind.value}",
+                        condition_fingerprint=f"{condition.code}:{stream.id if stream is not None else 'host'}",
+                        action_type=AlertActionType.open_stream if stream is not None else AlertActionType.open_doctor,
+                        action_parameters={},
+                        now=moment,
+                        stream_id=stream.id if stream is not None else None,
+                        source_id=stream.source_id if stream is not None else None,
+                    )
+        log_event(
+            "attention", "model_runtime_health_synced",
+            active_kinds=sorted(condition.kind.value for condition in evaluation.sustained),
+            cleared_kinds=sorted(kind.value for kind in evaluation.cleared),
+        )
 
     def _resolve_product_alerts(self, session: Session, deduplication_key: str, now: datetime) -> None:
         for alert in session.scalars(

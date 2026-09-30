@@ -87,29 +87,24 @@ async function mockAlerts(page: Page, alerts: Array<Record<string, unknown>>) {
   );
 }
 
-// Foreground delivery needs two `AlertsInbox` polls: the first seeds
-// `seenAlertIdsRef` with nothing, the second (60s later, advanced via
-// `page.clock`) returns `alertAfter` -- a genuinely *new* id, exactly the
-// "new since last poll" condition `shouldDeliverForegroundNotification`
-// requires (Phase 8: never re-notify for something already on screen the
-// first time it was ever seen).
+// Foreground delivery needs two attention polls: the first seeds the
+// shared attention source's "seen" set with nothing, the second (60s later,
+// advanced via `page.clock`) returns `alertAfter` -- a genuinely *new* id,
+// exactly the "new since last poll" condition
+// `shouldDeliverForegroundNotification` requires (Phase 8: never re-notify
+// for something already on screen the first time it was ever seen).
 //
-// Browser Suite Determinism & Demo-Boundary Closure v1: this used to switch
-// on "the second `/api/alerts/unread` request", but on Today
-// `TodayAttentionSummary` makes that request too, so whichever component
-// mounted first consumed "poll 1" -- a mount-order race (1 failure in 8 on
-// one shared instance) that could also let a "never delivers" test read
-// `__deliveredNotifications` before the poll it judges had run. Now every
-// request gets `[]` until the test has seen `AlertsInbox`'s first poll
-// arrive and explicitly releases the alert; `expectSecondAlertsInboxPoll`
-// then waits for the Alerts badge, which `AlertsInbox.refresh` sets in the
-// same step that makes the delivery decision.
+// Browser Suite Determinism & Demo-Boundary Closure v1 made every request
+// return `[]` until the test has seen the first poll arrive and explicitly
+// releases the alert; `expectSecondAttentionPoll` then waits for the Alerts
+// badge, which the shared attention source sets in the same step that makes
+// the delivery decision.
 //
-// The app shell mounts one `AlertsControl` in the mobile header and one in
-// the sidebar (CSS shows one), and each polls on its own. So the helpers
-// count mounted pollers instead of assuming one, and a health alert is
-// delivered once per poller under the alert's own `tag` -- which the
-// Notification API coalesces into the single notification a person sees.
+// Attention Integrity & Health Reliability v1: the app shell still mounts
+// one `AlertsControl` in the mobile header and one in the sidebar (CSS shows
+// one), plus `TodayAttentionSummary` on Today, but all three now read one
+// shared `AttentionProvider` -- exactly one `/api/alerts/unread` and one
+// preferences read per poll, and exactly one delivery per new alert.
 async function mockAlertReleasedAfterFirstPoll(page: Page, alertAfter: Record<string, unknown>) {
   let released = false;
   let unreadResponses = 0;
@@ -126,28 +121,28 @@ async function mockAlertReleasedAfterFirstPoll(page: Page, alertAfter: Record<st
     });
   });
   return {
-    /** Opens Today and waits until every `AlertsInbox` poller's first poll
-     * (its unread and preferences reads) has reached the page. On Today
-     * only the pollers read preferences; `TodayAttentionSummary` reads
-     * unread once more. Returns the number of pollers. */
+    /** Opens Today and waits until the shared attention source's first
+     * poll (its unread and preferences reads) has reached the page. Returns
+     * the number of mounted Alerts controls (each shows the same badge). */
     async gotoTodayAndAwaitFirstPoll(): Promise<number> {
       await page.goto("/");
       await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
-      const pollers = await page.locator(".alerts-control").count();
-      expect(pollers).toBeGreaterThan(0);
-      await expect
-        .poll(() => unreadResponses >= pollers + 1 && preferenceResponses >= pollers)
-        .toBe(true);
-      return pollers;
+      const controls = await page.locator(".alerts-control").count();
+      expect(controls).toBeGreaterThan(0);
+      await expect.poll(() => unreadResponses >= 1 && preferenceResponses >= 1).toBe(true);
+      return controls;
     },
     release() {
       released = true;
     },
+    unreadResponseCount() {
+      return unreadResponses;
+    },
   };
 }
 
-async function expectSecondAlertsInboxPoll(page: Page, pollers: number) {
-  await expect(page.locator(".alerts-badge")).toHaveText(Array(pollers).fill("1"));
+async function expectSecondAttentionPoll(page: Page, controls: number) {
+  await expect(page.locator(".alerts-badge")).toHaveText(Array(controls).fill("1"));
 }
 
 async function deliveredCount(page: Page): Promise<number> {
@@ -359,24 +354,25 @@ test("a new sustained health alert delivers a live browser notification when ena
     action: { action_type: "open_stream", stream_id: "stream-e2e-1" },
   }));
 
-  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  const controls = await alerts.gotoTodayAndAwaitFirstPoll();
   expect(await deliveredCount(page)).toBe(0); // nothing delivered for the initial empty state
 
   alerts.release();
-  await page.clock.fastForward(61_000); // advance past AlertsControl's 60s poll interval
-  await expectSecondAlertsInboxPoll(page, pollers);
-  await expect.poll(() => deliveredCount(page)).toBe(pollers);
+  await page.clock.fastForward(61_000); // advance past the shared attention source's 60s poll interval
+  await expectSecondAttentionPoll(page, controls);
+  await expect.poll(() => deliveredCount(page)).toBe(1);
   const delivered = await page.evaluate(
     () =>
       (window as unknown as { __deliveredNotifications: Array<{ title: string; tag?: string }> })
         .__deliveredNotifications,
   );
-  // One notification as a person sees it: every delivery is this alert,
-  // under this alert's own tag.
-  expect(new Set(delivered.map((item) => item.tag))).toEqual(new Set(["health-e2e-1"]));
-  for (const item of delivered) {
-    expect(item.title).toBe("Backyard camera has been offline for 20 minutes");
-  }
+  // Exactly one delivery -- no longer one per mounted Alerts control.
+  expect(delivered).toHaveLength(1);
+  expect(delivered[0].tag).toBe("health-e2e-1");
+  expect(delivered[0].title).toBe("Backyard camera has been offline for 20 minutes");
+  // Two polls in total for the whole shell (initial + one interval), not
+  // one per consumer.
+  expect(alerts.unreadResponseCount()).toBe(2);
 });
 
 test("a new insight/discovery alert never delivers a live browser notification", async ({ page }) => {
@@ -389,12 +385,12 @@ test("a new insight/discovery alert never delivers a live browser notification",
   await mockNotificationPreferences(page, defaultPreferences({ browser_notifications_enabled: true }));
   const alerts = await mockAlertReleasedAfterFirstPoll(page, alert()); // urgency: "digest" (see the `alert()` helper's default)
 
-  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  const controls = await alerts.gotoTodayAndAwaitFirstPoll();
   alerts.release();
   await page.clock.fastForward(61_000);
   // The alert reached the Attention Center badge, so the second poll -- and
   // its delivery decision -- really ran before this check.
-  await expectSecondAlertsInboxPoll(page, pollers);
+  await expectSecondAttentionPoll(page, controls);
   expect(await deliveredCount(page)).toBe(0);
 });
 
@@ -414,12 +410,12 @@ test("quiet hours suppress a live notification that would otherwise fire", async
     attention_category: "observatory_health", urgency: "immediate",
   }));
 
-  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  const controls = await alerts.gotoTodayAndAwaitFirstPoll();
   alerts.release();
   await page.clock.fastForward(61_000);
   // The alert reached the Attention Center badge, so the second poll -- and
   // its delivery decision -- really ran before this check.
-  await expectSecondAlertsInboxPoll(page, pollers);
+  await expectSecondAttentionPoll(page, controls);
   expect(await deliveredCount(page)).toBe(0);
 });
 
@@ -433,11 +429,11 @@ test("browser notifications stay off unless the user explicitly enabled them", a
     attention_category: "observatory_health", urgency: "immediate",
   }));
 
-  const pollers = await alerts.gotoTodayAndAwaitFirstPoll();
+  const controls = await alerts.gotoTodayAndAwaitFirstPoll();
   alerts.release();
   await page.clock.fastForward(61_000);
   // The alert reached the Attention Center badge, so the second poll -- and
   // its delivery decision -- really ran before this check.
-  await expectSecondAlertsInboxPoll(page, pollers);
+  await expectSecondAttentionPoll(page, controls);
   expect(await deliveredCount(page)).toBe(0);
 });
