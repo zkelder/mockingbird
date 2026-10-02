@@ -6367,3 +6367,65 @@ export interface DarwinCoreExportResponse {
   occurrence_count: number;
   dry_run: boolean;
 }
+
+// Orphan Media Integrity & Recovery v1: file -> database storage integrity.
+export interface OrphanMediaFinding {
+  relative_path: string;
+  size_bytes: number;
+  modified_at: string;
+  kind: "unowned" | "unsafe_entry";
+}
+
+export interface OrphanMediaScanResponse {
+  status: "clean" | "orphans_found" | "incomplete";
+  complete: boolean;
+  scanned_at: string;
+  files_examined: number;
+  owned_files: number;
+  orphan_count: number;
+  orphan_bytes: number;
+  recently_written_count: number;
+  unsafe_entry_count: number;
+  excluded_counts: Record<string, number>;
+  incomplete_reasons: string[];
+  findings: OrphanMediaFinding[];
+  findings_truncated: boolean;
+  message: string;
+  changed_anything: boolean;
+  creates_review_truth: boolean;
+}
+
+export interface OrphanQuarantineResponse {
+  status: "completed" | "partial" | "failed" | "nothing_to_move";
+  batch_id: string | null;
+  moved_count: number;
+  skipped_count: number;
+  failed_count: number;
+  moved_bytes: number;
+  items: { relative_path: string; outcome: "moved" | "skipped" | "failed"; code: string | null }[];
+  message: string;
+  creates_review_truth: boolean;
+}
+
+export interface OrphanQuarantineBatch {
+  batch_id: string;
+  created_at: string;
+  item_count: number;
+  moved_count: number;
+  restored_count: number;
+  failed_count: number;
+  moved_bytes: number;
+}
+
+export interface OrphanQuarantineHistoryResponse {
+  batches: OrphanQuarantineBatch[];
+}
+
+export interface OrphanRestoreResponse {
+  status: "completed" | "partial" | "failed";
+  batch_id: string;
+  restored_count: number;
+  conflict_count: number;
+  failed_count: number;
+  message: string;
+}

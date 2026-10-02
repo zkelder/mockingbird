@@ -128,6 +128,10 @@ import type {
   SetupStateUpdate,
   SoundscapeSummaryRequest,
   SoundscapeSummaryResponse,
+  OrphanMediaScanResponse,
+  OrphanQuarantineHistoryResponse,
+  OrphanQuarantineResponse,
+  OrphanRestoreResponse,
   StorageCleanupHistoryResponse,
   StorageCleanupPreviewResponse,
   StorageCleanupResult,
@@ -1825,6 +1829,24 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  scanOrphanMedia: () =>
+    request<OrphanMediaScanResponse>("/api/settings/storage-retention/orphan-media/scan", {
+      method: "POST",
+    }),
+  quarantineOrphanMedia: (relativePaths: string[]) =>
+    request<OrphanQuarantineResponse>("/api/settings/storage-retention/orphan-media/quarantine", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, relative_paths: relativePaths }),
+    }),
+  getOrphanMediaQuarantineHistory: () =>
+    request<OrphanQuarantineHistoryResponse>(
+      "/api/settings/storage-retention/orphan-media/quarantine-history",
+    ),
+  restoreOrphanMediaQuarantine: (batchId: string) =>
+    request<OrphanRestoreResponse>(
+      `/api/settings/storage-retention/orphan-media/quarantine-history/${encodeURIComponent(batchId)}/restore`,
+      { method: "POST" },
+    ),
   getStorageRetentionCleanupHistory: () =>
     request<StorageCleanupHistoryResponse>("/api/settings/storage-retention/cleanup-history"),
   restoreStorageRetentionCleanup: (batchId: string, idempotencyKey: string) =>

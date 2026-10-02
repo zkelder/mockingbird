@@ -15,6 +15,7 @@ import { MetricCard } from "../components/MetricCard";
 import { NotificationPreferences } from "../components/NotificationPreferences";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
+import { StorageIntegrityPanel } from "../components/StorageIntegrityPanel";
 import { formatBytes, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface LocalDataPageProps {
@@ -842,6 +843,8 @@ export function LocalDataPage({
                 </div>
               </details>
             ) : null}
+
+            <StorageIntegrityPanel />
           </section>
 
           <section className="panel local-data-card">

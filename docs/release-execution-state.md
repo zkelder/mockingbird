@@ -4139,9 +4139,33 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last
-authorized milestone, *Everyday UX & Accessibility Closure v1*, is executed
-and closed below; its acceptance review and the next sequencing decision
-belong to ChatGPT. Nothing in the locked queue is authorized.
+authorized milestone, *Orphan Media Integrity & Recovery v1*, is executed and
+closed below; its acceptance review and the next sequencing decision belong to
+ChatGPT. Milestone 4 is not authorized.
+
+**Closure recorded, 2026-10-02, by Orphan Media Integrity & Recovery v1**
+(see [orphan-media-integrity-recovery-v1-report.md](orphan-media-integrity-recovery-v1-report.md)
+and [the contract](orphan-media-integrity-recovery-contract.md)). **Status:
+EXECUTED -- proposed classification A, pending acceptance review.** Starting
+HEAD `e5cbfa3`, schema `v62` unchanged. Closed the file -> database direction:
+report-only reverse scan (incomplete is never clean), explicit revalidated
+quarantine with sidecar manifest and restore (no deletion, no DB mutation),
+admin API, `storage-integrity` CLI, Local Data panel. Validation: affected
+subsystems 182 passed; Core 6311 passed / 1 failed (an order-dependent
+observation-intent test that passes alone; not attributable); full browser
+suite 211/211.
+
+**Acceptance recorded, 2026-10-02 (scheduler reconciliation; no validation
+rerun):** *Everyday UX & Accessibility Closure v1* is accepted at
+classification **A**: HEAD `e5cbfa3`, schema `v62` (unchanged), version
+`0.1.0`. Accepted validation: frontend typecheck/build clean; focused browser
+spec 6/6; full browser suite 209/209; Core not required because no
+backend/runtime/schema behavior changed. Disclosed bounded debt (not
+reopened): the Stream-page Zone interaction remains pointer-only (the
+keyboard-operable editor covers guided camera setup only).
+
+*Previously:* *Authorization was NONE -- GLOBAL RECONCILIATION REQUIRED* while
+Everyday UX & Accessibility Closure v1 awaited acceptance.
 
 **Closure recorded, 2026-10-01, by Everyday UX & Accessibility Closure v1**
 (see [everyday-ux-accessibility-closure-v1-report.md](everyday-ux-accessibility-closure-v1-report.md)).
@@ -14129,8 +14153,8 @@ carrier/power acceptance remains external.
 **Surviving bounded sequence:**
 
 1. Attention Integrity & Health Reliability v1 -- **ACCEPTED, A**.
-2. Everyday UX & Accessibility Closure v1 -- **EXECUTED, pending acceptance** (§3).
-3. Orphan Media Integrity & Recovery v1.
+2. Everyday UX & Accessibility Closure v1 -- **ACCEPTED, A** (`e5cbfa3`).
+3. Orphan Media Integrity & Recovery v1 -- **EXECUTED, pending acceptance** (§3).
 4. Research Export & Ecological Workflow Completion v1.
 5. Environmental Sensor Ingestion Foundation v1.
 6. Intervention & Habitat Outcomes v1.
@@ -15479,10 +15503,9 @@ rather than rewriting accepted history in place.
 *(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.**
-- **Latest accepted milestone:** Attention Integrity & Health Reliability
-  v1, classification A (HEAD `c146eff`, schema `v62`). Latest *executed*
-  milestone, pending acceptance: Everyday UX & Accessibility Closure v1.
+- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Orphan Media Integrity & Recovery v1.
+- **Latest accepted milestone:** Everyday UX & Accessibility Closure v1,
+  classification A (HEAD `e5cbfa3`, schema `v62`).
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
   `0.1.0` release; first public target `1.0.0`.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
@@ -15494,6 +15517,5 @@ authoritative record.)*
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
-- **Next action:** ChatGPT acceptance review of Everyday UX &
-  Accessibility Closure v1 and the next sequencing decision. No later
-  pre-1.0 milestone is authorized.
+- **Next action:** acceptance review of Orphan Media Integrity & Recovery v1
+  and the next sequencing decision. No later milestone is authorized.

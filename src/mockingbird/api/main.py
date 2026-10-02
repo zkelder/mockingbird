@@ -621,6 +621,23 @@ from mockingbird.storage.database import (
     create_database_engine,
 )
 from mockingbird.storage.retention_service import LocalStorageRetentionService
+from mockingbird.api.orphan_media_schemas import (
+    OrphanMediaScanResponse,
+    OrphanQuarantineHistoryResponse,
+    OrphanQuarantineRequest,
+    OrphanQuarantineResponse,
+    OrphanRestoreResponse,
+    batch_response as orphan_batch_response,
+    quarantine_response as orphan_quarantine_response,
+    restore_response as orphan_restore_response,
+    scan_response as orphan_scan_response,
+)
+from mockingbird.storage.orphan_media import (
+    list_orphan_quarantine_batches,
+    quarantine_orphans,
+    restore_orphan_quarantine_batch,
+    scan_orphan_media,
+)
 from mockingbird.web_app import frontend_response
 
 
@@ -16629,6 +16646,101 @@ def execute_storage_retention_cleanup(
         raise _storage_retention_http_error(error) from error
     finally:
         _backup_operation_lock.release()
+
+
+_ORPHAN_MEDIA_MESSAGES = {
+    "orphan_scan_incomplete": "The storage check could not finish, so nothing was moved. Try again.",
+    "orphan_quarantine_root_unsafe": "The recovery folder is not safe to use, so nothing was moved.",
+    "orphan_quarantine_selection_invalid": "Select between one and 200 files to move.",
+}
+
+
+@app.post(
+    "/api/settings/storage-retention/orphan-media/scan",
+    response_model=OrphanMediaScanResponse,
+)
+def scan_orphan_media_route() -> OrphanMediaScanResponse:
+    """Report-only reverse media integrity scan (file -> database). Never moves or deletes."""
+
+    _acquire_storage_maintenance_window()
+    try:
+        repository = get_repository()
+        return orphan_scan_response(scan_orphan_media(repository.engine, repository.media_root))
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/storage-retention/orphan-media/quarantine",
+    response_model=OrphanQuarantineResponse,
+)
+def quarantine_orphan_media_route(
+    payload: OrphanQuarantineRequest, request: Request
+) -> OrphanQuarantineResponse:
+    current_user = current_user_or_401(request)
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirm before moving unowned media to the recovery folder.")
+    repository = get_repository()
+    _acquire_storage_maintenance_window()
+    try:
+        result = quarantine_orphans(repository.engine, repository.media_root, payload.relative_paths)
+    finally:
+        _backup_operation_lock.release()
+    if result.status == "refused":
+        raise HTTPException(
+            status_code=409,
+            detail=_ORPHAN_MEDIA_MESSAGES.get(
+                result.refusal_code or "", "The unowned media could not be moved safely."
+            ),
+        )
+    if result.batch_id is not None:
+        repository.record_audit_event(
+            actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+            action="storage.orphan_media_quarantined", target_type="orphan_quarantine_batch",
+            target_id=result.batch_id,
+            metadata={"moved_count": result.moved_count, "failed_count": result.failed_count},
+            correlation_id=getattr(request.state, "request_id", None),
+        )
+    return orphan_quarantine_response(result)
+
+
+@app.get(
+    "/api/settings/storage-retention/orphan-media/quarantine-history",
+    response_model=OrphanQuarantineHistoryResponse,
+)
+def get_orphan_media_quarantine_history(
+    limit: int = Query(default=20, ge=1, le=30),
+) -> OrphanQuarantineHistoryResponse:
+    return OrphanQuarantineHistoryResponse(
+        batches=[
+            orphan_batch_response(item)
+            for item in list_orphan_quarantine_batches(get_repository().media_root, limit=limit)
+        ]
+    )
+
+
+@app.post(
+    "/api/settings/storage-retention/orphan-media/quarantine-history/{batch_id}/restore",
+    response_model=OrphanRestoreResponse,
+)
+def restore_orphan_media_quarantine_route(batch_id: str, request: Request) -> OrphanRestoreResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
+    _acquire_storage_maintenance_window()
+    try:
+        result = restore_orphan_quarantine_batch(repository.media_root, batch_id)
+    finally:
+        _backup_operation_lock.release()
+    if result.status == "not_found":
+        raise _not_found("Recovery batch", batch_id)
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="storage.orphan_media_restored", target_type="orphan_quarantine_batch",
+        target_id=batch_id,
+        metadata={"restored_count": result.restored_count, "conflict_count": result.conflict_count},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return orphan_restore_response(result)
 
 
 @app.get(
