@@ -5074,6 +5074,10 @@ class ResearchExportFilters(BaseModel):
     taxon_labels: list[str] | None = Field(default=None, max_length=100)
     acquisition_scope: Literal["live", "offline", "both"] = "both"
     collection_id: str | None = None
+    # Research Export & Ecological Workflow Completion v1: narrows (never
+    # widens) the in-scope Visits, so a Visit deep link can scope the
+    # workflow to one record. Eligibility is still evaluated per Visit.
+    visit_ids: list[str] | None = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
     def validate_range(self) -> "ResearchExportFilters":
@@ -5096,6 +5100,18 @@ class ResearchExportRequest(BaseModel):
         return _validate_export_output_name(value)
 
 
+class ResearchMediaBundleSummary(BaseModel):
+    """What `include_media` actually did: every requested eligible media id is
+    either bundled or listed under an explicit omission reason."""
+
+    requested: int = Field(ge=0)
+    bundled: int = Field(ge=0)
+    omitted: int = Field(ge=0)
+    omitted_reasons: dict[str, int] = Field(default_factory=dict)
+    total_bytes: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ResearchExportManifest(BaseModel):
     """Reproducibility metadata every research export carries (see
     "Versioning / reproducibility" in the governing milestone brief)."""
@@ -5112,6 +5128,7 @@ class ResearchExportManifest(BaseModel):
     excluded_count: int = Field(ge=0)
     excluded_reasons: dict[str, int] = Field(default_factory=dict)
     content_fingerprint: str
+    media_bundle: ResearchMediaBundleSummary | None = None
 
 
 class ResearchExportResponse(BaseModel):
@@ -5123,6 +5140,7 @@ class ResearchExportResponse(BaseModel):
     excluded_count: int = Field(ge=0)
     excluded_reasons: dict[str, int] = Field(default_factory=dict)
     manifest: ResearchExportManifest
+    media_bundle: ResearchMediaBundleSummary | None = None
     dry_run: bool
 
 
@@ -5159,6 +5177,7 @@ class CamtrapDpExportResponse(BaseModel):
     media_count: int = Field(ge=0)
     observation_count: int = Field(ge=0)
     validation: CamtrapDpValidation
+    media_bundle: ResearchMediaBundleSummary | None = None
     dry_run: bool
 
 

@@ -4138,10 +4138,22 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last
-authorized milestone, *Orphan Media Integrity & Recovery v1*, is executed and
-closed below; its acceptance review and the next sequencing decision belong to
-ChatGPT. Milestone 4 is not authorized.
+**Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last authorized
+milestone, *Research Export & Ecological Workflow Completion v1* (Milestone 4),
+is executed and closed below. Milestone 5 is not authorized.
+
+**Closure recorded, 2026-10-02, by Research Export & Ecological Workflow
+Completion v1** (see [report](research-export-ecological-workflow-completion-v1-report.md)).
+**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+Starting HEAD `6b927da`, schema `v62` unchanged. Delivered `include_media` byte
+bundling (generic + Camtrap DP), Visit -> export deep link with `visit_ids`, and
+the filter/bundle UI. Validation: Core 6342 passed / 0 failed; browser 218/218.
+
+**Acceptance recorded, 2026-10-02 (scheduler reconciliation; no validation
+rerun):** *Orphan Media Integrity & Recovery v1* is accepted at
+classification **A**: HEAD `6b927da`, schema `v62` (unchanged). Final clean
+Core 6312 passed / 0 failed (supersedes the 6311/1 order-dependent result
+below); affected storage/recovery subsystem 182 passed; browser 211/211.
 
 **Closure recorded, 2026-10-02, by Orphan Media Integrity & Recovery v1**
 (see [orphan-media-integrity-recovery-v1-report.md](orphan-media-integrity-recovery-v1-report.md)
@@ -14154,8 +14166,8 @@ carrier/power acceptance remains external.
 
 1. Attention Integrity & Health Reliability v1 -- **ACCEPTED, A**.
 2. Everyday UX & Accessibility Closure v1 -- **ACCEPTED, A** (`e5cbfa3`).
-3. Orphan Media Integrity & Recovery v1 -- **EXECUTED, pending acceptance** (§3).
-4. Research Export & Ecological Workflow Completion v1.
+3. Orphan Media Integrity & Recovery v1 -- **ACCEPTED, A** (`6b927da`).
+4. Research Export & Ecological Workflow Completion v1 -- **EXECUTED, pending acceptance** (§3).
 5. Environmental Sensor Ingestion Foundation v1.
 6. Intervention & Habitat Outcomes v1.
 7. Ecosystem UX Closure v1, limited to then-reproduced residuals.
@@ -15503,9 +15515,9 @@ rather than rewriting accepted history in place.
 *(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Orphan Media Integrity & Recovery v1.
-- **Latest accepted milestone:** Everyday UX & Accessibility Closure v1,
-  classification A (HEAD `e5cbfa3`, schema `v62`).
+- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Research Export & Ecological Workflow Completion v1.
+- **Latest accepted milestone:** Orphan Media Integrity & Recovery v1,
+  classification A (HEAD `6b927da`, schema `v62`; Core 6312/0, browser 211/211).
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
   `0.1.0` release; first public target `1.0.0`.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
@@ -15517,5 +15529,4 @@ authoritative record.)*
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
-- **Next action:** acceptance review of Orphan Media Integrity & Recovery v1
-  and the next sequencing decision. No later milestone is authorized.
+- **Next action:** acceptance review of Milestone 4 and the next sequencing decision.

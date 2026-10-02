@@ -6259,6 +6259,62 @@ export interface ResearchExportFiltersInput {
   taxon_labels?: string[] | null;
   acquisition_scope?: "live" | "offline" | "both";
   collection_id?: string | null;
+  // Narrows the in-scope Visits (never widens); a deep-linked Visit is still
+  // resolved through the ordinary eligibility boundary.
+  visit_ids?: string[] | null;
+}
+
+// Research Export & Ecological Workflow Completion v1.
+export interface ResearchMediaBundleSummary {
+  requested: number;
+  bundled: number;
+  omitted: number;
+  omitted_reasons: Record<string, number>;
+  total_bytes: number;
+  warnings: string[];
+}
+
+export interface ResearchExportRequest {
+  filters?: ResearchExportFiltersInput;
+  include_media?: boolean;
+  dry_run?: boolean;
+  output_name?: string | null;
+}
+
+export interface ResearchExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  observation_count: number;
+  media_count: number;
+  excluded_count: number;
+  excluded_reasons: Record<string, number>;
+  media_bundle?: ResearchMediaBundleSummary | null;
+  dry_run: boolean;
+}
+
+export interface CamtrapDpExportRequest {
+  filters?: ResearchExportFiltersInput;
+  include_media?: boolean;
+  site_name?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  include_machine_classifications?: boolean;
+  dry_run?: boolean;
+  output_name?: string | null;
+}
+
+export interface CamtrapDpExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  profile_version: string;
+  deployment_count: number;
+  media_count: number;
+  observation_count: number;
+  validation: { valid: boolean; errors: string[]; warnings: string[] };
+  media_bundle?: ResearchMediaBundleSummary | null;
+  dry_run: boolean;
 }
 
 export interface EcologicalEligibilityPreviewRequest {

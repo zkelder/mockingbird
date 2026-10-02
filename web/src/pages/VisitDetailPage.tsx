@@ -62,7 +62,7 @@ interface VisitDetailPageProps {
   onCorrectionSaved: () => Promise<void>;
   onOpenCollections: () => void;
   onOpenActivityLibrary: (filters: ActivityLibraryFilters) => void;
-  onOpenEcologicalDestinations: () => void;
+  onOpenEcologicalDestinations: (visitId: string) => void;
   correctionPrefill?: VisitCorrectionPrefill | null;
 }
 
@@ -1769,6 +1769,9 @@ export function VisitDetailPage({
           <button className="text-action" onClick={onOpenExports} type="button">
             Exports
           </button>
+          <button className="text-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
+            Check export eligibility
+          </button>
           {isDeveloperMode && detail.detection_proposals.length > 0 ? (
             <button className="text-action" onClick={onOpenDetectionProposals} type="button">
               Detection Proposals
@@ -1798,8 +1801,8 @@ export function VisitDetailPage({
             >
               {isReopening ? "Reopening..." : "Reopen as needs review"}
             </button>
-            <button className="secondary-action" onClick={onOpenEcologicalDestinations} type="button">
-              Prepare for an external destination
+            <button className="secondary-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
+              Prepare for export or an external destination
             </button>
           </div>
           {isEditingReviewed ? (

@@ -294,8 +294,12 @@ import type {
   ZoneMutationResult,
   ZoneUpdate,
   CurrentUser,
+  CamtrapDpExportRequest,
+  CamtrapDpExportResponse,
   DarwinCoreExportRequest,
   DarwinCoreExportResponse,
+  ResearchExportRequest,
+  ResearchExportResponse,
   EcologicalDestinationInfo,
   EcologicalEligibilityPreviewRequest,
   EcologicalEligibilityPreviewResponse,
@@ -2023,6 +2027,14 @@ export const apiClient = {
       `/api/ecological/submissions/${encodeURIComponent(submissionId)}/record-result`,
       { method: "POST", body: JSON.stringify(payload) },
     ),
+  exportResearchDataset: (payload: ResearchExportRequest) =>
+    request<ResearchExportResponse>("/api/research/export", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  exportCamtrapDp: (payload: CamtrapDpExportRequest) =>
+    request<CamtrapDpExportResponse>("/api/research/export-camtrap-dp", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
   exportDarwinCore: (payload: DarwinCoreExportRequest) =>
     request<DarwinCoreExportResponse>("/api/research/export-darwin-core", {
       method: "POST", body: JSON.stringify(payload),

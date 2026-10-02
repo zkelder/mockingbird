@@ -36,7 +36,7 @@ def test_filters_from_args_round_trip() -> None:
             "--start-at", "2026-08-01T00:00:00Z", "--end-at", "2026-08-08T00:00:00Z",
             "--stream-id", "stream-a", "--stream-id", "stream-b",
             "--taxon", "northern_cardinal", "--acquisition-scope", "offline",
-            "--collection-id", "research-collection-001",
+            "--collection-id", "research-collection-001", "--visit-id", "visit-1",
         ]
     )
     filters = research_cli._filters_from_args(args)
@@ -44,6 +44,7 @@ def test_filters_from_args_round_trip() -> None:
     assert filters.taxon_labels == ["northern_cardinal"]
     assert filters.acquisition_scope == "offline"
     assert filters.collection_id == "research-collection-001"
+    assert filters.visit_ids == ["visit-1"]
 
 
 def test_export_research_dry_run_end_to_end(capsys: pytest.CaptureFixture[str]) -> None:

@@ -8,6 +8,10 @@ import type {
   EcologicalMediaPolicy,
   EcologicalSubmissionRecord,
   ExportEcologicalSubmissionsResponse,
+  ResearchExportFiltersInput,
+  ResearchMediaBundleSummary,
+  Stream,
+  TaxonomyLabel,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
@@ -36,11 +40,92 @@ function reasonSentence(reasons: string[]): string {
   return reasons.map(formatLabel).join("; ");
 }
 
+type AcquisitionScope = "both" | "live" | "offline";
+type DatasetFormat = "research" | "camtrap_dp" | "darwin_core";
+
+const DATASET_FORMATS: { key: DatasetFormat; label: string; supportsMedia: boolean }[] = [
+  { key: "research", label: "Generic CSV / JSON", supportsMedia: true },
+  { key: "camtrap_dp", label: "Camtrap DP package", supportsMedia: true },
+  { key: "darwin_core", label: "Darwin Core occurrences", supportsMedia: false },
+];
+
+// Shareable/restorable filter state. Every key maps one-to-one onto an
+// existing server-side ResearchExportFilters field; unknown/invalid values
+// fall back to the unfiltered default so a stale link never errors.
+interface WorkflowFilters {
+  from: string;
+  to: string;
+  stream: string;
+  taxon: string;
+  scope: AcquisitionScope;
+  visit: string;
+}
+
+function readFiltersFromUrl(): WorkflowFilters {
+  const params = new URLSearchParams(window.location.search);
+  const scope = params.get("scope");
+  return {
+    from: params.get("from") ?? "",
+    to: params.get("to") ?? "",
+    stream: params.get("stream") ?? "",
+    taxon: params.get("taxon") ?? "",
+    scope: scope === "live" || scope === "offline" ? scope : "both",
+    visit: params.get("visit") ?? "",
+  };
+}
+
+function filtersToQuery(filters: WorkflowFilters): string {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (filters.stream) params.set("stream", filters.stream);
+  if (filters.taxon) params.set("taxon", filters.taxon);
+  if (filters.scope !== "both") params.set("scope", filters.scope);
+  if (filters.visit) params.set("visit", filters.visit);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function toServerFilters(filters: WorkflowFilters): ResearchExportFiltersInput {
+  return {
+    start_at: filters.from ? new Date(filters.from).toISOString() : null,
+    end_at: filters.to ? new Date(filters.to).toISOString() : null,
+    stream_ids: filters.stream ? [filters.stream] : null,
+    taxon_labels: filters.taxon ? [filters.taxon] : null,
+    acquisition_scope: filters.scope,
+    visit_ids: filters.visit ? [filters.visit] : null,
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface DatasetResult {
+  dryRun: boolean;
+  outputDirectory: string | null;
+  observationCount: number;
+  excludedCount: number;
+  excludedReasons: Record<string, number>;
+  mediaBundle: ResearchMediaBundleSummary | null;
+  warnings: string[];
+}
+
 export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinationsPageProps) {
   const [destinations, setDestinations] = useState<EcologicalDestinationInfo[] | null>(null);
   const [destination, setDestination] = useState<EcologicalDestinationKey>("inaturalist");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
+  const [filters, setFilters] = useState<WorkflowFilters>(readFiltersFromUrl);
+  const [streams, setStreams] = useState<Stream[]>([]);
+  const [taxa, setTaxa] = useState<TaxonomyLabel[]>([]);
+  const [autoPreviewDone, setAutoPreviewDone] = useState(false);
+
+  const [datasetFormat, setDatasetFormat] = useState<DatasetFormat>("research");
+  const [includeMedia, setIncludeMedia] = useState(false);
+  const [datasetLoading, setDatasetLoading] = useState(false);
+  const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [datasetResult, setDatasetResult] = useState<DatasetResult | null>(null);
 
   const [preview, setPreview] = useState<EcologicalEligibilityPreviewResponse | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -87,7 +172,28 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
 
   useEffect(() => {
     void loadDestinations();
+    // Filter option lists are conveniences: a failure leaves the filter at
+    // its "any" default rather than blocking the workflow.
+    apiClient.getStreams().then(setStreams).catch(() => undefined);
+    apiClient.getTaxonomyLabels()
+      .then((labels) => setTaxa(labels.filter((label) => label.is_reviewable)))
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const path = `${window.location.pathname}${filtersToQuery(filters)}`;
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.replaceState({}, "", path);
+    }
+  }, [filters]);
+
+  function updateFilters(patch: Partial<WorkflowFilters>) {
+    setFilters((current) => ({ ...current, ...patch }));
+    // A changed scope invalidates any previous preview/selection.
+    setPreview(null);
+    setSelectedVisitIds(new Set());
+    setDatasetResult(null);
+  }
 
   useEffect(() => {
     void loadSubmissions();
@@ -106,10 +212,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
     try {
       const result = await apiClient.previewEcologicalEligibility({
         destination,
-        filters: {
-          start_at: startAt ? new Date(startAt).toISOString() : null,
-          end_at: endAt ? new Date(endAt).toISOString() : null,
-        },
+        filters: toServerFilters(filters),
       });
       setPreview(result);
       setSelectedVisitIds(new Set(result.items.filter((item) => item.status !== "excluded").map((item) => item.visit_id)));
@@ -117,6 +220,79 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       setPreviewError(userFacingErrorMessage(caught, "Could not preview eligibility."));
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  // Deep link from a Visit (`?visit=<id>`): run the same eligibility preview
+  // scoped to that one Visit, once, as soon as the destination is known.
+  useEffect(() => {
+    if (filters.visit && !autoPreviewDone && activeDestination?.offered) {
+      setAutoPreviewDone(true);
+      void runPreview();
+    }
+  }, [activeDestination, autoPreviewDone, filters.visit]);
+
+  async function runDatasetExport(dryRun: boolean) {
+    const format = DATASET_FORMATS.find((entry) => entry.key === datasetFormat) ?? DATASET_FORMATS[0];
+    const withMedia = includeMedia && format.supportsMedia;
+    if (!dryRun) {
+      const confirmed = window.confirm(
+        `Write a ${format.label} bundle to this Host?\n\n`
+          + `Evidence photos: ${withMedia ? "copied into the bundle" : "not included"}\n\n`
+          + "Only reviewed, research-eligible observations are included. This writes a local folder only — "
+          + "MockingBird never uploads it anywhere.",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+    setDatasetLoading(true);
+    setDatasetError(null);
+    try {
+      const serverFilters = toServerFilters(filters);
+      if (datasetFormat === "research") {
+        const result = await apiClient.exportResearchDataset({
+          filters: serverFilters, include_media: withMedia, dry_run: dryRun,
+        });
+        setDatasetResult({
+          dryRun: result.dry_run,
+          outputDirectory: result.output_directory ?? null,
+          observationCount: result.observation_count,
+          excludedCount: result.excluded_count,
+          excludedReasons: result.excluded_reasons,
+          mediaBundle: result.media_bundle ?? null,
+          warnings: result.media_bundle?.warnings ?? [],
+        });
+      } else if (datasetFormat === "camtrap_dp") {
+        const result = await apiClient.exportCamtrapDp({
+          filters: serverFilters, include_media: withMedia, dry_run: dryRun,
+        });
+        setDatasetResult({
+          dryRun: result.dry_run,
+          outputDirectory: result.output_directory ?? null,
+          observationCount: result.observation_count,
+          excludedCount: 0,
+          excludedReasons: {},
+          mediaBundle: result.media_bundle ?? null,
+          warnings: result.validation.warnings,
+        });
+      } else {
+        const result = await apiClient.exportDarwinCore({ filters: serverFilters, dry_run: dryRun });
+        setDatasetResult({
+          dryRun: result.dry_run,
+          outputDirectory: result.output_directory ?? null,
+          observationCount: result.occurrence_count,
+          excludedCount: 0,
+          excludedReasons: {},
+          mediaBundle: null,
+          warnings: [],
+        });
+      }
+    } catch (caught) {
+      setDatasetResult(null);
+      setDatasetError(userFacingErrorMessage(caught, "Could not prepare the research bundle."));
+    } finally {
+      setDatasetLoading(false);
     }
   }
 
@@ -288,6 +464,71 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
           ))}
       </section>
 
+      <section className="panel" aria-label="Export filters">
+        <div className="section-heading">
+          <div>
+            <h2>Filters</h2>
+            <span className="meta-text">
+              Narrow what is previewed and bundled. Only reviewed, research-eligible observations ever qualify —
+              filters never widen that.
+            </span>
+          </div>
+        </div>
+        {filters.visit ? (
+          <div className="notice-panel">
+            <strong>Showing one Visit</strong>
+            <span>
+              You came from a Visit, so only that Visit is considered.{" "}
+              <button className="text-action" onClick={() => onOpenVisit(filters.visit)} type="button">
+                Back to the Visit
+              </button>{" "}
+              <button className="text-action" onClick={() => updateFilters({ visit: "" })} type="button">
+                Show all Visits
+              </button>
+            </span>
+          </div>
+        ) : null}
+        <div className="manifest-export-form">
+          <label>
+            From
+            <input onChange={(event) => updateFilters({ from: event.target.value })} type="date" value={filters.from} />
+          </label>
+          <label>
+            To
+            <input onChange={(event) => updateFilters({ to: event.target.value })} type="date" value={filters.to} />
+          </label>
+          <label>
+            Camera / Stream
+            <select onChange={(event) => updateFilters({ stream: event.target.value })} value={filters.stream}>
+              <option value="">Any Stream</option>
+              {streams.map((stream) => (
+                <option key={stream.id} value={stream.id}>{stream.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Species
+            <select onChange={(event) => updateFilters({ taxon: event.target.value })} value={filters.taxon}>
+              <option value="">Any reviewed species</option>
+              {taxa.map((taxon) => (
+                <option key={taxon.label} value={taxon.label}>{taxon.display_name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Captured
+            <select
+              onChange={(event) => updateFilters({ scope: event.target.value as AcquisitionScope })}
+              value={filters.scope}
+            >
+              <option value="both">Live and imported</option>
+              <option value="live">Live monitoring only</option>
+              <option value="offline">Imported / recorded media only</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
       {activeDestination?.offered ? (
         <>
           <section className="panel">
@@ -299,22 +540,46 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
                 </span>
               </div>
             </div>
-            <div className="manifest-export-form">
-              <label>
-                From
-                <input onChange={(event) => setStartAt(event.target.value)} type="date" value={startAt} />
-              </label>
-              <label>
-                To
-                <input onChange={(event) => setEndAt(event.target.value)} type="date" value={endAt} />
-              </label>
-            </div>
             <div className="detail-actions">
               <button className="primary-action" disabled={previewLoading} onClick={() => void runPreview()} type="button">
                 {previewLoading ? "Checking..." : "Preview eligibility"}
               </button>
             </div>
             {previewError ? <div className="error-panel">{previewError}</div> : null}
+
+            {preview && filters.visit ? (
+              (() => {
+                const item = preview.items.find((entry) => entry.visit_id === filters.visit);
+                if (!item) {
+                  return (
+                    <div className="notice-panel">
+                      <strong>This Visit is not part of an export</strong>
+                      <span>It could not be found with the current destination filters.</span>
+                    </div>
+                  );
+                }
+                if (item.status === "eligible") {
+                  return (
+                    <div className="notice-panel">
+                      <strong>This Visit is ready to prepare</strong>
+                      <span>It is a reviewed observation and is preselected below.</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="notice-panel">
+                    <strong>
+                      {item.status === "needs_input" ? "This Visit needs more input first" : "This Visit cannot be exported"}
+                    </strong>
+                    <span>
+                      {reasonSentence([...item.needs_input_reasons, ...item.excluded_reasons])
+                        || "It does not meet the export rules yet."}
+                      {" "}Unreviewed suggestions are never exported as confirmed truth — review the Visit first.
+                    </span>
+                  </div>
+                );
+              })()
+            ) : null}
 
             {preview ? (
               <>
@@ -465,6 +730,117 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
           </section>
         </>
       ) : null}
+
+      <section className="panel" aria-label="Research dataset bundle">
+        <div className="section-heading">
+          <div>
+            <h2>Research dataset bundle</h2>
+            <span className="meta-text">
+              Write a local, standards-friendly bundle of your reviewed observations using the filters above.
+            </span>
+          </div>
+        </div>
+        <div className="manifest-export-form">
+          <label>
+            Format
+            <select
+              onChange={(event) => {
+                setDatasetFormat(event.target.value as DatasetFormat);
+                setDatasetResult(null);
+              }}
+              value={datasetFormat}
+            >
+              {DATASET_FORMATS.map((entry) => (
+                <option key={entry.key} value={entry.key}>{entry.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="checkbox-label">
+            <input
+              checked={includeMedia && datasetFormat !== "darwin_core"}
+              disabled={datasetFormat === "darwin_core"}
+              onChange={(event) => {
+                setIncludeMedia(event.target.checked);
+                setDatasetResult(null);
+              }}
+              type="checkbox"
+            />
+            Include evidence photos in the bundle
+          </label>
+        </div>
+        {datasetFormat === "darwin_core" ? (
+          <div className="notice-panel">
+            <span>Darwin Core lists occurrences only; photos are not copied into it.</span>
+          </div>
+        ) : null}
+        {includeMedia && datasetFormat !== "darwin_core" ? (
+          <div className="notice-panel">
+            <strong>Privacy Zones do not redact pixels</strong>
+            <span>
+              Only photos belonging to eligible reviewed observations are copied, but a Privacy or Ignore Zone
+              does not black out part of a frame. Review the photos yourself before sharing the bundle.
+            </span>
+          </div>
+        ) : null}
+        <div className="detail-actions">
+          <button
+            className="secondary-action"
+            disabled={datasetLoading}
+            onClick={() => void runDatasetExport(true)}
+            type="button"
+          >
+            {datasetLoading ? "Working..." : "Preview bundle"}
+          </button>
+          <button
+            className="primary-action"
+            disabled={datasetLoading}
+            onClick={() => void runDatasetExport(false)}
+            type="button"
+          >
+            Write bundle
+          </button>
+        </div>
+        {datasetError ? <div className="error-panel">{datasetError}</div> : null}
+        {datasetResult ? (
+          datasetResult.observationCount === 0 ? (
+            <EmptyState
+              title="Nothing eligible to bundle"
+              description={
+                datasetResult.excludedCount > 0
+                  ? `${datasetResult.excludedCount} observation(s) matched your filters but are not research-eligible `
+                    + `(${Object.entries(datasetResult.excludedReasons).map(([reason, count]) => `${formatLabel(reason)}: ${count}`).join(", ")}).`
+                  : "No reviewed observations match these filters."
+              }
+            />
+          ) : (
+            <div className="notice-panel">
+              <strong>
+                {datasetResult.dryRun ? "Preview: " : ""}
+                {datasetResult.observationCount} observation(s)
+                {datasetResult.excludedCount > 0 ? `, ${datasetResult.excludedCount} excluded as not research-eligible` : ""}
+                {!datasetResult.dryRun && datasetResult.outputDirectory ? ` written to ${datasetResult.outputDirectory}` : ""}
+                .
+              </strong>
+              {datasetResult.mediaBundle ? (
+                <span>
+                  Photos: {datasetResult.mediaBundle.bundled} of {datasetResult.mediaBundle.requested}{" "}
+                  {datasetResult.dryRun ? "would be " : ""}included ({formatBytes(datasetResult.mediaBundle.total_bytes)}).
+                  {datasetResult.mediaBundle.omitted > 0
+                    ? ` ${datasetResult.mediaBundle.omitted} could not be included — each is listed with its reason in media-bundle.csv.`
+                    : ""}
+                </span>
+              ) : null}
+              {datasetResult.warnings.length > 0 ? (
+                <ul>
+                  {datasetResult.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )
+        ) : null}
+      </section>
 
       <section className="panel">
         <div className="section-heading">

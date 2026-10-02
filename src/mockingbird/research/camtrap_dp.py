@@ -64,7 +64,7 @@ from mockingbird.research.research_export import ResearchObservation, sorted_obs
 #: evidence too -- fixed here rather than narrowly to "just audio". Falls
 #: back to `.jpg` only for a genuinely unrecognized/missing content type,
 #: preserving this module's exact prior behavior for that one edge case.
-_MEDIA_FILE_EXTENSIONS: dict[str, str] = {
+MEDIA_FILE_EXTENSIONS: dict[str, str] = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
@@ -80,7 +80,7 @@ _MEDIA_FILE_EXTENSIONS: dict[str, str] = {
 
 
 def _media_file_extension(content_type: str | None) -> str:
-    return _MEDIA_FILE_EXTENSIONS.get(content_type or "", ".jpg")
+    return MEDIA_FILE_EXTENSIONS.get(content_type or "", ".jpg")
 
 CAMTRAP_DP_PROFILE_VERSION = "1.0.2"
 

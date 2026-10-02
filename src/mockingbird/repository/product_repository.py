@@ -212,6 +212,21 @@ from mockingbird.research.darwin_core import (
     build_meta_xml as darwin_core_meta_xml,
     occurrence_to_row as darwin_core_occurrence_to_row,
 )
+from mockingbird.research.media_bundle import (
+    BUNDLE_MEDIA_DIRECTORY,
+    MEDIA_BUNDLE_CSV_FIELDNAMES,
+    MEDIA_BUNDLE_FILE_NAME,
+    RESEARCH_EXPORT_MEDIA_MAX_FILES,
+    RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES,
+    STATUS_BUNDLED,
+    STATUS_OMITTED_INTEGRITY,
+    STATUS_OMITTED_MISSING,
+    STATUS_OMITTED_UNSAFE_PATH,
+    MediaBundleEntry,
+    entry_to_row as media_bundle_entry_to_row,
+    media_requests_for_observations,
+    plan_bundle_names,
+)
 from mockingbird.research.eligibility import (
     RESEARCH_ELIGIBILITY_POLICY_VERSION,
     evaluate_research_export_eligibility,
@@ -403,6 +418,7 @@ from mockingbird.api.schemas import (
     ResearchCollectionSummary,
     ResearchExportFilters,
     ResearchExportManifest,
+    ResearchMediaBundleSummary,
     ResearchExportRequest,
     ResearchExportResponse,
     AdapterEvaluationItem,
@@ -1480,6 +1496,7 @@ RESEARCH_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "sources.csv": "text/csv",
     "effort.csv": "text/csv",
     "manifest.json": "application/json",
+    MEDIA_BUNDLE_FILE_NAME: "text/csv",
 }
 
 CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
@@ -1487,6 +1504,7 @@ CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "media.csv": "text/csv",
     "observations.csv": "text/csv",
     "datapackage.json": "application/json",
+    MEDIA_BUNDLE_FILE_NAME: "text/csv",
 }
 
 DARWIN_CORE_EXPORT_CONTENT_TYPES: dict[str, str] = {
@@ -37532,6 +37550,10 @@ class ProductRepository:
         if filters.collection_id is not None:
             collection_visit_ids = self._research_collection_visit_ids(session, filters.collection_id)
             query = query.where(VisitModel.id.in_(collection_visit_ids))
+        if filters.visit_ids is not None:
+            # Narrows only: an explicitly requested Visit is still resolved
+            # through the ordinary eligibility boundary by the caller.
+            query = query.where(VisitModel.id.in_(filters.visit_ids))
 
         rows = session.execute(
             query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
@@ -37691,6 +37713,147 @@ class ProductRepository:
                     excluded_reasons[reason] += 1
         return observations, excluded_reasons
 
+    def _research_eligible_signature(self, filters: ResearchExportFilters) -> str:
+        """Fingerprint of the currently eligible set, used to detect an
+        eligibility change (a correction, reopen, or Zone reclassification)
+        between selection and bundle generation."""
+
+        observations, _ = self.research_export_eligibility_preview(filters)
+        return observations_content_fingerprint(
+            sorted_observations([obs for obs in observations if obs.eligibility.eligible])
+        )
+
+    def _plan_research_media_bundle(
+        self, eligible: list[ResearchObservation],
+    ) -> list[tuple[MediaBundleEntry, Path | None]]:
+        """Resolve every eligible media id to either a safely resolved
+        source file or an explicit omission reason. Reads only the database
+        and file metadata -- never file contents -- so it also backs the
+        dry-run preview. Raises when the planned bundle exceeds the bounds."""
+
+        requests = media_requests_for_observations(eligible)
+        names = plan_bundle_names(requests)
+        planned: list[tuple[MediaBundleEntry, Path | None]] = []
+        with self.session_factory() as session:
+            for request in requests:
+                name = names[request.media_id]
+
+                def omitted(status: str) -> tuple[MediaBundleEntry, Path | None]:
+                    return (
+                        MediaBundleEntry(request.media_id, request.observation_ids, None, None, None, status),
+                        None,
+                    )
+
+                if name.omit_status is not None:
+                    planned.append(omitted(name.omit_status))
+                    continue
+                asset = session.get(MediaAssetModel, request.media_id)
+                if asset is None:
+                    planned.append(omitted(STATUS_OMITTED_MISSING))
+                    continue
+                path, _relative, size, error = self._storage_managed_media_path(asset)
+                if error is not None or path is None:
+                    status = {
+                        "missing_or_incomplete_file": STATUS_OMITTED_MISSING,
+                        "integrity_mismatch": STATUS_OMITTED_INTEGRITY,
+                    }.get(error or "", STATUS_OMITTED_UNSAFE_PATH)
+                    planned.append(omitted(status))
+                    continue
+                planned.append(
+                    (
+                        MediaBundleEntry(
+                            request.media_id, request.observation_ids, name.relative_path, size, None,
+                            STATUS_BUNDLED,
+                        ),
+                        path,
+                    )
+                )
+        bundleable = [entry for entry, source in planned if source is not None]
+        total_bytes = sum(entry.size_bytes or 0 for entry in bundleable)
+        if (
+            len(bundleable) > RESEARCH_EXPORT_MEDIA_MAX_FILES
+            or total_bytes > RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES
+        ):
+            raise ValueError(
+                "research_export_media_limit_exceeded: "
+                f"{len(bundleable)} files / {total_bytes} bytes exceeds the "
+                f"{RESEARCH_EXPORT_MEDIA_MAX_FILES} file / {RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES} byte "
+                "limit; narrow the export filters."
+            )
+        return planned
+
+    @staticmethod
+    def _copy_research_media_file(source: Path, destination: Path) -> tuple[int, str]:
+        """Stream one managed file into the bundle, hashing the bytes actually
+        written. `O_NOFOLLOW` closes the window between path validation and
+        open in which the file could be swapped for a symlink; the exclusive
+        destination open refuses to overwrite an existing bundle entry."""
+
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        digest = hashlib.sha256()
+        total = 0
+        with os.fdopen(os.open(source, flags), "rb") as reader, destination.open("xb") as writer:
+            while chunk := reader.read(1024 * 1024):
+                digest.update(chunk)
+                writer.write(chunk)
+                total += len(chunk)
+        return total, digest.hexdigest()
+
+    def _write_research_media_bundle(
+        self, directory: Path, planned: list[tuple[MediaBundleEntry, Path | None]],
+    ) -> list[MediaBundleEntry]:
+        """Copy planned media into `<directory>/media/` and write
+        `media-bundle.csv`. A file that cannot be copied or fails its
+        integrity check is omitted with a reason, never half-written."""
+
+        (directory / BUNDLE_MEDIA_DIRECTORY).mkdir()
+        final: list[MediaBundleEntry] = []
+        with self.session_factory() as session:
+            for entry, source in planned:
+                if source is None or entry.bundled_path is None:
+                    final.append(entry)
+                    continue
+                destination = directory / entry.bundled_path
+                asset = session.get(MediaAssetModel, entry.media_id)
+                try:
+                    size, sha256 = self._copy_research_media_file(source, destination)
+                except FileNotFoundError:
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_MISSING))
+                    continue
+                except OSError:
+                    destination.unlink(missing_ok=True)
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_UNSAFE_PATH))
+                    continue
+                recorded_sha = asset.content_sha256 if asset is not None else None
+                if size != entry.size_bytes or (recorded_sha is not None and recorded_sha != sha256):
+                    destination.unlink(missing_ok=True)
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_INTEGRITY))
+                    continue
+                final.append(dataclasses.replace(entry, size_bytes=size, sha256=sha256))
+        self._write_csv(
+            directory / MEDIA_BUNDLE_FILE_NAME,
+            list(MEDIA_BUNDLE_CSV_FIELDNAMES),
+            [media_bundle_entry_to_row(entry) for entry in final],
+        )
+        return final
+
+    @staticmethod
+    def _research_media_bundle_summary(entries: list[MediaBundleEntry]) -> ResearchMediaBundleSummary:
+        reasons: Counter[str] = Counter(entry.status for entry in entries if entry.status != STATUS_BUNDLED)
+        bundled = [entry for entry in entries if entry.status == STATUS_BUNDLED]
+        warnings = [
+            f"{entry.media_id}: not bundled ({entry.status})"
+            for entry in entries if entry.status != STATUS_BUNDLED
+        ]
+        return ResearchMediaBundleSummary(
+            requested=len(entries),
+            bundled=len(bundled),
+            omitted=len(entries) - len(bundled),
+            omitted_reasons=dict(sorted(reasons.items())),
+            total_bytes=sum(entry.size_bytes or 0 for entry in bundled),
+            warnings=warnings,
+        )
+
     def export_research_dataset(self, payload: ResearchExportRequest) -> ResearchExportResponse:
         """Generic research-safe CSV/JSON export (see "Generic research
         export" in the governing milestone brief). Always trusted-only by
@@ -37720,6 +37883,12 @@ class ProductRepository:
             content_fingerprint=observations_content_fingerprint(eligible),
         )
         file_names = ["observations.csv", "observations.jsonl", "media.csv", "sources.csv", "effort.csv", "manifest.json"]
+        media_plan = self._plan_research_media_bundle(eligible) if payload.include_media else None
+        if media_plan is not None:
+            file_names.append(MEDIA_BUNDLE_FILE_NAME)
+            manifest = manifest.model_copy(
+                update={"media_bundle": self._research_media_bundle_summary([entry for entry, _ in media_plan])}
+            )
 
         if payload.dry_run:
             return ResearchExportResponse(
@@ -37737,6 +37906,7 @@ class ProductRepository:
                 excluded_count=manifest.excluded_count,
                 excluded_reasons=manifest.excluded_reasons,
                 manifest=manifest,
+                media_bundle=manifest.media_bundle,
                 dry_run=True,
             )
 
@@ -37787,6 +37957,16 @@ class ProductRepository:
                 list(RESEARCH_EFFORT_CSV_FIELDNAMES),
                 self._research_effort_rows(coverage=coverage, offline=offline_effort),
             )
+            if media_plan is not None:
+                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
+                manifest = manifest.model_copy(
+                    update={"media_bundle": self._research_media_bundle_summary(bundled_entries)}
+                )
+                # Bytes can take a while to copy; never publish a bundle whose
+                # records stopped being eligible (correction, reopen, Zone
+                # reclassification) after the selection was made.
+                if self._research_eligible_signature(payload.filters) != manifest.content_fingerprint:
+                    raise ValueError("research_export_eligibility_changed")
             self._write_json(temporary_dir / "manifest.json", manifest.model_dump(mode="json"))
             temporary_dir.rename(output_dir)
         except Exception:
@@ -37809,6 +37989,7 @@ class ProductRepository:
             excluded_count=manifest.excluded_count,
             excluded_reasons=manifest.excluded_reasons,
             manifest=manifest,
+            media_bundle=manifest.media_bundle,
             dry_run=False,
         )
 
@@ -37861,6 +38042,15 @@ class ProductRepository:
 
         export_id = self._research_export_id(payload.output_name, prefix="camtrap-dp")
         file_names = ["deployments.csv", "media.csv", "observations.csv", "datapackage.json"]
+        eligible_observations = sorted_observations([obs for obs in observations if obs.eligibility.eligible])
+        eligible_fingerprint = observations_content_fingerprint(eligible_observations)
+        media_plan = self._plan_research_media_bundle(eligible_observations) if payload.include_media else None
+        media_summary = (
+            self._research_media_bundle_summary([entry for entry, _ in media_plan])
+            if media_plan is not None else None
+        )
+        if media_plan is not None:
+            file_names.append(MEDIA_BUNDLE_FILE_NAME)
 
         if payload.dry_run:
             return CamtrapDpExportResponse(
@@ -37877,7 +38067,8 @@ class ProductRepository:
                 deployment_count=len(package.deployments),
                 media_count=len(package.media),
                 observation_count=len(package.observations),
-                validation=validation,
+                validation=self._camtrap_validation_with_media(validation, media_summary),
+                media_bundle=media_summary,
                 dry_run=True,
             )
 
@@ -37911,6 +38102,11 @@ class ProductRepository:
                     package, generated_at=datetime.now(UTC), software_version=MOCKINGBIRD_VERSION,
                 ),
             )
+            if media_plan is not None:
+                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
+                media_summary = self._research_media_bundle_summary(bundled_entries)
+                if self._research_eligible_signature(payload.filters) != eligible_fingerprint:
+                    raise ValueError("research_export_eligibility_changed")
             temporary_dir.rename(output_dir)
         except Exception:
             shutil.rmtree(temporary_dir, ignore_errors=True)
@@ -37931,8 +38127,22 @@ class ProductRepository:
             deployment_count=len(package.deployments),
             media_count=len(package.media),
             observation_count=len(package.observations),
-            validation=validation,
+            validation=self._camtrap_validation_with_media(validation, media_summary),
+            media_bundle=media_summary,
             dry_run=False,
+        )
+
+    @staticmethod
+    def _camtrap_validation_with_media(
+        validation: CamtrapDpValidation, media_summary: ResearchMediaBundleSummary | None,
+    ) -> CamtrapDpValidation:
+        """Camtrap DP `filePath` always names the bundled path; media that
+        could not be bundled is disclosed as a warning, never hidden."""
+
+        if media_summary is None or not media_summary.warnings:
+            return validation
+        return validation.model_copy(
+            update={"warnings": [*validation.warnings, *media_summary.warnings]}
         )
 
     def conservation_report(self, payload: ConservationReportRequest) -> ConservationReportResponse:

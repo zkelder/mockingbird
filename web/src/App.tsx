@@ -1027,7 +1027,12 @@ export default function App() {
           correctionPrefill={visitCorrectionPrefill}
           onOpenCollections={() => openCollections()}
           onOpenActivityLibrary={openActivityLibrary}
-          onOpenEcologicalDestinations={() => setPage("ecological-destinations")}
+          onOpenEcologicalDestinations={(visitId) => {
+            // Carry the Visit into the one existing research/export
+            // workflow; the page reads `?visit=` and scopes its preview.
+            window.history.pushState({}, "", `/ecological-destinations?visit=${encodeURIComponent(visitId)}`);
+            applyRoute({ page: "ecological-destinations" });
+          }}
         />
       );
     }
