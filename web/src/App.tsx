@@ -68,6 +68,7 @@ import {
   writeAppRoute,
 } from "./navigation";
 
+import { userFacingErrorMessage } from "./utils";
 interface AppData {
   health: HealthStatus | null;
   sources: CameraSource[];
@@ -398,7 +399,7 @@ export default function App() {
       });
       setSelectedStreamId((current) => current ?? streamsResult.value[0]?.id ?? null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
+      setError(userFacingErrorMessage(caught, "Could not load MockingBird data."));
     } finally {
       if (showLoading) {
         setIsLoading(false);

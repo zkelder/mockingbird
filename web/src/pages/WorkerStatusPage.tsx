@@ -10,7 +10,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 type WorkerCreateFlagKey =
   | "can_create_media_assets"
@@ -311,7 +311,7 @@ export function WorkerStatusPage() {
     try {
       setStatus(await apiClient.getWorkerStatus());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load worker status.");
+      setError(userFacingErrorMessage(caught, "Could not load worker status."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -328,7 +328,7 @@ export function WorkerStatusPage() {
     try {
       setDryRunPlan(await apiClient.getExternalUrlWorkerDryRunPlan());
     } catch (caught) {
-      setDryRunError(caught instanceof Error ? caught.message : "Could not load dry-run plan.");
+      setDryRunError(userFacingErrorMessage(caught, "Could not load dry-run plan."));
     } finally {
       if (showLoading) {
         setIsDryRunLoading(false);

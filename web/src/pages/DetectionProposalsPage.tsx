@@ -21,7 +21,7 @@ import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { displayTaxonomyLabel, findTaxonomyLabel } from "../components/taxonomy";
-import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets, userFacingErrorMessage } from "../utils";
 
 type ProposalFilter = "all" | DetectionProposalStatus;
 
@@ -172,7 +172,7 @@ export function DetectionProposalsPage({
           : nextMediaAssets[0]?.id ?? "",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load detection proposals.");
+      setError(userFacingErrorMessage(caught, "Could not load detection proposals."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -233,7 +233,7 @@ export function DetectionProposalsPage({
       setNotes("");
       await loadPageData({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Demo proposal could not be generated.");
+      setError(userFacingErrorMessage(caught, "Demo proposal could not be generated."));
     } finally {
       setIsSubmitting(false);
     }
@@ -272,7 +272,7 @@ export function DetectionProposalsPage({
       await loadPageData({ showLoading: false });
       await onProposalChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Proposal decision could not be saved.");
+      setError(userFacingErrorMessage(caught, "Proposal decision could not be saved."));
     } finally {
       setActionId(null);
     }

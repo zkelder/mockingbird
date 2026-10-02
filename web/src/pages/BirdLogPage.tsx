@@ -32,6 +32,7 @@ import {
   modalityBadge,
   regularityNarrativeBadge,
   seasonalPatternNote,
+  userFacingErrorMessage,
 } from "../utils";
 
 interface BirdLogPageProps {
@@ -457,7 +458,7 @@ export function BirdLogPage({
       });
       setCollectionMessage(response.result.status === "updated" ? `Added Visit to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
       setCollections((current) => current.map((item) => item.id === response.collection.id ? response.collection : item));
-    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+    } catch (caught) { setCollectionMessage(userFacingErrorMessage(caught, "Could not add this Visit to the Collection.")); }
   }
 
   async function addObservationTag(visitId: string) {
@@ -479,7 +480,7 @@ export function BirdLogPage({
             : item),
         },
       } : current);
-    } catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not add this tag to the Visit."); }
+    } catch (caught) { setTagMessage(userFacingErrorMessage(caught, "Could not add this tag to the Visit.")); }
   }
 
   useEffect(() => {
@@ -524,7 +525,7 @@ export function BirdLogPage({
           if (active) setHistory(next);
         })
         .catch((caught) => {
-          if (active) setError(caught instanceof Error ? caught.message : "Could not load this Bird Log history.");
+          if (active) setError(userFacingErrorMessage(caught, "Could not load this Bird Log history."));
         })
         .finally(() => {
           if (active) setIsLoading(false);
@@ -587,7 +588,7 @@ export function BirdLogPage({
         };
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load more reviewed observations.");
+      setError(userFacingErrorMessage(caught, "Could not load more reviewed observations."));
     } finally {
       setIsLoadingMore(false);
     }

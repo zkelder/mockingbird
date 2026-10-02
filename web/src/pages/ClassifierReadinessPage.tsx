@@ -10,7 +10,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface ClassifierReadinessPageProps {
   onOpenAnalytics: () => void;
@@ -60,7 +60,7 @@ export function ClassifierReadinessPage({
           current ?? nextReport.species[0]?.label ?? nextReport.missing_target_labels[0] ?? null,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load classifier readiness.");
+      setError(userFacingErrorMessage(caught, "Could not load classifier readiness."));
     } finally {
       setIsLoading(false);
     }

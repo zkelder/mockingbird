@@ -13,7 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface EcologicalDestinationsPageProps {
   onOpenVisit: (visitId: string) => void;
@@ -71,7 +71,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
     try {
       setDestinations(await apiClient.getEcologicalDestinations());
     } catch (caught) {
-      setPreviewError(caught instanceof Error ? caught.message : "Could not load destinations.");
+      setPreviewError(userFacingErrorMessage(caught, "Could not load destinations."));
     }
   }
 
@@ -114,7 +114,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       setPreview(result);
       setSelectedVisitIds(new Set(result.items.filter((item) => item.status !== "excluded").map((item) => item.visit_id)));
     } catch (caught) {
-      setPreviewError(caught instanceof Error ? caught.message : "Could not preview eligibility.");
+      setPreviewError(userFacingErrorMessage(caught, "Could not preview eligibility."));
     } finally {
       setPreviewLoading(false);
     }
@@ -174,7 +174,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       );
       await loadSubmissions();
     } catch (caught) {
-      setPrepareError(caught instanceof Error ? caught.message : "Could not prepare the selected observations.");
+      setPrepareError(userFacingErrorMessage(caught, "Could not prepare the selected observations."));
     } finally {
       setPrepareLoading(false);
     }
@@ -217,7 +217,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       setExportResult(result);
       await loadSubmissions();
     } catch (caught) {
-      setExportError(caught instanceof Error ? caught.message : "Could not export the selected submissions.");
+      setExportError(userFacingErrorMessage(caught, "Could not export the selected submissions."));
     } finally {
       setExportLoading(false);
     }
@@ -236,7 +236,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       });
       await loadSubmissions();
     } catch (caught) {
-      setExportError(caught instanceof Error ? caught.message : "Could not record the submission result.");
+      setExportError(userFacingErrorMessage(caught, "Could not record the submission result."));
     } finally {
       setRecordingResultId(null);
     }

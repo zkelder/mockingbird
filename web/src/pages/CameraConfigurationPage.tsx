@@ -8,7 +8,7 @@ import type {
   CameraNodePairResponse,
 } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
-import { cameraHealthLabel, cameraHealthTone, formatBytes, formatDateTime, formatLabel } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatBytes, formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 // Product Operations & First-Observation Completion v1: the same graduated
 // storage-tier labels ProductHealthPanel.tsx already uses for the Host's
@@ -156,7 +156,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setReplacementReason("");
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Camera configuration could not be loaded.");
+      setError(userFacingErrorMessage(caught, "Camera configuration could not be loaded."));
     } finally {
       setIsLoading(false);
     }
@@ -173,7 +173,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setHardwareHealth(await apiClient.getStreamCameraNodeHardwareHealth(streamId));
     } catch (caught) {
       setHardwareHealthError(
-        caught instanceof Error ? caught.message : "Could not check the Camera Node right now.",
+        userFacingErrorMessage(caught, "Could not check the Camera Node right now."),
       );
     } finally {
       setIsCheckingHardwareHealth(false);
@@ -239,7 +239,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       ));
     } catch (caught) {
       setPreview(null);
-      setError(caught instanceof Error ? caught.message : "Camera configuration could not be previewed.");
+      setError(userFacingErrorMessage(caught, "Camera configuration could not be previewed."));
     } finally {
       setIsPreviewing(false);
     }
@@ -257,7 +257,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setSelectedNodeCameraId(initialCamera);
       setPairingCode("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be completed.");
+      setError(userFacingErrorMessage(caught, "Camera Node pairing could not be completed."));
     } finally {
       setIsPairingNode(false);
     }
@@ -273,7 +273,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setSelectedNodeCameraId("");
       setNodePairingNeedsRenewal(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "This pairing attempt could not be canceled right now.");
+      setError(userFacingErrorMessage(caught, "This pairing attempt could not be canceled right now."));
     } finally {
       setIsCancelingNodePairing(false);
     }
@@ -291,7 +291,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       await onSaved();
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be revoked.");
+      setError(userFacingErrorMessage(caught, "Camera Node pairing could not be revoked."));
     } finally {
       setIsRevokingNode(false);
     }
@@ -321,7 +321,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       await onSaved();
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Camera configuration could not be saved.");
+      setError(userFacingErrorMessage(caught, "Camera configuration could not be saved."));
     } finally {
       setIsSaving(false);
     }

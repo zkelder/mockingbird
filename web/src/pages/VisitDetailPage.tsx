@@ -41,6 +41,7 @@ import {
   formatTimeOfDay,
   formatWeatherLine,
   noDetectionRecordsMessage,
+  userFacingErrorMessage,
 } from "../utils";
 
 interface VisitDetailPageProps {
@@ -165,7 +166,7 @@ export function VisitDetailPage({
         nextDetail.visit.subject_label,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load visit detail.");
+      setError(userFacingErrorMessage(caught, "Could not load visit detail."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -184,7 +185,7 @@ export function VisitDetailPage({
       setSpeciesSuggestions(response.species_suggestions);
     } catch (caught) {
       setSpeciesSuggestionError(
-        caught instanceof Error ? caught.message : "Could not load species suggestions.",
+        userFacingErrorMessage(caught, "Could not load species suggestions."),
       );
     } finally {
       if (showLoading) {
@@ -200,7 +201,7 @@ export function VisitDetailPage({
       setIdentificationAssistant(await apiClient.getVisitIdentificationAssistant(visitId));
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Could not check Identification Assistant availability.",
+        userFacingErrorMessage(caught, "Could not check Identification Assistant availability."),
       );
     } finally {
       setIsLoadingIdentificationAssistant(false);
@@ -264,16 +265,16 @@ export function VisitDetailPage({
 
   async function addTag(tag: VisitTagSummary) {
     try { await apiClient.addVisitTag(tag.id, visitId, { expected_state_token: tag.state_token, idempotency_key: newReviewRequestKey("visit-tag-add") }); setTagMessage(`Added ${tag.name}.`); await refreshTags(); }
-    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not add this tag."); }
+    catch (caught) { setTagMessage(userFacingErrorMessage(caught, "Could not add this tag.")); }
   }
   async function removeTag(tag: VisitTagSummary) {
     try { await apiClient.removeVisitTag(tag.id, visitId, { expected_state_token: tag.state_token, idempotency_key: newReviewRequestKey("visit-tag-remove") }); setTagMessage(`Removed ${tag.name}.`); await refreshTags(); }
-    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not remove this tag."); }
+    catch (caught) { setTagMessage(userFacingErrorMessage(caught, "Could not remove this tag.")); }
   }
   async function createAndAddTag() {
     if (!newTagName.trim()) { setTagMessage("Name the new tag first."); return; }
     try { const tag = await apiClient.createVisitTag({ name: newTagName, idempotency_key: newReviewRequestKey("visit-tag-create") }); setNewTagName(""); await addTag(tag); }
-    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not create this tag."); }
+    catch (caught) { setTagMessage(userFacingErrorMessage(caught, "Could not create this tag.")); }
   }
 
   async function addToCollection(collection: VisitCollectionSummary) {
@@ -285,7 +286,7 @@ export function VisitDetailPage({
       });
       setCollectionMessage(response.result.status === "updated" ? `Added to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
       await refreshCollections();
-    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+    } catch (caught) { setCollectionMessage(userFacingErrorMessage(caught, "Could not add this Visit to the Collection.")); }
   }
 
   async function removeFromCollection(collection: VisitCollectionSummary) {
@@ -297,7 +298,7 @@ export function VisitDetailPage({
       });
       setCollectionMessage(`Removed from ${collection.name}.`);
       await refreshCollections();
-    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not remove this Visit from the Collection."); }
+    } catch (caught) { setCollectionMessage(userFacingErrorMessage(caught, "Could not remove this Visit from the Collection.")); }
   }
 
   async function createAndAddCollection() {
@@ -307,7 +308,7 @@ export function VisitDetailPage({
       const created = await apiClient.createVisitCollection({ name, idempotency_key: newReviewRequestKey("visit-collection-create") });
       setNewCollectionName("");
       await addToCollection(created);
-    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not create this Collection."); }
+    } catch (caught) { setCollectionMessage(userFacingErrorMessage(caught, "Could not create this Collection.")); }
   }
 
   async function saveOrganization(update: { is_favorite?: boolean; note?: string }) {
@@ -319,7 +320,7 @@ export function VisitDetailPage({
       setOrganization(await apiClient.updateVisitOrganization(visitId, { ...update, expected_state_token: organization.state_token, idempotency_key }));
       setOrganizationMessage("Observation notes saved.");
     } catch (caught) {
-      setOrganizationMessage(caught instanceof Error ? caught.message : "Could not save observation notes.");
+      setOrganizationMessage(userFacingErrorMessage(caught, "Could not save observation notes."));
     } finally { setIsSavingOrganization(false); }
   }
 
@@ -337,7 +338,7 @@ export function VisitDetailPage({
       } catch (caught) {
         if (isMounted) {
           setSpeciesSuggestionError(
-            caught instanceof Error ? caught.message : "Could not load species suggestions.",
+            userFacingErrorMessage(caught, "Could not load species suggestions."),
           );
         }
       } finally {
@@ -365,7 +366,7 @@ export function VisitDetailPage({
         }
       } catch (caught) {
         if (isMounted) {
-          setMessage(caught instanceof Error ? caught.message : "Could not load taxonomy labels.");
+          setMessage(userFacingErrorMessage(caught, "Could not load taxonomy labels."));
         }
       }
     }
@@ -416,7 +417,7 @@ export function VisitDetailPage({
       setMessage("Suggestion dismissed as evidence. No review truth was created.");
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Suggestion could not be dismissed.",
+        userFacingErrorMessage(caught, "Suggestion could not be dismissed."),
       );
     }
   }
@@ -434,7 +435,7 @@ export function VisitDetailPage({
       await loadSpeciesSuggestions({ showLoading: false });
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Identification Assistant could not analyze saved evidence.",
+        userFacingErrorMessage(caught, "Identification Assistant could not analyze saved evidence."),
       );
     } finally {
       setIsRunningIdentificationAssistant(false);
@@ -474,7 +475,7 @@ export function VisitDetailPage({
       await loadSpeciesSuggestions({ showLoading: false });
     } catch (caught) {
       setSpeciesSuggestionError(
-        caught instanceof Error ? caught.message : "Mock suggestion could not be created.",
+        userFacingErrorMessage(caught, "Mock suggestion could not be created."),
       );
     } finally {
       setIsCreatingMockSuggestion(false);
@@ -538,7 +539,7 @@ export function VisitDetailPage({
       await loadSpeciesSuggestions({ showLoading: false });
       await onCorrectionSaved();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
+      setMessage(userFacingErrorMessage(caught, "Correction could not be saved."));
     } finally {
       setIsSaving(false);
     }
@@ -596,9 +597,7 @@ export function VisitDetailPage({
       await onCorrectionSaved();
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "The revised identification could not be saved.",
+        userFacingErrorMessage(caught, "The revised identification could not be saved."),
       );
     } finally {
       setIsSaving(false);
@@ -634,7 +633,7 @@ export function VisitDetailPage({
       await loadDetail({ showLoading: false });
       await onCorrectionSaved();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "The Visit could not be reopened.");
+      setMessage(userFacingErrorMessage(caught, "The Visit could not be reopened."));
     } finally {
       setIsReopening(false);
     }
@@ -795,7 +794,7 @@ export function VisitDetailPage({
       const response = await apiClient.promoteVisitCropHistory(visitId, mediaAssetId);
       await refreshCropEvidence(response.message);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not restore that crop.");
+      setMessage(userFacingErrorMessage(caught, "Could not restore that crop."));
     }
   }
 
@@ -2169,7 +2168,7 @@ function VisitCurationPanel({
       await onReload();
       await onCurationChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save Visit evidence.");
+      setError(userFacingErrorMessage(caught, "Could not save Visit evidence."));
     } finally {
       setIsSaving(false);
     }
@@ -2193,7 +2192,7 @@ function VisitCurationPanel({
         implication: result.review_implication,
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not preview the split.");
+      setError(userFacingErrorMessage(caught, "Could not preview the split."));
     } finally {
       setIsSaving(false);
     }
@@ -2218,7 +2217,7 @@ function VisitCurationPanel({
       await onCurationChanged();
       onOpenVisit(result.resulting_visits[0].id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not split this Visit.");
+      setError(userFacingErrorMessage(caught, "Could not split this Visit."));
     } finally {
       setIsSaving(false);
     }
@@ -2239,7 +2238,7 @@ function VisitCurationPanel({
       setSelectedMergeIds([]);
       setMergePreview(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load nearby Visits.");
+      setError(userFacingErrorMessage(caught, "Could not load nearby Visits."));
     } finally {
       setIsLoadingCandidates(false);
     }
@@ -2263,7 +2262,7 @@ function VisitCurationPanel({
         implication: result.review_implication,
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "These Visits cannot be merged.");
+      setError(userFacingErrorMessage(caught, "These Visits cannot be merged."));
     } finally {
       setIsSaving(false);
     }
@@ -2288,7 +2287,7 @@ function VisitCurationPanel({
       await onCurationChanged();
       onOpenVisit(result.visit.id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not merge these Visits.");
+      setError(userFacingErrorMessage(caught, "Could not merge these Visits."));
     } finally {
       setIsSaving(false);
     }
@@ -2313,7 +2312,7 @@ function VisitCurationPanel({
       await onReload();
       await onCurationChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not move this Visit to that Zone.");
+      setError(userFacingErrorMessage(caught, "Could not move this Visit to that Zone."));
     } finally {
       setIsSaving(false);
     }
@@ -2344,12 +2343,17 @@ function VisitCurationPanel({
   }
 
   return (
-    <section className="panel">
+    // Everyday UX & Accessibility Closure v1: split / merge / re-zone / evidence
+    // editing is structural housekeeping, not the reviewer's primary job (the
+    // species review below it is). Collapsed by default so the review form
+    // is not pushed down the page; one click opens everything unchanged.
+    <details className="panel visit-curation-details stream-secondary-details">
+      <summary className="source-setup-summary">
+        <h2>Visit curation</h2>
+        <span>Split, merge, re-zone, or edit evidence. Structural edits organize evidence; they do not create species truth.</span>
+      </summary>
+      <div className="stream-secondary-details-body">
       <div className="section-heading">
-        <div>
-          <h2>Visit curation</h2>
-          <span className="meta-text">Structural edits organize evidence; they do not create species truth.</span>
-        </div>
         <EvidenceBadge label="Review before truth" tone="evidence" />
       </div>
       {error ? <div className="error-panel compact-error">{error}</div> : null}
@@ -2481,7 +2485,8 @@ function VisitCurationPanel({
         </section>
       ) : null}
       <CurationHistory entries={detail.curation_history} />
-    </section>
+      </div>
+    </details>
   );
 }
 

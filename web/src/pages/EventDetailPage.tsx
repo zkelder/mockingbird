@@ -13,7 +13,7 @@ import {
   isBirdReviewLabel,
   isUnidentifiedWildlifeLabel,
 } from "../components/taxonomy";
-import { formatCaptureDateTime, formatDateTime, formatLabel, noDetectionRecordsMessage } from "../utils";
+import { formatCaptureDateTime, formatDateTime, formatLabel, noDetectionRecordsMessage, userFacingErrorMessage } from "../utils";
 
 interface EventDetailPageProps {
   eventId: string;
@@ -65,7 +65,7 @@ export function EventDetailPage({
         }
       } catch (caught) {
         if (isMounted) {
-          setError(caught instanceof Error ? caught.message : "Could not load event detail.");
+          setError(userFacingErrorMessage(caught, "Could not load event detail."));
         }
       } finally {
         if (isMounted) {

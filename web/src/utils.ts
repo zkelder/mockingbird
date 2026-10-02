@@ -389,6 +389,35 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, action: s
   });
 }
 
+// Everyday UX & Accessibility Closure v1: a failure caught in a page handler
+// is shown to the person using MockingBird, so it must read as a product
+// message. `ApiError` (and page/`withTimeout`-authored `Error`s) already carry
+// human-written text and pass through. A built-in JavaScript runtime error --
+// a response body that was not valid JSON ("Unexpected token '<'"), or a
+// "Cannot read properties of undefined" slip -- is developer language that
+// tells a person nothing actionable, so the page's own fallback is shown
+// instead. The raw error still goes to the console for diagnosis; nothing is
+// swallowed.
+const DEVELOPER_ERROR_NAMES = new Set([
+  "TypeError",
+  "SyntaxError",
+  "RangeError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+]);
+
+export function userFacingErrorMessage(caught: unknown, fallback: string): string {
+  if (!(caught instanceof Error)) {
+    return fallback;
+  }
+  if (DEVELOPER_ERROR_NAMES.has(caught.name)) {
+    console.error(caught);
+    return fallback;
+  }
+  return caught.message.trim() || fallback;
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) {
     return `${value} B`;

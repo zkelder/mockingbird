@@ -12,7 +12,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 const reviewOptions: Array<{ value: ActivityLibraryReviewFilter; label: string }> = [
   { value: "all", label: "All outcomes" },
@@ -72,7 +72,7 @@ export function CollectionsPage({
       setCollections(await apiClient.getVisitCollections());
       setLoaded(true);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not refresh Collections. Your current view was kept.");
+      setMessage(userFacingErrorMessage(caught, "Could not refresh Collections. Your current view was kept."));
     }
   };
 
@@ -90,7 +90,7 @@ export function CollectionsPage({
     void apiClient.getVisitCollection(collectionId).then((next) => {
       if (active) setDetail(next);
     }).catch((caught) => {
-      if (active) { setDetail(null); setMessage(caught instanceof Error ? caught.message : "This Collection is unavailable."); }
+      if (active) { setDetail(null); setMessage(userFacingErrorMessage(caught, "This Collection is unavailable.")); }
     });
     return () => { active = false; };
   }, [collectionId]);
@@ -104,7 +104,7 @@ export function CollectionsPage({
       setVisits(result.visits);
       setHasMore(result.has_more);
     }).catch((caught) => {
-      if (active) setMessage(caught instanceof Error ? caught.message : "Could not refresh this Collection. Your previous results were kept.");
+      if (active) setMessage(userFacingErrorMessage(caught, "Could not refresh this Collection. Your previous results were kept."));
     }).finally(() => { if (active) setIsLoadingVisits(false); });
     return () => { active = false; };
   }, [collectionId, detail?.archived_at, filters, offset]);
@@ -132,7 +132,7 @@ export function CollectionsPage({
       }
       setName(""); setDescription(""); setEditing(null);
       await refreshCollections();
-    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not save this Collection."); }
+    } catch (caught) { setMessage(userFacingErrorMessage(caught, "Could not save this Collection.")); }
   }
 
   async function archiveCollection(collection: VisitCollectionSummary) {
@@ -142,7 +142,7 @@ export function CollectionsPage({
       setMessage("Collection archived. Its memberships remain historical context only.");
       await refreshCollections();
       if (collectionId === collection.id) onOpenCollection();
-    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not archive this Collection."); }
+    } catch (caught) { setMessage(userFacingErrorMessage(caught, "Could not archive this Collection.")); }
   }
 
   function editCollection(collection: VisitCollectionSummary) {

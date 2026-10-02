@@ -18,7 +18,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets, userFacingErrorMessage } from "../utils";
 
 type MotionEvidenceFilter = "all" | MotionEvidenceStatus;
 
@@ -299,7 +299,7 @@ export function MotionEvidencePage({
             : response.motion_evidence[0]?.id ?? null,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load Motion Evidence.");
+      setError(userFacingErrorMessage(caught, "Could not load Motion Evidence."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -368,7 +368,7 @@ export function MotionEvidencePage({
       bestFrameIndex = parseOptionalFrameIndex(manualBestFrameIndex, "Best frame index");
       scoringConfig = parseScoringConfig(manualScoringConfig);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Manual evidence fields are invalid.");
+      setError(userFacingErrorMessage(caught, "Manual evidence fields are invalid."));
       return;
     }
 
@@ -402,7 +402,7 @@ export function MotionEvidencePage({
       await loadEvidence({ showLoading: false, selectEvidenceId: created.id });
       await onEvidenceChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Manual Motion Evidence could not be created.");
+      setError(userFacingErrorMessage(caught, "Manual Motion Evidence could not be created."));
     } finally {
       setIsCreating(false);
     }
@@ -455,7 +455,7 @@ export function MotionEvidencePage({
         notes: sampleNotes.trim() || undefined,
       };
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sampled frame fields are invalid.");
+      setError(userFacingErrorMessage(caught, "Sampled frame fields are invalid."));
       return;
     }
 
@@ -481,7 +481,7 @@ export function MotionEvidencePage({
         );
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sampled frames could not be evaluated.");
+      setError(userFacingErrorMessage(caught, "Sampled frames could not be evaluated."));
     } finally {
       setIsEvaluatingSample(false);
     }
@@ -500,7 +500,7 @@ export function MotionEvidencePage({
       await loadEvidence({ showLoading: false });
       await onEvidenceChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Motion Evidence could not be ignored.");
+      setError(userFacingErrorMessage(caught, "Motion Evidence could not be ignored."));
     } finally {
       setActionId(null);
     }
@@ -543,7 +543,7 @@ export function MotionEvidencePage({
       await loadEvidence({ showLoading: false, selectEvidenceId: updated.id });
       await onEvidenceChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Media could not be attached.");
+      setError(userFacingErrorMessage(caught, "Media could not be attached."));
     } finally {
       setActionId(null);
     }
@@ -576,7 +576,7 @@ export function MotionEvidencePage({
       await loadEvidence({ showLoading: false });
       await onEvidenceChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Motion Evidence could not be promoted.");
+      setError(userFacingErrorMessage(caught, "Motion Evidence could not be promoted."));
     } finally {
       setActionId(null);
     }
@@ -645,7 +645,7 @@ export function MotionEvidencePage({
       });
       await onEvidenceChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Bulk Motion Evidence action failed.");
+      setError(userFacingErrorMessage(caught, "Bulk Motion Evidence action failed."));
     } finally {
       setActionId(null);
     }

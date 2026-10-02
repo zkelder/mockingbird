@@ -14,7 +14,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatCaptureDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 const MAX_SELECTION = 50;
 
@@ -251,7 +251,7 @@ export function ActivityLibraryPage({
       })
       .catch((caught) => {
         if (active) {
-          setError(caught instanceof Error ? caught.message : "Could not refresh activity.");
+          setError(userFacingErrorMessage(caught, "Could not refresh activity."));
         }
       })
       .finally(() => {
@@ -312,7 +312,7 @@ export function ActivityLibraryPage({
       setMessage(`Saved “${name}”.`);
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not save this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not save this view."));
     }
   }
 
@@ -323,7 +323,7 @@ export function ActivityLibraryPage({
       await apiClient.updateActivityLibrarySavedView(view.id, { name });
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not rename this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not rename this view."));
     }
   }
 
@@ -333,7 +333,7 @@ export function ActivityLibraryPage({
       await apiClient.deleteActivityLibrarySavedView(view.id);
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not delete this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not delete this view."));
     }
   }
 
@@ -355,7 +355,7 @@ export function ActivityLibraryPage({
         setMessage("No selected Visits had current reviewed truth to export.");
       }
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not create the reviewed export.");
+      setMessage(userFacingErrorMessage(caught, "Could not create the reviewed export."));
     }
   }
 
@@ -376,7 +376,7 @@ export function ActivityLibraryPage({
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not update the selected Visits.");
+      setMessage(userFacingErrorMessage(caught, "Could not update the selected Visits."));
     } finally {
       setIsUpdatingOrganization(false);
     }
@@ -400,7 +400,7 @@ export function ActivityLibraryPage({
       setCollections((current) => current.map((item) => item.id === result.collection.id ? result.collection : item));
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not update Collection membership."); }
+    } catch (caught) { setMessage(userFacingErrorMessage(caught, "Could not update Collection membership.")); }
   }
 
   async function bulkUpdateTag(action: "add" | "remove") {
@@ -432,7 +432,7 @@ export function ActivityLibraryPage({
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not update tags.");
+      setMessage(userFacingErrorMessage(caught, "Could not update tags."));
     }
   }
 
@@ -446,7 +446,7 @@ export function ActivityLibraryPage({
       await refreshTags();
       setNewTagName("");
       setTagManagementMessage(`Created ${created.name}.`);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not create this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not create this tag.")); }
   }
 
   async function renameTag(tag: VisitTagSummary) {
@@ -461,7 +461,7 @@ export function ActivityLibraryPage({
       await refreshTags();
       setTagManagementMessage(`Renamed tag to ${updated.name}.`);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not rename this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not rename this tag.")); }
   }
 
   async function archiveTag(tag: VisitTagSummary) {
@@ -476,7 +476,7 @@ export function ActivityLibraryPage({
       if (filters.tag_id === tag.id) commitFilters({ ...filters, tag_id: null });
       setTagManagementMessage(`Archived ${tag.name}. Existing Visits, media, notes, favorites, and Collections are unchanged.`);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not archive this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not archive this tag.")); }
   }
 
   const selectedStreamMissing = Boolean(

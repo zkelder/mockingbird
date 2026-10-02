@@ -38,7 +38,7 @@ import { ObservationControlPanel } from "../components/ObservationControlPanel";
 import { StatusPill } from "../components/StatusPill";
 import { StreamPanel } from "../components/StreamPanel";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 // This Stream's compact "Review Queue" side panel is a glance-only preview
 // (see the "queue-mini" boxes below) next to a button to the real, full
@@ -846,7 +846,7 @@ export function StreamDetailPage({
       return status;
     } catch (caught) {
       setLiveSessionError(
-        caught instanceof Error ? caught.message : "Could not read camera session status.",
+        userFacingErrorMessage(caught, "Could not read camera session status."),
       );
       return null;
     }
@@ -934,9 +934,7 @@ export function StreamDetailPage({
       );
     } catch (caught) {
       setLiveMotionError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not update auto-create monitoring settings.",
+        userFacingErrorMessage(caught, "Could not update auto-create monitoring settings."),
       );
     } finally {
       setIsUpdatingAutoCreate(false);
@@ -964,7 +962,7 @@ export function StreamDetailPage({
         setPendingAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
       }
     } catch (caught) {
-      setLiveMotionError(caught instanceof Error ? caught.message : String(caught));
+      setLiveMotionError(userFacingErrorMessage(caught, "Could not update automatic identification."));
     } finally {
       setIsUpdatingAutoIdentify(false);
     }
@@ -1095,7 +1093,7 @@ export function StreamDetailPage({
         }
       } catch (caught) {
         if (isMounted) {
-          setError(caught instanceof Error ? caught.message : "Could not load stream.");
+          setError(userFacingErrorMessage(caught, "Could not load stream."));
         }
       } finally {
         if (isMounted) {
@@ -1125,7 +1123,7 @@ export function StreamDetailPage({
       setCandidatePackDraftId(selection.effective_pack.id);
     } catch (caught) {
       setCandidatePackError(
-        caught instanceof Error ? caught.message : "Could not update the Stream candidate pack.",
+        userFacingErrorMessage(caught, "Could not update the Stream candidate pack."),
       );
     } finally {
       setIsSavingCandidatePack(false);
@@ -1167,7 +1165,7 @@ export function StreamDetailPage({
       } catch (caught) {
         if (isCurrent) {
           setRecentVisitsError(
-            caught instanceof Error ? caught.message : "Could not load recent Visits.",
+            userFacingErrorMessage(caught, "Could not load recent Visits."),
           );
         }
       } finally {
@@ -1204,7 +1202,7 @@ export function StreamDetailPage({
       } catch (caught) {
         if (isMounted) {
           setSavedImageError(
-            caught instanceof Error ? caught.message : "Could not load saved images.",
+            userFacingErrorMessage(caught, "Could not load saved images."),
           );
         }
       } finally {
@@ -1380,7 +1378,7 @@ export function StreamDetailPage({
       );
     } catch (caught) {
       setCameraTuningError(
-        caught instanceof Error ? caught.message : "Could not save camera tuning.",
+        userFacingErrorMessage(caught, "Could not save camera tuning."),
       );
     } finally {
       setIsSavingCameraTuning(false);
@@ -1415,7 +1413,7 @@ export function StreamDetailPage({
       }
     } catch (caught) {
       setCameraTuningError(
-        caught instanceof Error ? caught.message : "Could not open camera controls.",
+        userFacingErrorMessage(caught, "Could not open camera controls."),
       );
     } finally {
       setIsOpeningCameraControls(false);
@@ -1440,7 +1438,7 @@ export function StreamDetailPage({
       }
     } catch (caught) {
       setLiveSessionError(
-        caught instanceof Error ? caught.message : "Could not start camera session.",
+        userFacingErrorMessage(caught, "Could not start camera session."),
       );
     } finally {
       setIsStartingLiveSession(false);
@@ -1468,7 +1466,7 @@ export function StreamDetailPage({
       }
     } catch (caught) {
       setLiveSessionError(
-        caught instanceof Error ? caught.message : "Could not stop camera session.",
+        userFacingErrorMessage(caught, "Could not stop camera session."),
       );
     } finally {
       setIsStoppingLiveSession(false);
@@ -1591,7 +1589,7 @@ export function StreamDetailPage({
     } catch (caught) {
       setLiveMonitorState("failed");
       setLiveMotionError(
-        caught instanceof Error ? caught.message : "Could not monitor live motion.",
+        userFacingErrorMessage(caught, "Could not monitor live motion."),
       );
     } finally {
       liveMotionInFlightRef.current = false;
@@ -1647,7 +1645,7 @@ export function StreamDetailPage({
       await refreshLiveCameraSessionStatus(detail);
     } catch (caught) {
       setLiveMotionError(
-        caught instanceof Error ? caught.message : "Could not create review activity.",
+        userFacingErrorMessage(caught, "Could not create review activity."),
       );
     } finally {
       setIsCreatingLiveReviewActivity(false);
@@ -1695,7 +1693,7 @@ export function StreamDetailPage({
         );
       } catch (caught) {
         setLiveMotionError(
-          caught instanceof Error ? caught.message : "Could not stop live monitoring.",
+          userFacingErrorMessage(caught, "Could not stop live monitoring."),
         );
       }
     }
@@ -1714,7 +1712,7 @@ export function StreamDetailPage({
       setSavedImageTotalCount(savedImages.totalCount);
       return savedImages.items;
     } catch (caught) {
-      setSavedImageError(caught instanceof Error ? caught.message : "Could not refresh saved images.");
+      setSavedImageError(userFacingErrorMessage(caught, "Could not refresh saved images."));
       return savedImageAssets;
     }
   }
@@ -1744,7 +1742,7 @@ export function StreamDetailPage({
         await refreshSavedImages();
       }
     } catch (caught) {
-      setCaptureError(caught instanceof Error ? caught.message : "Could not capture frame.");
+      setCaptureError(userFacingErrorMessage(caught, "Could not capture frame."));
     } finally {
       setIsCapturingFrame(false);
     }
@@ -1780,7 +1778,7 @@ export function StreamDetailPage({
       });
       setMotionResult(result);
     } catch (caught) {
-      setMotionError(caught instanceof Error ? caught.message : "Could not check motion.");
+      setMotionError(userFacingErrorMessage(caught, "Could not check motion."));
     } finally {
       if (createReviewActivity) {
         setIsCreatingReviewActivity(false);
@@ -1814,7 +1812,7 @@ export function StreamDetailPage({
       setSelectedZoneId(result.zone.id);
       setZoneMessage("Zone saved.");
     } catch (caught) {
-      setZoneError(caught instanceof Error ? caught.message : "Could not save zone.");
+      setZoneError(userFacingErrorMessage(caught, "Could not save zone."));
     } finally {
       setIsSavingZone(false);
     }
@@ -1856,7 +1854,7 @@ export function StreamDetailPage({
       setZoneMessage("Monitoring settings saved. They apply to future activity sessions.");
     } catch (caught) {
       setZoneError(
-        caught instanceof Error ? caught.message : "Could not save Zone monitoring settings.",
+        userFacingErrorMessage(caught, "Could not save Zone monitoring settings."),
       );
     } finally {
       setIsSavingZoneMonitoring(false);
@@ -1877,7 +1875,7 @@ export function StreamDetailPage({
       setZoneMessage("Recommended monitoring settings restored for future activity sessions.");
     } catch (caught) {
       setZoneError(
-        caught instanceof Error ? caught.message : "Could not restore recommended settings.",
+        userFacingErrorMessage(caught, "Could not restore recommended settings."),
       );
     } finally {
       setIsSavingZoneMonitoring(false);
@@ -1914,7 +1912,7 @@ export function StreamDetailPage({
       }
       setZoneMessage(`${deletedZone.name} removed.`);
     } catch (caught) {
-      setZoneError(caught instanceof Error ? caught.message : "Could not remove Zone.");
+      setZoneError(userFacingErrorMessage(caught, "Could not remove Zone."));
     } finally {
       setIsSavingZone(false);
     }
@@ -2075,7 +2073,7 @@ export function StreamDetailPage({
       setNewZoneType("feeder");
       setZoneMessage("Zone created.");
     } catch (caught) {
-      setZoneError(caught instanceof Error ? caught.message : "Could not create zone.");
+      setZoneError(userFacingErrorMessage(caught, "Could not create zone."));
     } finally {
       setIsSavingZone(false);
     }
@@ -2094,7 +2092,7 @@ export function StreamDetailPage({
       setSelectedRecentVisitDetail(visitDetail);
     } catch (caught) {
       setRecentVisitDetailError(
-        caught instanceof Error ? caught.message : "Could not load Visit evidence.",
+        userFacingErrorMessage(caught, "Could not load Visit evidence."),
       );
     } finally {
       setIsLoadingRecentVisitDetail(false);
@@ -4724,21 +4722,18 @@ export function StreamDetailPage({
                       >
                         Review in Queue
                       </button>
-                    ) : (
-                      <button
-                        className="text-action"
-                        onClick={() => onOpenVisit(visit.id)}
-                        type="button"
-                      >
-                        Open Visit detail
-                      </button>
-                    )}
+                    ) : null}
+                    {/* Everyday UX & Accessibility Closure v1: a second
+                        "Merge nearby" button here ran the identical handler
+                        as "Open Visit detail" -- merging lives in the Visit
+                        page's own curation panel, so one honest link
+                        replaces the duplicate, mislabeled technical one. */}
                     <button
                       className="text-action"
                       onClick={() => onOpenVisit(visit.id)}
                       type="button"
                     >
-                      Merge nearby
+                      Open Visit detail
                     </button>
                   </div>
                 </div>

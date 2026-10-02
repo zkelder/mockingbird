@@ -37,8 +37,19 @@ evidence-honest stored-acoustic soundscape analytics already exist. The
 surviving queue is split into fourteen dependency-ordered milestones in
 [pre-1.0-software-gap-audit-contract-lock-v1-report.md](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
 The first bounded milestone, **Attention Integrity & Health Reliability v1**,
-is authorized in §3. This documentation-only audit changed no product code,
-schema, version, package, artifact, or accepted capability.
+was authorized by that audit and is now **ACCEPTED, classification A** (see
+§3). This documentation-only audit changed no product code, schema, version,
+package, artifact, or accepted capability.
+
+**Accepted 2026-10-01 (scheduler reconciliation, with Everyday UX &
+Accessibility Closure v1):** *Attention Integrity & Health Reliability v1* is
+accepted at classification **A**: HEAD `c146eff`, schema `v62`, version
+`0.1.0`. Its recorded validation is Tier 2 affected set 1671 passed, Core
+6278 passed / 0 failed, clean production build, complete default browser
+suite 203/203 (not re-run by this reconciliation). The second queued
+milestone, *Everyday UX & Accessibility Closure v1*, was then authorized,
+executed, and closed -- see §3. Current authorization is **NONE -- GLOBAL
+RECONCILIATION REQUIRED**.
 
 **Corrected 2026-09-06 by Global Remaining Product-Development &
 Release-Queue Reconciliation v1** (see
@@ -996,8 +1007,10 @@ Contract Lock v1:** the accepted implementation/artifact facts below remain the
 frozen internal baseline. The audit removed already-delivered remote-transport
 and soundscape-analytics work, locked the surviving dependency-ordered queue,
 and authorized **Attention Integrity & Health Reliability v1** only. Current
-phase: **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**. Version/schema remain
-`0.1.0` / `v61` until implementation changes them; see §3 and §8.
+phase: **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**. Version/schema were
+`0.1.0` / `v61` at that audit; accepted *Attention Integrity & Health
+Reliability v1* (HEAD `c146eff`) moved the schema to `v62`, version still
+`0.1.0`; see §3 and §8.
 
 **Staleness correction, 2026-09-29, by Final Product Release Scope
 Reconciliation v1:** the immediately following acceptance record remains
@@ -4125,7 +4138,26 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: Attention Integrity & Health Reliability v1.** The owner
+**Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last
+authorized milestone, *Everyday UX & Accessibility Closure v1*, is executed
+and closed below; its acceptance review and the next sequencing decision
+belong to ChatGPT. Nothing in the locked queue is authorized.
+
+**Closure recorded, 2026-10-01, by Everyday UX & Accessibility Closure v1**
+(see [everyday-ux-accessibility-closure-v1-report.md](everyday-ux-accessibility-closure-v1-report.md)).
+**Status: EXECUTED -- proposed classification A, pending ChatGPT acceptance
+review. Acceptance is not recorded here.** Starting HEAD `c146eff`, schema
+`v62` unchanged (no migration, no backend change), version `0.1.0`
+unchanged. Closed: a keyboard-operable Zone area editor on guided camera
+setup; progressive disclosure on the Visit (curation), Stream (duplicate
+technical action) and Local Data (demo reset, remote-access reference)
+pages; one central user-safe error-message seam for 207 page-level catch
+sites plus the API client's non-JSON-success path; 38 provably unreferenced
+Bird Log CSS selectors (55 entries incl. responsive rules) removed. Full browser suite 209/209. Core was not required: no backend or runtime
+behavior changed.
+
+*Previous authorization, now executed and accepted:*
+**Attention Integrity & Health Reliability v1.** The owner
 authorized the Pre-1.0 Software Gap Audit & Contract Lock on 2026-09-29; that
 audit is complete and its first bounded implementation milestone is now
 authorized. The governing task packet and acceptance contract are in
@@ -4144,8 +4176,8 @@ and release. No later milestone in the locked queue is authorized.
 **Closure recorded, 2026-09-30, by Attention Integrity & Health Reliability
 v1** (see
 [attention-integrity-health-reliability-v1-report.md](attention-integrity-health-reliability-v1-report.md)).
-**Status: EXECUTED -- proposed classification A, pending ChatGPT acceptance
-review. Acceptance is not recorded here.**
+**Status: ACCEPTED -- classification A (recorded 2026-10-01 by
+ChatGPT global sequencing; accepted HEAD `c146eff`, schema `v62`).**
 
 - **Starting point:** `6acdeb1`. One local implementation commit, not
   pushed. Schema `v61` → `v62`. Version `0.1.0` unchanged.
@@ -4169,9 +4201,9 @@ review. Acceptance is not recorded here.**
   sustained alert appears about 30 minutes after the problem is first
   observed at the unchanged cadence.
 
-**Authorization after Attention Integrity & Health Reliability v1: pending
-ChatGPT acceptance review.** No later milestone in the locked queue is
-authorized by this record.
+**Authorization after Attention Integrity & Health Reliability v1:** the
+acceptance above authorized only *Everyday UX & Accessibility Closure v1*,
+now executed (see the closure record at the top of this section).
 
 The acceptance entry below remains the accepted internal baseline, not a
 release authorization.
@@ -14096,8 +14128,8 @@ carrier/power acceptance remains external.
 
 **Surviving bounded sequence:**
 
-1. Attention Integrity & Health Reliability v1 -- **authorized in §3**.
-2. Everyday UX & Accessibility Closure v1.
+1. Attention Integrity & Health Reliability v1 -- **ACCEPTED, A**.
+2. Everyday UX & Accessibility Closure v1 -- **EXECUTED, pending acceptance** (§3).
 3. Orphan Media Integrity & Recovery v1.
 4. Research Export & Ecological Workflow Completion v1.
 5. Environmental Sensor Ingestion Foundation v1.
@@ -14111,7 +14143,7 @@ carrier/power acceptance remains external.
 13. Public Product, Deployment & Support Closure v1.
 14. Final 1.0 Hardening & Launch Candidate.
 
-Only item 1 is authorized. Each later item requires acceptance of its
+No item is currently authorized. Each later item requires acceptance of its
 predecessor and an explicit scheduler update; this list is not blanket
 authorization.
 
@@ -15401,8 +15433,8 @@ rather than rewriting accepted history in place.
   found and documented, not fixed -- see the milestone report)
 - **Local Species Prior:** not authorized
 - **Another classifier campaign:** not authorized
-- **LICENSE:** still genuinely absent -- open business/legal decision, not
-  resolved by this or any prior milestone (see Lane P, above)
+- **LICENSE:** *(stale at that checkpoint; corrected 2026-10-01)* MIT was
+  adopted 2026-09-06 and a real root `LICENSE` file exists -- see Lane P
 - **Representative Field Acceptance (attempted 2026-08-25):** Gate C --
   OPEN, insufficient representative evidence; deferred by explicit user
   decision before any live session started (real-authentication/consent
@@ -15444,24 +15476,24 @@ rather than rewriting accepted history in place.
 
 ### Current authorization summary
 
-*(Added 2026-09-29, because the checkpoint above is historical. §3 is the
+*(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **Attention Integrity & Health Reliability v1.** The
-  bounded task packet and acceptance contract are in
-  [Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md#first-authorized-implementation-milestone).
-- **Latest accepted milestone:** Owner-Only Final Release Hardening --
-  Fast Review Queue-End Undo v1, classification A.
+- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.**
+- **Latest accepted milestone:** Attention Integrity & Health Reliability
+  v1, classification A (HEAD `c146eff`, schema `v62`). Latest *executed*
+  milestone, pending acceptance: Everyday UX & Accessibility Closure v1.
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
   `0.1.0` release; first public target `1.0.0`.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
   `c901ac14bce22fe4`) is the accepted internal baseline, not the final
   public candidate. The Camera Node wheel is unchanged at `38dfac47…`.
-  **Schema:** `v61`.
-- **Browser gate:** complete default suite 198/198, plus the onboarding,
-  bounded Review Queue and bounded media configurations.
+  **Schema:** `v62`.
+- **Browser gate:** complete default suite 203/203 at `c146eff` (accepted);
+  Everyday UX & Accessibility Closure v1 then ran 209/209 (203 + 6 new).
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
-- **Next action:** implement and validate Attention Integrity & Health
-  Reliability v1. No later pre-1.0 milestone is authorized.
+- **Next action:** ChatGPT acceptance review of Everyday UX &
+  Accessibility Closure v1 and the next sequencing decision. No later
+  pre-1.0 milestone is authorized.

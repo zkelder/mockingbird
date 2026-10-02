@@ -42,7 +42,7 @@ import {
   isUnknownBirdLabel,
   taxonomyKey,
 } from "../components/taxonomy";
-import { formatCaptureDateTime, formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 type ReviewTriageCategory =
   | "animal_evidence"
@@ -1816,7 +1816,7 @@ export function ReviewQueuePage({
       } catch (caught) {
         if (sequence === queueRequestSequence.current) {
           setQueuePageError(
-            caught instanceof Error ? caught.message : "Review work could not be loaded.",
+            userFacingErrorMessage(caught, "Review work could not be loaded."),
           );
         }
         return null;
@@ -1900,7 +1900,7 @@ export function ReviewQueuePage({
         }
       } catch (caught) {
         if (isMounted) {
-          setMessage(caught instanceof Error ? caught.message : "Could not load taxonomy labels.");
+          setMessage(userFacingErrorMessage(caught, "Could not load taxonomy labels."));
         }
       }
     }
@@ -2126,9 +2126,7 @@ export function ReviewQueuePage({
       setSelectedBulkTargetType(targetType);
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "The eligible review items could not be selected.",
+        userFacingErrorMessage(caught, "The eligible review items could not be selected."),
       );
     }
   }
@@ -2451,7 +2449,7 @@ export function ReviewQueuePage({
             : ""),
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Bulk correction could not be saved.");
+      setMessage(userFacingErrorMessage(caught, "Bulk correction could not be saved."));
     } finally {
       setIsBulkSaving(false);
     }
@@ -2480,7 +2478,7 @@ export function ReviewQueuePage({
           await apiClient.updateSpeciesSuggestionStatus(acceptedSuggestionId, "accepted");
         } catch (caught) {
           const detail =
-            caught instanceof Error ? caught.message : "status update failed";
+            userFacingErrorMessage(caught, "status update failed");
           suggestionStatusWarning =
             ` Suggestion evidence status was not updated (${detail});` +
             " the correction is still saved truth.";
@@ -2525,7 +2523,7 @@ export function ReviewQueuePage({
         } still need review.${suggestionStatusWarning}`,
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
+      setMessage(userFacingErrorMessage(caught, "Correction could not be saved."));
     } finally {
       setSavingId(null);
     }
@@ -2572,7 +2570,7 @@ export function ReviewQueuePage({
       setMessage(message);
     } catch (caught) {
       setMessage(
-        caught instanceof Error ? caught.message : "Identification assist could not run.",
+        userFacingErrorMessage(caught, "Identification assist could not run."),
       );
     } finally {
       setIdentifyingId(null);
@@ -2594,7 +2592,7 @@ export function ReviewQueuePage({
       await refreshQueuePage();
       setMessage("Suggestion rejected as evidence. No review truth was created.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Suggestion could not be rejected.");
+      setMessage(userFacingErrorMessage(caught, "Suggestion could not be rejected."));
     } finally {
       setIdentifyingId(null);
     }
@@ -2619,7 +2617,7 @@ export function ReviewQueuePage({
       await refreshDetectionEvidence();
       setMessage("Suggestion evidence rejected. No review truth was created.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Suggestion evidence could not be rejected.");
+      setMessage(userFacingErrorMessage(caught, "Suggestion evidence could not be rejected."));
     } finally {
       setIdentifyingId(null);
     }
@@ -4179,7 +4177,7 @@ function FastReviewPanel({
       setIsOpen(true);
       setActiveItem(null);
       setMessage(
-        caught instanceof Error ? caught.message : "Fast Review could not be started.",
+        userFacingErrorMessage(caught, "Fast Review could not be started."),
       );
     } finally {
       setIsStartingSession(false);
@@ -4246,7 +4244,7 @@ function FastReviewPanel({
           " in this filtered queue.",
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not move through Fast Review.");
+      setMessage(userFacingErrorMessage(caught, "Could not move through Fast Review."));
     } finally {
       setIsNavigating(false);
     }
@@ -4286,9 +4284,7 @@ function FastReviewPanel({
       await navigate("next", activeItem);
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "Correction could not be saved. This Visit may have changed elsewhere.",
+        userFacingErrorMessage(caught, "Correction could not be saved. This Visit may have changed elsewhere."),
       );
     } finally {
       setIsSaving(false);
@@ -4332,9 +4328,7 @@ function FastReviewPanel({
       setMessage("Correction undone. The Visit is back in its prior review state.");
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "Undo is no longer available because a newer correction replaced it.",
+        userFacingErrorMessage(caught, "Undo is no longer available because a newer correction replaced it."),
       );
     } finally {
       setIsSaving(false);
@@ -4353,7 +4347,7 @@ function FastReviewPanel({
       });
       setLastCorrectionFavorited(true);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not favorite that Visit.");
+      setMessage(userFacingErrorMessage(caught, "Could not favorite that Visit."));
     } finally {
       setIsFavoritingLastCorrection(false);
     }
@@ -4363,13 +4357,13 @@ function FastReviewPanel({
     const tag = availableTags.find((item) => item.id === postCorrectionTagId);
     if (!undoState || !tag) return;
     try { await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag") }); setMessage(`Correction saved; added tag “${tag.name}” independently.`); setPostCorrectionTagId(""); const refreshed = await apiClient.getVisitTags(); setAvailableTags(refreshed); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the tag could not be added."); }
+    catch (caught) { setMessage(userFacingErrorMessage(caught, "Correction was saved, but the tag could not be added.")); }
   }
 
   async function createAndTagLastCorrectedVisit() {
     if (!undoState || !newPostCorrectionTag.trim()) return;
     try { const tag = await apiClient.createVisitTag({ name: newPostCorrectionTag, idempotency_key: createFastReviewKey("fast-review-tag-create") }); setNewPostCorrectionTag(""); setAvailableTags((current) => [...current, tag]); await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag-add") }); setMessage(`Correction saved; created and added tag “${tag.name}” independently.`); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the new tag could not be added."); }
+    catch (caught) { setMessage(userFacingErrorMessage(caught, "Correction was saved, but the new tag could not be added.")); }
   }
 
   useEffect(() => {
@@ -4393,7 +4387,7 @@ function FastReviewPanel({
       .catch((caught: unknown) => {
         if (isMounted) {
           setIdentificationAssistantError(
-            caught instanceof Error ? caught.message : "Could not check Identification Assistant availability.",
+            userFacingErrorMessage(caught, "Could not check Identification Assistant availability."),
           );
         }
       })
@@ -4443,7 +4437,7 @@ function FastReviewPanel({
       }
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Identification Assistant could not analyze saved evidence.",
+        userFacingErrorMessage(caught, "Identification Assistant could not analyze saved evidence."),
       );
     } finally {
       setIsRunningIdentificationAssistant(false);
@@ -4468,7 +4462,7 @@ function FastReviewPanel({
       setMessage("Suggestion dismissed as evidence. No review truth was created.");
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Suggestion could not be dismissed.",
+        userFacingErrorMessage(caught, "Suggestion could not be dismissed."),
       );
     }
   }

@@ -15,7 +15,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatLabel } from "../utils";
+import { formatLabel, userFacingErrorMessage } from "../utils";
 
 /**
  * Remaining Performance P1 Closure v1 (P1-7): how many recently-imported
@@ -205,7 +205,7 @@ export function ManualImportPage({
         if (isMounted) {
           setZones([]);
           setSelectedZoneId("");
-          setError(caught instanceof Error ? caught.message : "Could not load stream zones.");
+          setError(userFacingErrorMessage(caught, "Could not load stream zones."));
         }
       } finally {
         if (isMounted) {
@@ -240,7 +240,7 @@ export function ManualImportPage({
       setMediaAssets(page.items);
       setMediaTotalCount(page.total_count);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load imported media.");
+      setError(userFacingErrorMessage(caught, "Could not load imported media."));
     } finally {
       if (showLoading) {
         setIsLoadingMedia(false);
@@ -306,7 +306,7 @@ export function ManualImportPage({
       await loadMedia({ showLoading: false });
       await onImportComplete();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Media import could not be created.");
+      setError(userFacingErrorMessage(caught, "Media import could not be created."));
     } finally {
       setIsSubmitting(false);
     }
@@ -352,7 +352,7 @@ export function ManualImportPage({
       await onImportComplete();
       return nextDemoResult;
     } catch (caught) {
-      setDemoError(caught instanceof Error ? caught.message : "Demo proposal could not be created.");
+      setDemoError(userFacingErrorMessage(caught, "Demo proposal could not be created."));
       return null;
     } finally {
       setIsCreatingDemoProposal(false);
@@ -384,7 +384,7 @@ export function ManualImportPage({
       await onImportComplete();
       return nextDecisionResult;
     } catch (caught) {
-      setDemoError(caught instanceof Error ? caught.message : "Demo proposal could not be converted.");
+      setDemoError(userFacingErrorMessage(caught, "Demo proposal could not be converted."));
       return null;
     } finally {
       setIsConvertingDemoProposal(false);
@@ -413,7 +413,7 @@ export function ManualImportPage({
       setSelectedStreamId(created.stream.id);
       setMessage("Ready. Choose a photo or video below to add it.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not set up importing. Please try again.");
+      setError(userFacingErrorMessage(caught, "Could not set up importing. Please try again."));
     } finally {
       setIsCreatingImportSource(false);
     }

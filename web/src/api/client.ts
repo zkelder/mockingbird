@@ -437,7 +437,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    // A successful status whose body is not JSON (a proxy/error page, or a
+    // truncated response) used to surface as the raw "Unexpected token '<'".
+    throw new ApiError(
+      "MockingBird sent a response this page could not read. Refresh the page and try again.",
+      response.status,
+    );
+  }
 }
 
 async function requestImage(path: string, payload: unknown): Promise<Blob> {

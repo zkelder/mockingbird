@@ -609,6 +609,64 @@ a.secondary-action {
   bottom: 10px;
 }
 
+.zone-drawing-canvas:focus-visible {
+  outline: 3px solid #1f5c4d;
+  outline-offset: 2px;
+}
+
+.zone-drawing-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #c9d6c4;
+  border-radius: 8px;
+}
+
+.zone-drawing-fields legend {
+  padding: 0 6px;
+  color: #3f5a3d;
+  font-size: 0.9rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.visit-curation-details > summary h2,
+.local-data-secondary > summary h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.visit-curation-details > summary,
+.local-data-secondary > summary {
+  display: grid;
+  gap: 3px;
+}
+
+.visit-curation-details > summary span,
+.local-data-secondary > summary span {
+  color: #526159;
+  font-size: 0.84rem;
+  font-weight: 400;
+}
+
+details > summary:focus-visible {
+  outline: 3px solid #1f5c4d;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .zone-drawing-rectangle {
   position: absolute;
   box-sizing: border-box;
@@ -7388,244 +7446,67 @@ a.secondary-action {
   max-width: 360px;
 }
 
-.bird-log-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
 
-.bird-log-summary-card {
-  display: grid;
-  gap: 6px;
-  border: 1px solid #dce3d8;
-  border-radius: 8px;
-  padding: 14px;
-  background: #ffffff;
-}
 
-.bird-log-summary-card span,
-.bird-log-summary-card small {
-  color: #607067;
-  font-size: 0.88rem;
-  font-weight: 700;
-}
 
-.bird-log-summary-card strong {
-  color: #1f3329;
-  font-size: 1.45rem;
-}
 
-.bird-log-filter-panel {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(180px, 0.45fr));
-  gap: 12px;
-  align-items: end;
-}
 
-.bird-log-filter-panel label {
-  display: grid;
-  gap: 6px;
-  color: #536258;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
 
-.bird-log-filter-panel input,
-.bird-log-filter-panel select {
-  min-height: 40px;
-  border: 1px solid #c8d2c3;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #ffffff;
-  color: #18231d;
-}
 
-.bird-log-group-list,
-.bird-log-group,
-.bird-log-entry-list {
-  display: grid;
-  gap: 14px;
-}
 
-.bird-log-entry {
-  display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
-  min-width: 0;
-  border: 1px solid #dce3d8;
-  border-radius: 8px;
-  padding: 12px;
-  background: #ffffff;
-}
 
-.bird-log-entry.is-false-positive {
-  border-color: #d6ded3;
-  background: #fbfdf8;
-}
 
-.bird-log-entry-body {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
 
-.bird-log-entry-top {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-  min-width: 0;
-}
 
-.bird-log-entry-top > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
 
-.bird-log-entry-top h3,
-.bird-log-entry-top p {
-  margin: 0;
-}
 
-.bird-log-entry-top h3 {
-  color: #1f3329;
-  font-size: 1.12rem;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
 
-.bird-log-entry-top p {
-  color: #536258;
-  font-size: 0.92rem;
-  line-height: 1.4;
-}
 
-.bird-log-media,
-.bird-log-image-placeholder {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-width: 0;
-  border: 1px solid #e1e8dd;
-  border-radius: 8px;
-  padding: 8px;
-  background: #f8fbf5;
-}
 
-.bird-log-thumb {
-  display: grid;
-  min-height: 142px;
-  overflow: hidden;
-  border-radius: 6px;
-  background: #17291f;
-  place-items: center;
-}
 
-.bird-log-thumb img {
-  width: 100%;
-  height: 100%;
-  min-height: 142px;
-  object-fit: cover;
-}
 
-.bird-log-thumb-fallback {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  color: #dce8df;
-  text-align: center;
-}
 
-.bird-log-thumb-fallback span {
-  color: #aec1b5;
-  font-size: 0.78rem;
-  overflow-wrap: anywhere;
-}
 
-.bird-log-media-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
 
-.bird-log-media-facts span {
-  max-width: 100%;
-  border-radius: 999px;
-  padding: 4px 7px;
-  background: #edf2e9;
-  color: #425348;
-  font-size: 0.78rem;
-  font-weight: 800;
-  line-height: 1.2;
-}
 
-.bird-log-media-filename {
-  display: block;
-  flex-basis: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.bird-log-result-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
 
-.bird-log-result-row > div,
-.bird-log-meta-grid > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid #e1e8dd;
-  border-radius: 8px;
-  padding: 8px;
-  background: #f8fbf5;
-}
 
-.bird-log-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
 
-.bird-log-result-row span,
-.bird-log-meta-grid span,
-.bird-log-image-placeholder span {
-  color: #607067;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
 
-.bird-log-result-row strong,
-.bird-log-meta-grid strong {
-  color: #20352a;
-  font-size: 0.9rem;
-  line-height: 1.25;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.bird-log-image-placeholder {
-  min-height: 180px;
-  place-content: center;
-  text-align: center;
-}
 
-.bird-log-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .queue-media-block {
   max-width: 540px;
@@ -8598,8 +8479,6 @@ a.secondary-action {
   }
 
   .metric-grid,
-  .bird-log-summary-grid,
-  .bird-log-filter-panel,
   .case-summary-grid,
   .manifest-summary,
   .manifest-export-form,
@@ -8650,7 +8529,6 @@ a.secondary-action {
   }
 
   .retention-detail-grid,
-  .bird-log-entry,
   .retention-linkage-grid,
   .retention-dry-run-form,
   .retention-dry-run-summary,
@@ -8661,13 +8539,9 @@ a.secondary-action {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .bird-log-entry {
-    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-  }
+  
 
-  .bird-log-meta-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  
 
   .playback-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8769,9 +8643,6 @@ a.secondary-action {
   }
 
   .metric-grid,
-  .bird-log-summary-grid,
-  .bird-log-filter-panel,
-  .bird-log-entry,
   .case-summary-grid,
   .manifest-summary,
   .species-export-summary,
@@ -8847,25 +8718,13 @@ a.secondary-action {
     grid-template-columns: 1fr;
   }
 
-  .bird-log-entry,
-  .bird-log-result-row,
-  .bird-log-meta-grid {
-    grid-template-columns: 1fr;
-  }
+  
 
-  .bird-log-entry-top {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+  
 
-  .bird-log-thumb,
-  .bird-log-thumb img {
-    min-height: 190px;
-  }
+  
 
-  .bird-log-actions {
-    justify-content: flex-start;
-  }
+  
 
   .source-next-action,
   .provider-workflow-next,

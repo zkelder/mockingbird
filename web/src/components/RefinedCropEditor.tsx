@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import type { RefinedCropResponse, VisitEvidenceFrame } from "../api/types";
 
+import { userFacingErrorMessage } from "../utils";
 type CropBox = { left: number; top: number; right: number; bottom: number };
 type DragMode = "move" | "nw" | "ne" | "sw" | "se";
 
@@ -123,7 +124,7 @@ export function RefinedCropEditor({
       setMessage(response.message);
       setIsOpen(false);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not save the refined crop.");
+      setMessage(userFacingErrorMessage(error, "Could not save the refined crop."));
     } finally {
       setIsSaving(false);
     }

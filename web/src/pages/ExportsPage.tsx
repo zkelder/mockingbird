@@ -13,7 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel, sortedEntries } from "../utils";
+import { formatDateTime, formatLabel, sortedEntries, userFacingErrorMessage } from "../utils";
 
 interface ExportsPageProps {
   exports: DatasetExport[];
@@ -92,7 +92,7 @@ export function ExportsPage({
         }
       } catch (caught) {
         if (isMounted) {
-          setError(caught instanceof Error ? caught.message : "Could not load export manifest.");
+          setError(userFacingErrorMessage(caught, "Could not load export manifest."));
         }
       } finally {
         if (isMounted) {
@@ -133,7 +133,7 @@ export function ExportsPage({
       setMessage("Reviewed local dataset manifest generated in memory.");
       await onExportsChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create dataset export.");
+      setError(userFacingErrorMessage(caught, "Could not create dataset export."));
     } finally {
       setIsCreating(false);
     }
