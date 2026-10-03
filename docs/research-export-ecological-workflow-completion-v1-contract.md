@@ -71,8 +71,12 @@ When `include_media` is true (generic export and Camtrap DP):
    copied), status`. Deduplicated: one copy per media id regardless of references.
    `manifest.json` (generic) / response (Camtrap DP) carry a `media_bundle`
    summary (requested, bundled, omitted-by-reason, total bytes, warnings).
-   Camtrap DP `filePath` already equals the bundled path; omitted media is
-   reported in validation warnings.
+   Camtrap DP `media.csv` lists **only media actually bundled** (its `filePath`
+   is the real archive member). Camtrap DP 1.0.2 requires `filePath` and has no
+   "absent" value, so a media row for an omitted file is dropped and the
+   observation's optional event-level `mediaID` is blanked; the omission stays
+   in `media-bundle.csv` and the validation warnings. With `include_media=false`
+   the package is metadata-only and keeps its intended relative `filePath`s.
 7. **Eligibility change between selection and generation**: after bytes are
    copied and before the atomic rename, eligibility is recomputed; if the eligible
    set fingerprint differs the export aborts (`research_export_eligibility_changed`)
@@ -111,9 +115,30 @@ server-side and are not exposed -- disclosed, not invented.
 
 The same filter state drives a new "Research dataset bundle" panel on that page:
 format (generic CSV/JSON, Camtrap DP, Darwin Core), include evidence photos,
-dry-run preview, export. The result shows the on-Host output directory (the
-page's existing local-first pattern) and media-bundle counts/warnings; no
-download manager is added.
+dry-run preview, export. A successful export shows media-bundle counts/warnings
+and a **Download export** action; the Host path is not shown in ordinary UI
+(the API response still carries `output_directory` for CLI/operator use).
+
+## Download (bounded retrieval)
+
+`GET /api/research/exports/{export_id}/download` (authenticated like every
+route) returns one generated export as a ZIP. Security/path model:
+
+- The client sends an **id only**, never a path. The id must match
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$` (no separators, no leading dot, so
+  `.x.tmp` build directories are never served) and is resolved as a direct child
+  of the managed `research_export_root`.
+- A symlinked export directory is refused (`lstat`, then a resolved
+  containment check); the walk never follows symlinks and archives regular files
+  only; each member is opened `O_NOFOLLOW`.
+- Members are `<export_id>/<relative posix path>`, sorted, fixed 1980-01-01
+  timestamp, fixed mode; same export -> same bytes. Media is stored, text deflated.
+- Bounds: 2100 members and 1 GiB + 64 MiB (HTTP 413 beyond); the archive is a
+  temporary file deleted after the response.
+- Missing/stale/malformed/unknown id -> one 404 with a path-free message.
+- Scope: exports under `research_export_root` (generic, Camtrap DP, Darwin Core
+  bundles). The iNaturalist submission CSV lives under a different root, has no
+  export id, and is unchanged (still shows its path); not part of this fix.
 
 ## Schema
 

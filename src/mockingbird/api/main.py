@@ -21,7 +21,7 @@ import uuid
 import numpy as np
 import cv2
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.requests import Request
@@ -53,6 +53,11 @@ from mockingbird.diagnostics.error_taxonomy import (
     resolve_error,
 )
 from mockingbird.diagnostics.structured_log import log_error_event
+from mockingbird.research.export_archive import (
+    ExportArchiveNotFound,
+    ExportArchiveTooLarge,
+    build_export_archive,
+)
 from mockingbird.research.camtrap_dp import CAMTRAP_DP_PROFILE_VERSION
 from mockingbird.research.research_export import RESEARCH_EXPORT_SCHEMA_VERSION
 from mockingbird.security.passwords import WeakPasswordError
@@ -15753,6 +15758,29 @@ async def create_camtrap_dp_export(payload: CamtrapDpExportRequest) -> CamtrapDp
         return get_repository().export_camtrap_dp_package(payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/research/exports/{export_id}/download")
+async def download_research_export(export_id: str, background_tasks: BackgroundTasks) -> FileResponse:
+    """Retrieve one already-generated research export as a ZIP. Takes an
+    export id only -- never a path -- resolved strictly inside the managed
+    export root (see mockingbird.research.export_archive). Read-only."""
+
+    try:
+        archive_path, file_name = build_export_archive(
+            get_repository().research_export_root, export_id
+        )
+    except ExportArchiveNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail="That export is no longer available. Generate it again.",
+        ) from error
+    except ExportArchiveTooLarge as error:
+        raise HTTPException(
+            status_code=413, detail="That export is too large to download from the browser."
+        ) from error
+    background_tasks.add_task(archive_path.unlink, missing_ok=True)
+    return FileResponse(archive_path, media_type="application/zip", filename=file_name)
 
 
 @app.post("/api/research/export-darwin-core", response_model=DarwinCoreExportResponse, status_code=201)

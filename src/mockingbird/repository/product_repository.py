@@ -193,6 +193,8 @@ from mockingbird.research.acquisition_effort import (
 )
 from mockingbird.research.camtrap_dp import (
     CamtrapDpMappingOptions,
+    CamtrapDpPackage,
+    restrict_package_to_bundled_media,
     build_camtrap_dp_package,
     datapackage_descriptor as camtrap_dp_datapackage_descriptor,
     deployment_to_row as camtrap_deployment_to_row,
@@ -38033,12 +38035,13 @@ class ProductRepository:
             include_machine_classifications=payload.include_machine_classifications,
         )
         package = build_camtrap_dp_package(observations, options=options)
-        validation_result = validate_camtrap_dp_package(package)
-        validation = CamtrapDpValidation(
-            valid=validation_result.valid,
-            errors=list(validation_result.errors),
-            warnings=list(validation_result.warnings),
-        )
+
+        def _validate(candidate: CamtrapDpPackage) -> CamtrapDpValidation:
+            result = validate_camtrap_dp_package(candidate)
+            return CamtrapDpValidation(
+                valid=result.valid, errors=list(result.errors), warnings=list(result.warnings),
+            )
+
 
         export_id = self._research_export_id(payload.output_name, prefix="camtrap-dp")
         file_names = ["deployments.csv", "media.csv", "observations.csv", "datapackage.json"]
@@ -38053,6 +38056,11 @@ class ProductRepository:
             file_names.append(MEDIA_BUNDLE_FILE_NAME)
 
         if payload.dry_run:
+            if media_plan is not None:
+                package = restrict_package_to_bundled_media(
+                    package, {entry.media_id for entry, _ in media_plan if entry.status == STATUS_BUNDLED},
+                )
+            validation = _validate(package)
             return CamtrapDpExportResponse(
                 export_id=export_id,
                 output_directory=None,
@@ -38081,6 +38089,17 @@ class ProductRepository:
 
         temporary_dir.mkdir()
         try:
+            if media_plan is not None:
+                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
+                media_summary = self._research_media_bundle_summary(bundled_entries)
+                # Only media whose bytes really landed in the archive may be
+                # advertised by media.csv (see restrict_package_to_bundled_media).
+                package = restrict_package_to_bundled_media(
+                    package, {e.media_id for e in bundled_entries if e.status == STATUS_BUNDLED},
+                )
+                if self._research_eligible_signature(payload.filters) != eligible_fingerprint:
+                    raise ValueError("research_export_eligibility_changed")
+            validation = _validate(package)
             self._write_csv(
                 temporary_dir / "deployments.csv",
                 list(CAMTRAP_DEPLOYMENT_CSV_FIELDNAMES),
@@ -38102,11 +38121,6 @@ class ProductRepository:
                     package, generated_at=datetime.now(UTC), software_version=MOCKINGBIRD_VERSION,
                 ),
             )
-            if media_plan is not None:
-                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
-                media_summary = self._research_media_bundle_summary(bundled_entries)
-                if self._research_eligible_signature(payload.filters) != eligible_fingerprint:
-                    raise ValueError("research_export_eligibility_changed")
             temporary_dir.rename(output_dir)
         except Exception:
             shutil.rmtree(temporary_dir, ignore_errors=True)
@@ -38136,8 +38150,8 @@ class ProductRepository:
     def _camtrap_validation_with_media(
         validation: CamtrapDpValidation, media_summary: ResearchMediaBundleSummary | None,
     ) -> CamtrapDpValidation:
-        """Camtrap DP `filePath` always names the bundled path; media that
-        could not be bundled is disclosed as a warning, never hidden."""
+        """Media that could not be bundled has no media.csv row (its bytes are
+        not in the archive); it is disclosed here and in media-bundle.csv."""
 
         if media_summary is None or not media_summary.warnings:
             return validation

@@ -38,10 +38,33 @@ Darwin Core export.
   the preview table because the new Species select repeats taxon names.
 - Core (`verify_core.py`): 6342 passed / 0 failed, 4 skipped, 11 xfailed.
 
+## Completion pass (acceptance gaps closed)
+
+Starting HEAD `bbc803b`, schema `v62` (unchanged, no migration).
+
+- **Retrievable export**: `GET /api/research/exports/{export_id}/download`
+  (`mockingbird.research.export_archive`) serves a deterministic, bounded ZIP of
+  one generated export; id-only, resolved inside `research_export_root`,
+  symlinks refused/skipped, `O_NOFOLLOW`, safe `<export_id>/...` members, path-free
+  404 for stale ids. The page now shows **Download export** after a successful
+  write and no longer renders the Host path (API still returns
+  `output_directory` for CLI/operators). Contract section "Download".
+- **Truthful Camtrap DP media**: `restrict_package_to_bundled_media` drops the
+  `media.csv` row of any media not actually bundled (missing, unsafe, integrity
+  mismatch, unsupported, name collision) and blanks that observation's optional
+  `mediaID`, then validation is recomputed. `media-bundle.csv` and warnings are
+  unchanged. `include_media=false` keeps the intended relative `filePath`s.
+- Tests: partial-success regression (one asset deleted, one bundled; mutation-checked),
+  all-omitted (missing and checksum), metadata-only, generate->zip round trip;
+  `tests/test_research_export_download.py` (auth, traversal, absolute path, stale,
+  symlinked dir/members, determinism, temp cleanup); Playwright download spec.
+
 ## Bounded limitations
 
-- Output is a directory bundle on the Host (no zip/download); the UI shows its path.
 - Darwin Core / iNaturalist submissions reference media but do not copy bytes.
-- Camtrap DP `filePath` for an omitted file still names the intended path; the omission
-  is a validation warning and a `media-bundle.csv` row.
+- The iNaturalist prepared-submission CSV (separate root, no export id) is not
+  downloadable and still shows its path; outside this pass.
+- The Playwright download test mocks the generate response (the shared e2e
+  database has no reviewed data); the real generate->ZIP path is covered by
+  backend tests.
 - No external Camtrap DP conformance validator (unchanged).

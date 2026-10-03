@@ -223,7 +223,7 @@ descriptor.
 | `latitude`/`longitude` | `None` unless explicitly supplied at export time (see Privacy) |
 | `deploymentStart`/`deploymentEnd` | bounds of the *exported* observation window for that deployment -- an honest "what this package covers," never a fabricated install/removal date (MockingBird has no deployment-lifecycle model) |
 | `mediaID`/`timestamp`/`fileMediatype` | `ResearchEvidenceRecord` fields |
-| `filePath` | a manifest-relative reference (`media/<id>.jpg`), never a local filesystem path |
+| `filePath` | a manifest-relative reference (`media/<id>.jpg`), never a local filesystem path; with `include_media=true` a row exists only for media actually bundled (omitted media has no row -- see the media-bundle contract) |
 | `observationID`/`eventID` | Visit id (suffixed `-human`/`-machine`) / Event id -- preserves shared-Event lineage for multi-subject encounters |
 | `observationLevel` | always `"event"` (a Visit is an event-level identification, not a per-frame classification) |
 | `observationType` | `"animal"` for every included row (only eligible records are mapped at all) |

@@ -105,7 +105,7 @@ function formatBytes(bytes: number): string {
 
 interface DatasetResult {
   dryRun: boolean;
-  outputDirectory: string | null;
+  exportId: string | null;
   observationCount: number;
   excludedCount: number;
   excludedReasons: Record<string, number>;
@@ -125,6 +125,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
   const [includeMedia, setIncludeMedia] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(false);
   const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [datasetResult, setDatasetResult] = useState<DatasetResult | null>(null);
 
   const [preview, setPreview] = useState<EcologicalEligibilityPreviewResponse | null>(null);
@@ -239,7 +240,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       const confirmed = window.confirm(
         `Write a ${format.label} bundle to this Host?\n\n`
           + `Evidence photos: ${withMedia ? "copied into the bundle" : "not included"}\n\n`
-          + "Only reviewed, research-eligible observations are included. This writes a local folder only — "
+          + "Only reviewed, research-eligible observations are included. Nothing is uploaded; you download the result from this page. "
           + "MockingBird never uploads it anywhere.",
       );
       if (!confirmed) {
@@ -256,7 +257,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
         });
         setDatasetResult({
           dryRun: result.dry_run,
-          outputDirectory: result.output_directory ?? null,
+          exportId: result.output_directory ? result.export_id : null,
           observationCount: result.observation_count,
           excludedCount: result.excluded_count,
           excludedReasons: result.excluded_reasons,
@@ -269,7 +270,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
         });
         setDatasetResult({
           dryRun: result.dry_run,
-          outputDirectory: result.output_directory ?? null,
+          exportId: result.output_directory ? result.export_id : null,
           observationCount: result.observation_count,
           excludedCount: 0,
           excludedReasons: {},
@@ -280,7 +281,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
         const result = await apiClient.exportDarwinCore({ filters: serverFilters, dry_run: dryRun });
         setDatasetResult({
           dryRun: result.dry_run,
-          outputDirectory: result.output_directory ?? null,
+          exportId: result.output_directory ? result.export_id : null,
           observationCount: result.occurrence_count,
           excludedCount: 0,
           excludedReasons: {},
@@ -293,6 +294,24 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       setDatasetError(userFacingErrorMessage(caught, "Could not prepare the research bundle."));
     } finally {
       setDatasetLoading(false);
+    }
+  }
+
+  async function downloadDataset(exportId: string) {
+    setDownloading(true);
+    setDatasetError(null);
+    try {
+      const blob = await apiClient.downloadResearchExport(exportId);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${exportId}.zip`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (caught) {
+      setDatasetError(userFacingErrorMessage(caught, "Could not download the research bundle."));
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -818,7 +837,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
                 {datasetResult.dryRun ? "Preview: " : ""}
                 {datasetResult.observationCount} observation(s)
                 {datasetResult.excludedCount > 0 ? `, ${datasetResult.excludedCount} excluded as not research-eligible` : ""}
-                {!datasetResult.dryRun && datasetResult.outputDirectory ? ` written to ${datasetResult.outputDirectory}` : ""}
+                {!datasetResult.dryRun && datasetResult.exportId ? " ready to download" : ""}
                 .
               </strong>
               {datasetResult.mediaBundle ? (
@@ -836,6 +855,19 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
+              ) : null}
+              {!datasetResult.dryRun && datasetResult.exportId ? (
+                <div className="detail-actions">
+                  <button
+                    className="primary-action"
+                    disabled={downloading}
+                    onClick={() => void downloadDataset(datasetResult.exportId as string)}
+                    type="button"
+                  >
+                    {downloading ? "Preparing download..." : "Download export"}
+                  </button>
+                  <span className="meta-text">A .zip saved by your browser. Nothing is uploaded anywhere.</span>
+                </div>
               ) : null}
             </div>
           )

@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from tests.conftest import de_demo_seeded_source
 from tests.test_research_export_repository import (
     FEEDER_ZONE_ID,
     JPEG_BYTES,
+    NOW,
     _activate,
     _create_visit,
     _review,
@@ -361,6 +363,94 @@ def test_camtrap_dp_missing_media_is_a_disclosed_warning(repository: ProductRepo
     )
     assert response.media_bundle.bundled == 0
     assert any("omitted_missing" in warning for warning in response.validation.warnings)
+
+
+def _assert_camtrap_never_advertises_missing_members(output: Path) -> list[dict[str, str]]:
+    media_rows = _read_rows(output / "media.csv")
+    for row in media_rows:
+        assert (output / row["filePath"]).is_file(), f"advertises nonexistent member {row['filePath']}"
+    advertised = {row["mediaID"] for row in media_rows}
+    for row in _read_rows(output / "observations.csv"):
+        assert row["mediaID"] == "" or row["mediaID"] in advertised
+    return media_rows
+
+
+def test_camtrap_dp_partial_success_never_advertises_a_nonexistent_member(repository: ProductRepository) -> None:
+    first = _reviewed_visit(repository)
+    second = _create_visit(
+        repository, proposal_id="visit-episode:fixture-2", observed_at=NOW + timedelta(hours=2),
+        captured_at=NOW + timedelta(hours=2),
+    )
+    _review(repository, second, "northern_cardinal")
+    filters = ResearchExportFilters(visit_ids=[first, second])
+    observations, _ = repository.research_export_eligibility_preview(filters)
+    assert sum(1 for o in observations if o.eligibility.eligible) == 2
+    with repository.session_factory() as session:
+        assets = list(session.scalars(select(MediaAssetModel).order_by(MediaAssetModel.id)))
+    media_ids = sorted({i.media_id for o in observations for i in o.evidence})
+    assert len(media_ids) == 2, "partial success needs one surviving and one omitted asset"
+    by_id = {a.id: a for a in assets}
+    Path(by_id[media_ids[0]].local_path).unlink()
+    survivors = {media_ids[1]}
+    response = repository.export_camtrap_dp_package(CamtrapDpExportRequest(filters=filters, include_media=True))
+    output = Path(response.output_directory)
+    media_rows = _assert_camtrap_never_advertises_missing_members(output)
+    assert {row["mediaID"] for row in media_rows} == survivors
+    assert response.media_count == 1 and response.observation_count == 2
+    assert response.validation.valid is True
+    # Supplemental diagnostics still name the omitted file.
+    statuses = {row["media_id"]: row["status"] for row in _read_rows(output / "media-bundle.csv")}
+    assert statuses[media_ids[0]] == "omitted_missing" and statuses[media_ids[1]] == "bundled"
+    assert any("omitted_missing" in w for w in response.validation.warnings)
+
+
+@pytest.mark.parametrize("failure", ["missing", "checksum"])
+def test_camtrap_dp_all_media_omitted_leaves_no_media_rows(repository: ProductRepository, failure: str) -> None:
+    visit_id = _reviewed_visit(repository)
+    for asset in _visit_assets(repository, visit_id):
+        if failure == "missing":
+            Path(asset.local_path).unlink()
+        else:
+            with repository.session_factory() as session, session.begin():
+                session.get(MediaAssetModel, asset.id).content_sha256 = "0" * 64
+    response = repository.export_camtrap_dp_package(
+        CamtrapDpExportRequest(filters=ResearchExportFilters(visit_ids=[visit_id]), include_media=True)
+    )
+    output = Path(response.output_directory)
+    assert _assert_camtrap_never_advertises_missing_members(output) == []
+    assert response.media_count == 0 and response.observation_count >= 1
+    assert response.validation.valid is True
+
+
+def test_camtrap_dp_metadata_only_keeps_intended_file_paths(repository: ProductRepository) -> None:
+    visit_id = _reviewed_visit(repository)
+    response = repository.export_camtrap_dp_package(
+        CamtrapDpExportRequest(filters=ResearchExportFilters(visit_ids=[visit_id]), include_media=False)
+    )
+    rows = _read_rows(Path(response.output_directory) / "media.csv")
+    assert rows and all(row["filePath"].startswith("media/") for row in rows)
+
+
+def test_generated_export_is_retrievable_as_a_zip_with_its_media(repository: ProductRepository) -> None:
+    import zipfile
+
+    from mockingbird.research.export_archive import build_export_archive
+
+    visit_id = _reviewed_visit(repository)
+    response = repository.export_camtrap_dp_package(
+        CamtrapDpExportRequest(filters=ResearchExportFilters(visit_ids=[visit_id]), include_media=True)
+    )
+    archive_path, file_name = build_export_archive(repository.research_export_root, response.export_id)
+    try:
+        assert file_name == f"{response.export_id}.zip"
+        with zipfile.ZipFile(archive_path) as archive:
+            names = set(archive.namelist())
+            for row in _read_rows(Path(response.output_directory) / "media.csv"):
+                assert archive.read(f"{response.export_id}/{row['filePath']}") == JPEG_BYTES
+            assert f"{response.export_id}/datapackage.json" in names
+            assert all(str(repository.research_export_root) not in n for n in names)
+    finally:
+        archive_path.unlink()
 
 
 # --- visit_ids filter semantics ---------------------------------------------------

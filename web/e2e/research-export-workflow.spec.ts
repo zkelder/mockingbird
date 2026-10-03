@@ -149,8 +149,29 @@ test("research bundle preview and write report included photos, omissions and wa
     void dialog.accept();
   });
   await page.getByRole("button", { name: "Write bundle" }).click();
-  await expect(page.getByText(/written to \/data\/research_exports\/research-export-1/)).toBeVisible();
+  await expect(page.getByText(/ready to download/)).toBeVisible();
   expect(bodies[1]).toMatchObject({ include_media: true, dry_run: false });
+  // Ordinary UI never shows where the Host stored the bundle.
+  await expect(page.locator("body")).not.toContainText("/data/research_exports");
+  await expect(page.locator("body")).not.toContainText("research_exports");
+
+  // The completed export is retrieved through the product, by id only.
+  let downloadUrl = "";
+  await page.route("**/api/research/exports/*/download", (route) => {
+    downloadUrl = route.request().url();
+    return route.fulfill({
+      status: 200, contentType: "application/zip",
+      headers: { "content-disposition": 'attachment; filename="research-export-1.zip"' },
+      body: Buffer.from("PK\u0005\u0006" + "\0".repeat(18), "binary"),
+    });
+  });
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download export" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("research-export-1.zip");
+  expect(new URL(downloadUrl).pathname).toBe("/api/research/exports/research-export-1/download");
+  expect(new URL(downloadUrl).search).toBe("");
+  await expect(page.locator("body")).not.toContainText("/data/research_exports");
 });
 
 test("an empty bundle explains why instead of a silent zero", async ({ page }) => {

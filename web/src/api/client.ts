@@ -2035,6 +2035,26 @@ export const apiClient = {
     request<CamtrapDpExportResponse>("/api/research/export-camtrap-dp", {
       method: "POST", body: JSON.stringify(payload),
     }),
+  // Authenticated, id-only retrieval of an already-generated export as a ZIP.
+  downloadResearchExport: async (exportId: string): Promise<Blob> => {
+    const response = await friendlyFetch(
+      `${API_BASE_URL}/api/research/exports/${encodeURIComponent(exportId)}/download`,
+      { credentials: "same-origin" },
+    );
+    if (response.status === 401) {
+      sessionExpiredListeners.forEach((listener) => listener());
+    }
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+      } catch {
+        // The status text is a safe fallback for a non-JSON response.
+      }
+      throw new ApiError(detail, response.status);
+    }
+    return response.blob();
+  },
   exportDarwinCore: (payload: DarwinCoreExportRequest) =>
     request<DarwinCoreExportResponse>("/api/research/export-darwin-core", {
       method: "POST", body: JSON.stringify(payload),
