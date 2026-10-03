@@ -8,7 +8,8 @@ assumes that context rather than repeating it.
 
 ## Read this much before your first change
 
-1. [README.md](README.md) -- what MockingBird is and the current checkpoint.
+1. [README.md](README.md) -- what MockingBird is and what 1.0 supports, plus the
+   [support matrix](docs/support-matrix.md) and [developer setup](docs/developer-setup.md).
 2. [docs/product-doctrine.md](docs/product-doctrine.md) -- the non-negotiable
    truth model: detection/tracking are infrastructure; only explicit human
    correction creates reviewed truth.
@@ -37,8 +38,8 @@ cd web && npm ci && cd ..
 
 Optional extras (`classifier-bioclip`, `detector-megadetector`,
 `observation-onnx-cuda`) are for specific local model/GPU work only -- the
-core product and its test suite need none of them. See README.md's
-"Start the local app" section if you land here without that context.
+core product and its test suite need none of them. See
+[docs/developer-setup.md](docs/developer-setup.md) if you land here without that context.
 
 ## Run the app
 
@@ -76,7 +77,7 @@ python -m mockingbird support-bundle --output path/to/bundle.zip
 ```
 
 For frontend-only iteration, run the API and Vite dev server separately
-(see README.md's "Developer split mode").
+(see "Developer split mode" in [docs/developer-setup.md](docs/developer-setup.md)).
 
 ## Run focused tests
 

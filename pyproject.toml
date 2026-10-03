@@ -14,18 +14,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mockingbird"
-# Final Release Candidate Corrections v1: restored to "0.1.0" -- the
-# immediately preceding milestone's "1.0.0" bump (see git history) was its
-# own SemVer-convention argument, not an authorized product-version
-# decision; this repository is executing the MockingBird v0.1 public
-# release, and "one public release" (see the one-release-roadmap
-# reconciliation) never implied a 1.0.0 semantic version. See
+# Source version vs. release version: the first public release is **1.0**
+# (see docs/support-matrix.md and docs/owner-release-checklist.md; the old
+# plan to publish "0.1.0" was withdrawn by the owner on 2026-09-29). This
+# source string intentionally stays "0.1.0" until Final 1.0 Hardening
+# performs the authorized 1.0 version bump, artifacts and tag -- it is not a
+# statement that a 0.1 product exists. See
 # `tests/test_version_provenance.py` for the existing single-source-of-truth
 # contract this value feeds (kept in sync by hand with
 # `mockingbird.__init__._DEV_CHECKOUT_FALLBACK_VERSION`,
 # `mockingbird_node.__version__`, and `web/package.json`).
 version = "0.1.0"
-description = "Local-first outdoor video intelligence API."
+description = "Local-first, evidence-backed wildlife observatory."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

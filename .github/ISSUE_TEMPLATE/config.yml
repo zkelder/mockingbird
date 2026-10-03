@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/zkelder/mockingbird/security/advisories/new
+    about: Do not file public issues for security problems. Use private reporting.
+  - name: Troubleshooting guide
+    url: https://github.com/zkelder/mockingbird/blob/main/docs/troubleshooting.md
+    about: Try Doctor and the common-problems table first.

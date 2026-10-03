@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in MockingBird does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read [docs/troubleshooting.md](https://github.com/zkelder/mockingbird/blob/main/docs/troubleshooting.md) and check
+        [docs/support-matrix.md](https://github.com/zkelder/mockingbird/blob/main/docs/support-matrix.md) first.
+        **Never paste passwords, pairing codes, or an unread support bundle.**
+        Security problems: do not file here; see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: MockingBird version / build
+      description: From the Dashboard status area or GET /api/product/instance
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Host OS, GPU and driver version
+      placeholder: Windows 10 22H2, RTX 4060 Ti, driver ...
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera type
+      placeholder: Camera Node (Raspberry Pi 4) / RTSP / USB / import ...
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What did you expect, and what happened?"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: "`python\\python.exe -m mockingbird doctor` (redact anything private)"

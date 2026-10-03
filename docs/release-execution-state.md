@@ -4139,9 +4139,42 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last authorized
-milestone, *Multi-Camera Attribution & Filter Consolidation v1*, is executed and
-closed below. Public Product/Deployment/Support Closure and every other later
-item are not authorized.
+milestone, *Public Product, Deployment & Support Closure v1*, is executed and
+closed below. Final 1.0 Hardening and every other later item are not
+authorized, and no feature-freeze declaration is made by this record.
+
+**Closure recorded, 2026-10-03, by Public Product, Deployment & Support
+Closure v1** (see [report](public-product-deployment-support-closure-v1-report.md)).
+**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+Starting HEAD `28463ea`, schema `v62` unchanged, source version `0.1.0`
+unchanged. Docs/public-surface only: no application code, schema, package build
+or version bump. New canonical documents: [support-matrix.md](support-matrix.md)
+(the one 1.0 support statement), [privacy-and-security.md](privacy-and-security.md),
+[troubleshooting.md](troubleshooting.md), [developer-setup.md](developer-setup.md)
+(the former README developer content), [owner-release-checklist.md](owner-release-checklist.md),
+plus `SUPPORT.md` and GitHub issue templates. README rewritten as a public
+overview; `using-mockingbird.md` gained download/checksum verification, data
+location and models sections and dropped its own support table;
+`THIRD_PARTY_NOTICES.md` and `SECURITY.md` corrected. Defects corrected from
+repository truth: BirdNET install instructions that a packaged-Windows user
+cannot follow (the packaged runtime has no package installer -- documented as
+no supported route on the ZIP); Windows 11 overstated as validated (only
+Windows 10 Pro `10.0.19045` is in the evidence); the support bundle described
+as "safe to share" although it includes local paths by default; stale "v0.1
+public release" wording in `pyproject.toml`. Unresolved, owner-side: see the
+owner checklist (push, version bump, final artifacts, Releases page, tag,
+private-vulnerability-reporting enablement, NVIDIA notice confirmation,
+signing position, BirdNET legal stance). Push: not performed.
+
+**Scheduler reconciliation, 2026-10-03 (accepted delta only; no history
+rewritten):** *Multi-Camera Attribution & Filter Consolidation v1* is
+**ACCEPTED, classification A** at HEAD `28463ea`; schema `v62` (unchanged);
+browser 226/226; focused backend 122 passed; Core 6374 passed, with the
+scene-confusor failure proven identical on the pre-change baseline and the
+transport-worker failure isolated as load-sensitive and non-reproducing outside
+the full run. Current authorized milestone at that point: **Public Product,
+Deployment & Support Closure v1** (now closed above). The 1.0 scope lock below
+is preserved unchanged.
 
 **Closure recorded, 2026-10-03, by Multi-Camera Attribution & Filter
 Consolidation v1** (see [report](multi-camera-attribution-filter-consolidation-v1-report.md)
@@ -14227,12 +14260,12 @@ carrier/power acceptance remains external.
 5. Environmental Sensor Ingestion Foundation v1 -- **deferred post-1.0** (2026-10-03 scope lock).
 6. Intervention & Habitat Outcomes v1 -- **deferred post-1.0** (2026-10-03 scope lock).
 7. Ecosystem UX Closure v1 -- **deferred** with items 5-6 where it exists only for those domains.
-8. Multi-Camera Attribution & Filter Consolidation v1 -- **EXECUTED 2026-10-03, pending acceptance** (§3).
+8. Multi-Camera Attribution & Filter Consolidation v1 -- **ACCEPTED, A** (`28463ea`; browser 226/226).
 9. Legacy Local-Camera Concurrency & Remote Operator UX v1 -- resource-aware scheduler **deferred**; real limit documented instead; remote LTE/data-budget operator UX **post-1.0**.
 10. Multi-Observatory Software Model v1 -- **post-1.0**.
 11. Optional Background Notification Transport v1 -- **post-1.0**.
 12. Linux Host Distribution & Service Lifecycle v1 -- **post-1.0**.
-13. Public Product, Deployment & Support Closure v1.
+13. Public Product, Deployment & Support Closure v1 -- **EXECUTED 2026-10-03, pending acceptance** (§3).
 14. Final 1.0 Hardening & Launch Candidate.
 
 No item is currently authorized. Each later item requires acceptance of its
@@ -15571,7 +15604,7 @@ rather than rewriting accepted history in place.
 *(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Multi-Camera Attribution & Filter Consolidation v1. Latest accepted: Research Export & Ecological Workflow Completion v1 (`f886400`, schema `v62`, Core 6365/0, browser 218/218, A).
+- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Public Product, Deployment & Support Closure v1. Latest accepted: Multi-Camera Attribution & Filter Consolidation v1 (`28463ea`, schema `v62`, browser 226/226, Core 6374 passed with two attributed non-regressions, A).
 - **Latest accepted milestone:** Orphan Media Integrity & Recovery v1,
   classification A (HEAD `6b927da`, schema `v62`; Core 6312/0, browser 211/211).
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public

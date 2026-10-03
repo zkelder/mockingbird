@@ -118,13 +118,28 @@ are included (the default for an official release build):
   actual native `.dll`/`.so` libraries inside are governed by NVIDIA's own
   CUDA/cuDNN End User License Agreement. This is the same well-established
   distribution pattern official PyTorch/TensorFlow GPU wheels already use,
-  and is not treated as a redistribution blocker here -- but this
-  milestone did not independently re-confirm the exact current NVIDIA EULA
-  notice text against what these specific packages ship; see this
-  milestone's own report for the precise disposition.
+  and is not treated as a redistribution blocker here. **Open item:** this
+  project has not independently re-confirmed the exact current NVIDIA EULA
+  notice text against what these specific packages ship, and the owner
+  should confirm it before publishing (see `docs/owner-release-checklist.md`).
+  This is not legal advice.
 - **The BioCLIP/OpenCLIP runtime closure** (`torch`, `torchvision`,
   `open_clip_torch`, and their own further dependencies). PyTorch and
   torchvision are BSD-3-Clause; `open_clip_torch` is MIT.
+
+## Optional external data services (not bundled, off or explicit-only)
+
+These are contacted only when the user turns them on or uses the matching
+workflow; see `docs/privacy-and-security.md`.
+
+- **Open-Meteo** (weather for a Place; off by default). Open-Meteo's weather
+  data is offered under CC BY 4.0 and requires attribution to Open-Meteo
+  (<https://open-meteo.com/en/licence>); the product's weather display carries
+  that attribution link. Open-Meteo's own terms apply to its free API.
+- **iNaturalist** (taxonomy lookup used only by the iNaturalist export
+  workflow). MockingBird sends a species name only; iNaturalist's own terms
+  apply to its API and to anything a user submits there. eBird is not
+  integrated.
 
 ## Deliberately NOT bundled
 
@@ -161,9 +176,12 @@ MockingBird's official packaging never bundles bird-sound identification
 - Because the code and the model weights are not separable inside that one
   wheel, MockingBird's own installer/packaged build never installs
   `birdnetlib` at all. `classifier-birdnet` is an explicit, separate,
-  optional extra (`pip install "mockingbird[classifier-birdnet]"`) that a
-  user installs themselves, obtaining the model directly from PyPI under
-  upstream's own terms -- never through MockingBird's own redistribution.
+  optional extra (from a source checkout: `pip install -e ".[classifier-birdnet]"`)
+  that a user installs themselves, obtaining the model directly from PyPI under
+  upstream's own terms -- never through MockingBird's own redistribution. The
+  packaged Windows runtime has no package installer, so there is **no
+  supported route to add BirdNET to the Windows ZIP**; see
+  `docs/support-matrix.md`.
   `scripts/build_local_product.py`'s
   `verify_no_nc_licensed_acoustic_model_redistribution` fails the release
   build outright if this were ever to change silently.

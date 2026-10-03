@@ -9,10 +9,14 @@ problems quickly and fix them responsibly.
 
 ## Supported versions
 
-MockingBird does not yet have a track record of tagged releases. Until one
-exists, only the latest commit on the `main` branch (and the most recent
-tagged release, if one exists) is supported with security fixes. There is
-no long-term-support branch yet.
+MockingBird's first public release is **1.0**; no release has been tagged
+yet. Until a release exists, only the latest commit on `main` is supported with
+security fixes. After release, only the latest 1.x release and `main` are
+supported. There is no long-term-support branch. Supported platforms are listed
+in [docs/support-matrix.md](docs/support-matrix.md); reports against
+unsupported platforms are still welcome but may not be fixable. The overall
+privacy and security posture, including what is **not** protected, is in
+[docs/privacy-and-security.md](docs/privacy-and-security.md).
 
 ## Reporting a vulnerability
 
@@ -64,6 +68,8 @@ when the issue is in their code rather than in how MockingBird uses it.
     network (Tailscale/WireGuard or similar), never a router port forward
     -- see "Use MockingBird away from home" in
     [docs/using-mockingbird.md](docs/using-mockingbird.md).
+  - Release builds are not code-signed; users are asked to verify the
+    published SHA-256 checksum.
   - Camera/ONVIF/RTSP credentials are stored only in MockingBird's own
     local database on your machine (never on a MockingBird-operated
     server), but are not encrypted at rest there today -- protect the
