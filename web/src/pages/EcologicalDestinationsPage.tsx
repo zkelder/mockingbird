@@ -10,9 +10,12 @@ import type {
   ExportEcologicalSubmissionsResponse,
   ResearchExportFiltersInput,
   ResearchMediaBundleSummary,
+  CameraSource,
   Stream,
   TaxonomyLabel,
 } from "../api/types";
+import { CameraFilter } from "../components/CameraFilter";
+import { streamCameraOptions } from "../cameraFilter";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
@@ -118,6 +121,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
   const [destination, setDestination] = useState<EcologicalDestinationKey>("inaturalist");
   const [filters, setFilters] = useState<WorkflowFilters>(readFiltersFromUrl);
   const [streams, setStreams] = useState<Stream[]>([]);
+  const [sources, setSources] = useState<CameraSource[]>([]);
   const [taxa, setTaxa] = useState<TaxonomyLabel[]>([]);
   const [autoPreviewDone, setAutoPreviewDone] = useState(false);
 
@@ -176,6 +180,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
     // Filter option lists are conveniences: a failure leaves the filter at
     // its "any" default rather than blocking the workflow.
     apiClient.getStreams().then(setStreams).catch(() => undefined);
+    apiClient.getSources().then(setSources).catch(() => undefined);
     apiClient.getTaxonomyLabels()
       .then((labels) => setTaxa(labels.filter((label) => label.is_reviewable)))
       .catch(() => undefined);
@@ -516,15 +521,11 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
             To
             <input onChange={(event) => updateFilters({ to: event.target.value })} type="date" value={filters.to} />
           </label>
-          <label>
-            Camera / Stream
-            <select onChange={(event) => updateFilters({ stream: event.target.value })} value={filters.stream}>
-              <option value="">Any Stream</option>
-              {streams.map((stream) => (
-                <option key={stream.id} value={stream.id}>{stream.name}</option>
-              ))}
-            </select>
-          </label>
+          <CameraFilter
+            onChange={(ids) => updateFilters({ stream: ids[0] ?? "" })}
+            options={streamCameraOptions(streams, sources)}
+            value={filters.stream ? [filters.stream] : []}
+          />
           <label>
             Species
             <select onChange={(event) => updateFilters({ taxon: event.target.value })} value={filters.taxon}>

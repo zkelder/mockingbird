@@ -251,6 +251,32 @@ inference available -- `SnapshotObservationProvider` is explicitly kept as
 "a complete, functional, vendor-neutral CPU path" (architecture.md). Treat
 both as **KEEP**, not legacy cruft.
 
+### Legacy local-camera concurrency limit
+
+Verified against code on 2026-10-03 (Multi-Camera Attribution & Filter
+Consolidation v1); the resource-aware replacement is deferred, so this is the
+real supported 1.0 behavior, not a bug:
+
+- `monitoring/durable_supervisor.py::DEFAULT_MAX_CONCURRENT_STREAMS = 2`
+  bounds how many armed Streams the legacy supervisor runs at once. Armed
+  Streams beyond that are marked `waiting_for_capacity` (UI: "Waiting for
+  capacity"; after 5 minutes a `capacity_waiting` Observatory Health alert)
+  and start when a running Stream stops. `mockingbird.api.main.get_durable_monitoring_
+  supervisor()` constructs it with the default.
+- `playback/live_preview_leases.py::DEFAULT_MAX_BACKEND_PREVIEW_STREAMS`
+  reuses the same constant for backend live previews. The two limits are
+  counted independently (the preview lease manager tracks only its own
+  set), so a Host can briefly hold up to two armed monitors *and* two
+  previews. Previewing a Camera Node Stream through the legacy session
+  manager also takes a preview slot unless the Observation Engine already
+  owns the camera.
+- It does **not** apply to Camera Node Streams: `ProductRepository.
+  list_enabled_monitoring_candidates` excludes `provider_key = "camera_node"`,
+  legacy arming of a Camera Node Stream is rejected, and
+  `ObservationEngineSessionManager` has no concurrency cap (one session per
+  Stream).
+- No hardware throughput claim is made for either number.
+
 ## Evidence selection: two resolvers, two lanes, one schema
 
 `motion/effective_primary.py::select_effective_primary` (legacy-lane

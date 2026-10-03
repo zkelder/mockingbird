@@ -1,3 +1,5 @@
+import { CameraFilter } from "./CameraFilter";
+import { sourceCameraOptions } from "../cameraFilter";
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import { formatLabel } from "../utils";
@@ -165,8 +167,18 @@ export function ZoneInsightsPanel({
         </div>
         {preset === "custom" ? <div className="zone-insights-custom-range"><label>From <input max={customEnd} onChange={(event) => setCustomStart(event.target.value)} type="datetime-local" value={customStart} /></label><label>To <input min={customStart} onChange={(event) => setCustomEnd(event.target.value)} type="datetime-local" value={customEnd} /></label><button className="primary-action" disabled={!customStart || !customEnd || customEnd <= customStart} onClick={() => setAppliedCustom({ start_at: new Date(customStart).toISOString(), end_at: new Date(customEnd).toISOString() })} type="button">Apply</button></div> : null}
         <div className="zone-insights-filter-grid">
-          <label>Camera / Source<select onChange={(event) => setSourceId(event.target.value)} value={sourceId}><option value="">All cameras</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
-          <label>Stream<select onChange={(event) => setStreamId(event.target.value)} value={streamId}><option value="">All Streams</option>{streams.filter((stream) => !sourceId || stream.source_id === sourceId).map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label>
+          <CameraFilter
+            onChange={(ids) => {
+              const next = ids[0] ?? "";
+              setSourceId(next);
+              // A Stream belongs to one camera: never keep a Stream the newly
+              // chosen camera does not own (a contradictory, always-empty scope).
+              if (next && streamId && streams.find((stream) => stream.id === streamId)?.source_id !== next) setStreamId("");
+            }}
+            options={sourceCameraOptions(sources)}
+            value={sourceId ? [sourceId] : []}
+          />
+          <label>Stream<select onChange={(event) => setStreamId(event.target.value)} value={streamId}><option value="">All streams</option>{streams.filter((stream) => !sourceId || stream.source_id === sourceId).map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label>
           <label>Zone type<select onChange={(event) => setZoneType(event.target.value as ZoneType | "")} value={zoneType}><option value="">Applicable Zones</option>{zoneTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
           <label>Confirmed species<select onChange={(event) => setTaxonomyId(event.target.value)} value={taxonomyId}><option value="">All confirmed species</option>{taxonomy.map((label) => <option key={label.id} value={label.id}>{label.display_name}</option>)}</select></label>
         </div>

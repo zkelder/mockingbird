@@ -11,7 +11,9 @@ import type {
   VisitTagSummary,
   Zone,
 } from "../api/types";
+import { CameraFilter } from "../components/CameraFilter";
 import { EmptyState } from "../components/EmptyState";
+import { sourceCameraOptions } from "../cameraFilter";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatCaptureDateTime, formatLabel, userFacingErrorMessage } from "../utils";
@@ -482,9 +484,6 @@ export function ActivityLibraryPage({
   const selectedStreamMissing = Boolean(
     filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
   );
-  const selectedSourceMissing = Boolean(
-    filters.source_id && !sources.some((source) => source.id === filters.source_id),
-  );
   const selectedZoneMissing = Boolean(
     filters.zone_id && !zones.some((zone) => zone.id === filters.zone_id),
   );
@@ -525,28 +524,25 @@ export function ActivityLibraryPage({
               ))}
             </select>
           </label>
-          <label>
-            Camera
-            <select
-              value={filters.stream_id ?? ""}
-              onChange={(event) => commitFilters({ ...filters, stream_id: event.target.value || null })}
-            >
-              <option value="">All cameras</option>
-              {selectedStreamMissing ? <option value={filters.stream_id ?? ""}>Unavailable Stream</option> : null}
-              {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
-            </select>
-          </label>
-          <label>
-            Camera / Source
-            <select
-              value={filters.source_id ?? ""}
-              onChange={(event) => commitFilters({ ...filters, source_id: event.target.value || null })}
-            >
-              <option value="">All cameras</option>
-              {selectedSourceMissing ? <option value={filters.source_id ?? ""}>Unavailable camera</option> : null}
-              {sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-            </select>
-          </label>
+          <CameraFilter
+            onChange={(ids) =>
+              // Choosing a camera replaces any narrower Stream deep link so the
+              // two can never contradict each other.
+              commitFilters({ ...filters, source_id: ids[0] ?? null, stream_id: null })
+            }
+            options={sourceCameraOptions(sources)}
+            value={filters.source_id ? [filters.source_id] : []}
+          />
+          {filters.stream_id ? (
+            <div className="camera-filter-stream-chip" data-testid="stream-filter-chip">
+              <span className="meta-text">
+                Stream: {selectedStreamMissing ? "Unavailable Stream" : streams.find((stream) => stream.id === filters.stream_id)?.name}
+              </span>
+              <button className="text-action" onClick={() => commitFilters({ ...filters, stream_id: null })} type="button">
+                Clear stream
+              </button>
+            </div>
+          ) : null}
           <label>
             Zone
             <select

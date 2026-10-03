@@ -3793,6 +3793,15 @@ export interface ProductAlertAction {
   story_kind?: string | null;
 }
 
+export interface ProductAlertGroupMember {
+  alert_id: string;
+  visit_id: string;
+  stream_id?: string | null;
+  stream_name?: string | null;
+  source_id?: string | null;
+  source_name?: string | null;
+}
+
 export interface ProductAlert {
   id: string;
   category: AlertCategory;
@@ -3814,6 +3823,7 @@ export interface ProductAlert {
   action: ProductAlertAction;
   attention_category: AttentionCategory;
   urgency: AttentionUrgency;
+  grouped_visits?: ProductAlertGroupMember[];
 }
 
 export interface ProductAlertListResponse {
@@ -6073,6 +6083,13 @@ export type PlaceStoryEventKind =
 
 export type PlaceStoryImportance = "major" | "notable";
 
+export interface PlaceStorySourceContribution {
+  source_id: string;
+  source_name: string;
+  visit_id: string;
+  source_archived: boolean;
+}
+
 export interface PlaceStoryEntry {
   id: string;
   kind: PlaceStoryEventKind;
@@ -6092,6 +6109,8 @@ export interface PlaceStoryEntry {
   zone_name?: string | null;
   source_id?: string | null;
   detail_refs: Record<string, string>;
+  source_scope?: "place_level" | "single_source" | "multiple_sources";
+  contributions?: PlaceStorySourceContribution[];
 }
 
 export interface PlaceStoryResponse {

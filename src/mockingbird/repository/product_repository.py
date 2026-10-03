@@ -10,7 +10,7 @@ from collections import Counter
 import contextlib
 import csv
 import dataclasses
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 import hashlib
 import hmac
@@ -31,9 +31,9 @@ import uuid
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
 )
-from sqlalchemy import Engine, and_, delete, func, or_, select
+from sqlalchemy import Engine, and_, delete, func, literal, or_, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column
 
 from mockingbird.monitoring.model_runtime_health import ModelRuntimeHealthEvaluation
 from mockingbird.repository.review_queue_filters import (
@@ -141,6 +141,7 @@ from mockingbird.analytics.feature_change_comparison import (
 from mockingbird.analytics.feature_yield import compute_feature_yield
 from mockingbird.analytics.place_story import (
     PlaceStoryEvent,
+    StorySourceContribution,
     build_place_story,
     comparison_insight_event,
     compute_diversity_milestone_events,
@@ -580,6 +581,7 @@ from mockingbird.api.schemas import (
     PlaceActivityReportResponse,
     Point,
     ProductAlert,
+    ProductAlertGroupMember,
     ProductAlertAction,
     UserNotificationPreferences,
     UserNotificationPreferencesUpdate,
@@ -863,6 +865,7 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservationUpdate,
     PlaceStoryEntry,
     PlaceStoryResponse,
+    PlaceStorySourceContribution,
     PlaceYearOverYearResponse,
     SelfPasswordChangeRequest,
     SignInRequest,
@@ -4111,6 +4114,16 @@ def _place_story_entry(event: PlaceStoryEvent) -> PlaceStoryEntry:
         zone_name=event.zone_name,
         source_id=event.source_id,
         detail_refs=dict(event.detail_refs),
+        source_scope=event.source_scope,
+        contributions=[
+            PlaceStorySourceContribution(
+                source_id=item.source_id,
+                source_name=item.source_name,
+                visit_id=item.visit_id,
+                source_archived=item.source_archived,
+            )
+            for item in event.contributions
+        ],
     )
 
 
@@ -20678,7 +20691,7 @@ class ProductRepository:
         if category is not None and visible is not None and category not in visible:
             return ProductAlertListResponse(items=[], next_offset=None)
         with self.session_factory() as session:
-            query = select(ProductAlertModel)
+            query = select(ProductAlertModel).where(~self._grouped_review_alert_condition())
             if category is not None:
                 query = query.where(ProductAlertModel.category == category.value)
             elif visible is not None:
@@ -20730,12 +20743,13 @@ class ProductRepository:
                     ProductAlertModel.resolved_at.is_(None),
                     acknowledgement.read_at.is_(None),
                     acknowledgement.dismissed_at.is_(None),
+                    ~self._grouped_review_alert_condition(),
                 )
             )
             recent_query = (
                 select(ProductAlertModel)
                 .outerjoin(acknowledgement, join_condition)
-                .where(acknowledgement.dismissed_at.is_(None))
+                .where(acknowledgement.dismissed_at.is_(None), ~self._grouped_review_alert_condition())
             )
             if visible is not None:
                 allowed_values = [item.value for item in visible]
@@ -20771,6 +20785,82 @@ class ProductRepository:
         ).all()
         return {row.alert_id: row for row in rows}
 
+    @staticmethod
+    def _grouped_review_alert_condition() -> Any:
+        """SQL predicate: this review alert is another camera's view of an
+        encounter whose *primary* Visit's review alert is still active, so the
+        presentation shows one item for the encounter, not one per camera.
+
+        Cross-camera Calm Attention grouping (Multi-Camera Attribution &
+        Filter Consolidation v1). Reuses the accepted `associated`-tier
+        cross-camera association and its canonical primary/secondary order
+        (the same rule counting uses, `_associated_visit_ids_to_exclude_from_
+        counting`) -- a `possible` pair is never grouped, two merely similar
+        simultaneous sightings never are. It hides nothing durable: the
+        member's alert row, Visit and review state are untouched, resolution
+        stays global, and per-user acknowledgement rows are never merged.
+        When the primary's alert resolves the member is no longer hidden, so
+        an encounter that still needs a camera's review is never silently
+        dropped."""
+
+        primary_alert = aliased(ProductAlertModel)
+        hidden_visit_ids = (
+            select(CrossCameraVisitAssociationModel.secondary_visit_id)
+            .join(
+                primary_alert,
+                and_(
+                    primary_alert.visit_id == CrossCameraVisitAssociationModel.primary_visit_id,
+                    primary_alert.category == AlertCategory.review.value,
+                    primary_alert.resolved_at.is_(None),
+                    primary_alert.deduplication_key
+                    == literal("review:") + CrossCameraVisitAssociationModel.primary_visit_id,
+                ),
+            )
+            .where(CrossCameraVisitAssociationModel.tier == "associated")
+        )
+        return and_(
+            ProductAlertModel.category == AlertCategory.review.value,
+            ProductAlertModel.resolved_at.is_(None),
+            ProductAlertModel.visit_id.in_(hidden_visit_ids),
+        )
+
+    @staticmethod
+    def _grouped_review_alert_members(
+        session: Session, primary_visit_ids: Sequence[str]
+    ) -> list[ProductAlertModel]:
+        """Active review alerts folded under the given primary Visit(s),
+        transitively (A-B and B-C associated => C is also one encounter),
+        bounded to a few hops. Mirrors `_grouped_review_alert_condition`."""
+
+        found: dict[str, ProductAlertModel] = {}
+        frontier = list(primary_visit_ids)
+        seen = set(frontier)
+        for _ in range(4):
+            if not frontier:
+                break
+            rows = session.scalars(
+                select(ProductAlertModel)
+                .join(
+                    CrossCameraVisitAssociationModel,
+                    CrossCameraVisitAssociationModel.secondary_visit_id == ProductAlertModel.visit_id,
+                )
+                .where(
+                    CrossCameraVisitAssociationModel.tier == "associated",
+                    CrossCameraVisitAssociationModel.primary_visit_id.in_(frontier),
+                    ProductAlertModel.category == AlertCategory.review.value,
+                    ProductAlertModel.resolved_at.is_(None),
+                    ProductAlertModel.deduplication_key == literal("review:") + ProductAlertModel.visit_id,
+                )
+            ).all()
+            frontier = []
+            for member in rows:
+                if member.visit_id is None or member.visit_id in seen:
+                    continue
+                seen.add(member.visit_id)
+                found[member.id] = member
+                frontier.append(member.visit_id)
+        return list(found.values())
+
     def _acknowledge_product_alerts(
         self, alert_ids: Sequence[str], *, user_id: str, read: bool, dismiss: bool
     ) -> int:
@@ -20790,6 +20880,26 @@ class ProductRepository:
                         select(ProductAlertModel.id).where(ProductAlertModel.id.in_(list(alert_ids)))
                     ).all()
                 )
+                # Acknowledging a grouped encounter's representative covers the
+                # same encounter's other-camera alerts *for this user only*, so
+                # resolving the representative later never resurfaces the same
+                # sighting as fresh noise. Never touches another user's rows.
+                requested_count = len(existing_ids)
+                represented_visit_ids = list(
+                    session.scalars(
+                        select(ProductAlertModel.visit_id).where(
+                            ProductAlertModel.id.in_(existing_ids),
+                            ProductAlertModel.category == AlertCategory.review.value,
+                            ProductAlertModel.visit_id.is_not(None),
+                        )
+                    ).all()
+                )
+                if represented_visit_ids:
+                    existing_ids.extend(
+                        member.id
+                        for member in self._grouped_review_alert_members(session, represented_visit_ids)
+                        if member.id not in existing_ids
+                    )
                 acknowledgements = self._alert_acknowledgements(session, user_id=user_id, alert_ids=existing_ids)
                 for alert_id in existing_ids:
                     row = acknowledgements.get(alert_id)
@@ -20805,7 +20915,7 @@ class ProductRepository:
                         row.dismissed_at, changed = now, True
                     if changed:
                         row.updated_at = now
-                return len(existing_ids)
+                return requested_count
 
     def mark_product_alert_read(self, alert_id: str, *, user_id: str) -> bool:
         return self._acknowledge_product_alerts([alert_id], user_id=user_id, read=True, dismiss=False) == 1
@@ -20888,7 +20998,28 @@ class ProductRepository:
             action=action,
             attention_category=self._attention_category_for(category),
             urgency=self._attention_urgency_for(category, severity),
+            grouped_visits=self._grouped_visits_for(session, alert),
         )
+
+    def _grouped_visits_for(self, session: Session, alert: ProductAlertModel) -> list[ProductAlertGroupMember]:
+        if alert.category != AlertCategory.review.value or alert.resolved_at is not None or not alert.visit_id:
+            return []
+        members = self._grouped_review_alert_members(session, [alert.visit_id])
+        result: list[ProductAlertGroupMember] = []
+        for member in sorted(members, key=lambda item: (_as_utc(item.created_at), item.id)):
+            stream = session.get(StreamModel, member.stream_id) if member.stream_id else None
+            source = session.get(CameraSourceModel, stream.source_id) if stream is not None else None
+            result.append(
+                ProductAlertGroupMember(
+                    alert_id=member.id,
+                    visit_id=member.visit_id,
+                    stream_id=member.stream_id,
+                    stream_name=stream.name if stream is not None else None,
+                    source_id=source.id if source is not None else None,
+                    source_name=source.name if source is not None else None,
+                )
+            )
+        return result
 
     @staticmethod
     def _attention_category_for(category: AlertCategory) -> AttentionCategory:
@@ -36854,17 +36985,149 @@ class ProductRepository:
             offset=offset,
             page_size=page_size,
         )
+        # Attribution is attached only to the page actually returned (bounded
+        # by `page_size`), never to every event the Story could build.
+        page_events = self._place_story_attach_contributions(
+            page.events,
+            taxonomy_index=taxonomy_index,
+            local_timezone=resolved_local_timezone,
+        )
 
         return PlaceStoryResponse(
             generated_at=generation_moment,
             period_start_at=period_start_at,
             period_end_at=period_end_at,
-            entries=[_place_story_entry(event) for event in page.events],
+            entries=[_place_story_entry(event) for event in page_events],
             has_more=page.has_more,
             next_offset=page.next_offset,
             total_matched=page.total_matched,
             is_early_experience=intelligence.baseline.maturity == "insufficient",
         )
+
+    def _place_story_attach_contributions(
+        self,
+        events: Sequence[PlaceStoryEvent],
+        *,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        local_timezone: tzinfo,
+    ) -> list[PlaceStoryEvent]:
+        """Multi-Camera Attribution & Filter Consolidation v1: re-attach the
+        camera(s) behind Story entries that are anchored to a concrete
+        encounter, which the shared all-time/trailing aggregates cannot
+        carry (a `MIN()`/`GROUP BY reviewed_label` has no Visit or Source).
+
+        Anchored kinds only -- `first_seen`/`diversity_milestone` (the
+        taxon's earliest reviewed Visit on its debut day) and `return` (that
+        taxon's reviewed Visits on the displayed presence day). Aggregate
+        trends (`regularity_change`, `noteworthy_activity`), Feature changes,
+        phenology and insights stay honestly Place-level: no camera is
+        invented for them. Contributors are the stable Sources of the
+        anchoring reviewed Visits, one entry per Source (its earliest Visit),
+        plus the Sources of any *confidently associated* cross-camera partner
+        Visit that is itself reviewed as the same taxon -- the same
+        `associated`-tier rule counting already uses; a `possible` pair is
+        never merged. Read-only; reviewed truth is never touched.
+        """
+
+        anchored_kinds = {"first_seen", "diversity_milestone", "return"}
+        if not any(event.kind in anchored_kinds and event.taxon_label for event in events):
+            return list(events)
+
+        def resolve_label(label: str | None) -> str | None:
+            if not label:
+                return None
+            taxonomy = taxonomy_index.get(_taxonomy_key(label))
+            if taxonomy is None:
+                return None
+            return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy)).label
+
+        result: list[PlaceStoryEvent] = []
+        with self.session_factory() as session:
+            real_stream_ids = _real_stream_ids(session)
+
+            def visit_rows(*conditions: Any) -> list[Any]:
+                return list(
+                    session.execute(
+                        select(
+                            VisitModel.id,
+                            VisitModel.reviewed_label,
+                            EventModel.started_at,
+                            CameraSourceModel.id,
+                            CameraSourceModel.name,
+                            CameraSourceModel.status,
+                        )
+                        .join(EventModel, VisitModel.event_id == EventModel.id)
+                        .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                        .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                        .where(
+                            VisitModel.is_superseded.is_(False),
+                            VisitModel.review_status == ReviewStatus.reviewed.value,
+                            VisitModel.reviewed_label.is_not(None),
+                            EventModel.stream_id.in_(real_stream_ids),
+                            *conditions,
+                        )
+                        .order_by(EventModel.started_at, VisitModel.id)
+                    ).all()
+                )
+
+            for event in events:
+                if event.kind not in anchored_kinds or not event.taxon_label:
+                    result.append(event)
+                    continue
+                day_start = datetime.combine(event.event_date, datetime.min.time(), tzinfo=local_timezone)
+                day_rows = visit_rows(
+                    EventModel.started_at >= day_start.astimezone(UTC).replace(tzinfo=None),
+                    EventModel.started_at < (day_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None),
+                )
+                same_taxon = [row for row in day_rows if resolve_label(row[1]) == event.taxon_label]
+                if event.kind == "return":
+                    anchors = same_taxon
+                else:
+                    # Debut: the single earliest encounter, never every camera
+                    # that happened to see the taxon later that day.
+                    anchors = same_taxon[:1]
+                partner_ids: set[str] = set()
+                if anchors:
+                    anchor_ids = [row[0] for row in anchors]
+                    for primary_id, secondary_id in session.execute(
+                        select(
+                            CrossCameraVisitAssociationModel.primary_visit_id,
+                            CrossCameraVisitAssociationModel.secondary_visit_id,
+                        ).where(
+                            CrossCameraVisitAssociationModel.tier == "associated",
+                            or_(
+                                CrossCameraVisitAssociationModel.primary_visit_id.in_(anchor_ids),
+                                CrossCameraVisitAssociationModel.secondary_visit_id.in_(anchor_ids),
+                            ),
+                        )
+                    ).all():
+                        partner_ids.update({primary_id, secondary_id} - set(anchor_ids))
+                partner_rows = (
+                    [
+                        row
+                        for row in visit_rows(VisitModel.id.in_(sorted(partner_ids)))
+                        if resolve_label(row[1]) == event.taxon_label
+                    ]
+                    if partner_ids
+                    else []
+                )
+                earliest_by_source: dict[str, StorySourceContribution] = {}
+                for row in sorted([*anchors, *partner_rows], key=lambda item: (_as_utc(item[2]), item[0])):
+                    source_id = row[3]
+                    if source_id not in earliest_by_source:
+                        earliest_by_source[source_id] = StorySourceContribution(
+                            source_id=source_id,
+                            source_name=row[4],
+                            visit_id=row[0],
+                            source_archived=row[5] == SourceStatus.archived.value,
+                        )
+                contributions = tuple(earliest_by_source.values())
+                result.append(
+                    replace(event, contributions=contributions, visit_id=contributions[0].visit_id)
+                    if contributions
+                    else event
+                )
+        return result
 
     def _place_story_feature_events(
         self,

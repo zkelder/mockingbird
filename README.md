@@ -172,6 +172,17 @@ remote shell, cloud relay, audio, or recording, and the host cannot trigger
 or run the installer remotely. See
 [Camera Node boundary](docs/camera-node-boundary-design.md).
 
+### Supported camera limits
+
+Armed continuous monitoring of **RTSP, local USB, and Windows DirectShow**
+cameras (the legacy local-camera path) runs **at most two Streams at a time**
+on one Host; further armed Streams show "Waiting for capacity" and start when
+a slot frees. Backend live previews of those cameras are separately limited to
+two at a time. **Camera Node** cameras use the Observation Engine, which has
+no such cap (each Stream is its own bounded session), and are never counted
+against it. This is a documented 1.0 limit, not a hardware measurement; see
+[Runtime map](docs/runtime-map.md#legacy-local-camera-concurrency-limit).
+
 ### Start observing wildlife
 
 Every configured Stream shows the same **Observation** panel, and it works

@@ -93,7 +93,7 @@ test("filters map to server filters and round-trip through the URL", async ({ pa
   });
 
   await page.goto("/ecological-destinations?stream=stream-a&scope=offline&from=2026-08-01");
-  await expect(page.getByLabel("Camera / Stream")).toHaveValue("stream-a");
+  await expect(page.getByLabel("Camera")).toHaveValue("stream-a");
   await expect(page.getByLabel("Captured")).toHaveValue("offline");
   await expect(page.getByLabel("From")).toHaveValue("2026-08-01");
 
@@ -105,7 +105,7 @@ test("filters map to server filters and round-trip through the URL", async ({ pa
   expect((requestFilters as unknown as { start_at: string }).start_at).toContain("2026-08-01");
 
   // Defaults preserve current behavior: no filter keys in the URL.
-  await page.getByLabel("Camera / Stream").selectOption("");
+  await page.getByLabel("Camera").selectOption("");
   await page.getByLabel("Captured").selectOption("both");
   await page.getByLabel("From").fill("");
   await expect(page).not.toHaveURL(/[?]/);

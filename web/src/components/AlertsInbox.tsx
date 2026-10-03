@@ -58,6 +58,7 @@ function AlertRow({
   onChanged?: () => Promise<void>;
 }) {
   const attention = useAttention();
+  const groupedVisits = alert.grouped_visits ?? [];
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function update(kind: "read" | "dismiss") {
@@ -93,6 +94,26 @@ function AlertRow({
       </div>
       <p>{alert.message}</p>
       {alert.stream_name || alert.zone_name ? <span className="meta-text">{[alert.stream_name, alert.zone_name].filter(Boolean).join(" · ")}</span> : null}
+      {groupedVisits.length > 0 ? (
+        <div className="alert-row-grouped" data-testid="alert-grouped-cameras">
+          <span className="meta-text">
+            Also seen by {groupedVisits.map((member) => member.source_name ?? member.stream_name ?? "another camera").join(", ")} --
+            one encounter, each camera&rsquo;s Visit still reviewed on its own.
+          </span>
+          <span className="detail-actions">
+            {groupedVisits.map((member) => (
+              <button
+                className="text-action"
+                key={member.alert_id}
+                onClick={() => onAction({ action_type: "review_visit", visit_id: member.visit_id })}
+                type="button"
+              >
+                Review {member.source_name ?? member.stream_name ?? "other camera"}&rsquo;s Visit
+              </button>
+            ))}
+          </span>
+        </div>
+      ) : null}
       {error ? <span className="error-text">{error}</span> : null}
       <div className="detail-actions">
         <button className="secondary-action" disabled={isSaving} onClick={() => void openAction()} type="button">{actionLabel(alert.action)}</button>

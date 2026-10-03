@@ -6810,6 +6810,20 @@ class ProductAlertAction(BaseModel):
     story_kind: str | None = None
 
 
+class ProductAlertGroupMember(BaseModel):
+    """Another camera's own review alert folded into this one because the two
+    Visits are a confidently-`associated` cross-camera encounter. Presentation
+    only: the member Visit/alert still exist and are independently reviewable;
+    `visit_id` is the drill-down to that camera's evidence."""
+
+    alert_id: str
+    visit_id: str
+    stream_id: str | None = None
+    stream_name: str | None = None
+    source_id: str | None = None
+    source_name: str | None = None
+
+
 class ProductAlert(BaseModel):
     id: str
     category: AlertCategory
@@ -6834,6 +6848,10 @@ class ProductAlert(BaseModel):
     # `ProductRepository._attention_category_for`/`_attention_urgency_for`.
     attention_category: AttentionCategory
     urgency: AttentionUrgency
+    # Cross-camera Calm Attention grouping (Multi-Camera Attribution & Filter
+    # Consolidation v1): other cameras' review alerts for the same associated
+    # encounter, empty for every ungrouped alert.
+    grouped_visits: list[ProductAlertGroupMember] = Field(default_factory=list)
 
 
 class ProductAlertListResponse(BaseModel):
@@ -9563,6 +9581,16 @@ PlaceStoryEventKind = Literal[
 PlaceStoryImportance = Literal["major", "notable"]
 
 
+class PlaceStorySourceContribution(BaseModel):
+    """One camera that contributed the encounter a Story entry is anchored
+    to; `visit_id` opens that camera's own evidence."""
+
+    source_id: str
+    source_name: str
+    visit_id: str
+    source_archived: bool = False
+
+
 class PlaceStoryEntry(BaseModel):
     """One Place Story timeline entry -- see `mockingbird.analytics.place_
     story.PlaceStoryEvent` for the full field-by-field rationale. `kind` is
@@ -9589,6 +9617,8 @@ class PlaceStoryEntry(BaseModel):
     zone_name: str | None = None
     source_id: str | None = None
     detail_refs: dict[str, str] = Field(default_factory=dict)
+    source_scope: Literal["place_level", "single_source", "multiple_sources"] = "place_level"
+    contributions: list[PlaceStorySourceContribution] = Field(default_factory=list)
 
 
 class PlaceStoryResponse(BaseModel):

@@ -9,6 +9,8 @@ import type {
   VisitCollectionSummary,
   Zone,
 } from "../api/types";
+import { CameraFilter } from "../components/CameraFilter";
+import { streamCameraOptions } from "../cameraFilter";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
@@ -180,7 +182,7 @@ export function CollectionsPage({
       <label>Order <select value={filters.oldest_first ? "oldest" : "newest"} onChange={(event) => { setFilters({ ...filters, oldest_first: event.target.value === "oldest" }); setOffset(0); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
       <label>Review outcome <select value={filters.review_filter ?? "all"} onChange={(event) => { setFilters({ ...filters, review_filter: event.target.value as ActivityLibraryReviewFilter }); setOffset(0); }}>{reviewOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       <label>Label <input value={filters.confirmed_label ?? ""} onChange={(event) => { setFilters({ ...filters, confirmed_label: event.target.value || null }); setOffset(0); }} placeholder="Reviewed label" /></label>
-      <label>Stream <select value={filters.stream_id ?? ""} onChange={(event) => { setFilters({ ...filters, stream_id: event.target.value || null, zone_id: null }); setOffset(0); }}><option value="">All Streams</option>{streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}</select></label>
+      <CameraFilter options={streamCameraOptions(streams, sources)} value={filters.stream_id ? [filters.stream_id] : []} onChange={(ids) => { setFilters({ ...filters, stream_id: ids[0] ?? null, zone_id: null }); setOffset(0); }} />
       <label>Zone <select value={filters.zone_id ?? ""} onChange={(event) => { setFilters({ ...filters, zone_id: event.target.value || null }); setOffset(0); }}><option value="">All Zones</option>{visibleZones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label>
     </div></section>
     {message ? <div className="notice-panel" role="status">{message}</div> : null}

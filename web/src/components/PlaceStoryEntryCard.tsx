@@ -57,6 +57,9 @@ export function PlaceStoryEntryCard({
   onOpenBirdLog,
   onOpenPlaceActivityReport,
 }: PlaceStoryEntryCardProps) {
+  // Cameras that contributed the concrete encounter(s) behind this entry.
+  // Empty for a genuinely Place-level entry -- a camera is never implied.
+  const contributions = entry.contributions ?? [];
   return (
     <li className="place-story-card">
       <div className="place-story-card-heading">
@@ -75,12 +78,24 @@ export function PlaceStoryEntryCard({
       </div>
       <h3>{entry.title}</h3>
       <p>{entry.summary}</p>
+      {contributions.length > 0 ? (
+        <p className="place-story-card-cameras" data-testid="story-cameras">
+          {contributions.length > 1 ? "Seen by " : "Seen on "}
+          {contributions.map((item) => `${item.source_name}${item.source_archived ? " (archived)" : ""}`).join(", ")}
+        </p>
+      ) : null}
       <div className="place-story-card-actions">
-        {entry.visit_id ? (
-          <button className="text-action" onClick={() => onOpenVisit(entry.visit_id!)} type="button">
-            View evidence
-          </button>
-        ) : null}
+        {contributions.length > 1
+          ? contributions.map((item) => (
+              <button className="text-action" key={item.source_id} onClick={() => onOpenVisit(item.visit_id)} type="button">
+                View evidence from {item.source_name}
+              </button>
+            ))
+          : entry.visit_id ? (
+              <button className="text-action" onClick={() => onOpenVisit(entry.visit_id!)} type="button">
+                View evidence
+              </button>
+            ) : null}
         {entry.taxon_label && onOpenTaxonStory ? (
           <button className="text-action" onClick={() => onOpenTaxonStory(entry.taxon_label!)} type="button">
             {entry.taxon_display_name ?? "View"}&rsquo;s story

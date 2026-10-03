@@ -186,7 +186,7 @@ test("a ranked species suggestion becomes correction, Bird Log, and export truth
   await expect(birdLogEntry).toHaveCount(1);
   await birdLogEntry.getByRole("button", { name: "Open history" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Blue Jay" })).toBeVisible();
-  await page.getByRole("combobox", { name: "Stream", exact: true }).selectOption(stream.id);
+  await page.locator("label.camera-filter select").selectOption(stream.id);
   const galleryCards = page.locator("article.journal-gallery-card");
   await expect(galleryCards).toHaveCount(1);
   await expect(galleryCards).toContainText(`${source.name} · ${stream.name} · Feeder`);

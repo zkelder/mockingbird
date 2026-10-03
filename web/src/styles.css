@@ -10328,3 +10328,28 @@ details > summary:focus-visible {
     display: block;
   }
 }
+
+.place-story-card-cameras {
+  margin: 0;
+  color: #536258;
+  font-size: 0.85rem;
+}
+
+.alert-row-grouped {
+  display: grid;
+  gap: 4px;
+}
+
+fieldset.camera-filter {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.camera-filter-stream-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

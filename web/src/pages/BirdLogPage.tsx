@@ -19,6 +19,8 @@ import type {
   Zone,
 } from "../api/types";
 import { activityLibraryPath } from "./ActivityLibraryPage";
+import { CameraFilter } from "../components/CameraFilter";
+import { streamCameraOptions } from "../cameraFilter";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
@@ -387,6 +389,7 @@ function BreakdownList({
 }
 
 export function BirdLogPage({
+  sources,
   streams,
   onOpenVisit,
   onOpenStreams,
@@ -786,13 +789,11 @@ export function BirdLogPage({
             >Apply</button>
           </>
         ) : null}
-        <label>
-          Stream
-          <select onChange={(event) => commitLocation({ ...location, streamId: event.target.value, zoneId: "", offset: 0 })} value={location.streamId}>
-            <option value="">All Streams</option>
-            {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
-          </select>
-        </label>
+        <CameraFilter
+          onChange={(ids) => commitLocation({ ...location, streamId: ids[0] ?? "", zoneId: "", offset: 0 })}
+          options={streamCameraOptions(streams, sources)}
+          value={location.streamId ? [location.streamId] : []}
+        />
         <label>
           Zone
           <select onChange={(event) => commitLocation({ ...location, zoneId: event.target.value, offset: 0 })} value={location.zoneId}>

@@ -4139,8 +4139,64 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last authorized
-milestone, *Research Export & Ecological Workflow Completion v1* (Milestone 4),
-is executed and closed below. Milestone 5 is not authorized.
+milestone, *Multi-Camera Attribution & Filter Consolidation v1*, is executed and
+closed below. Public Product/Deployment/Support Closure and every other later
+item are not authorized.
+
+**Closure recorded, 2026-10-03, by Multi-Camera Attribution & Filter
+Consolidation v1** (see [report](multi-camera-attribution-filter-consolidation-v1-report.md)
+and [contract](multi-camera-attribution-filter-consolidation-contract.md)).
+**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+Starting HEAD `f886400`, schema `v62` unchanged. All three residuals reproduced
+(none stale): Place Story now carries per-camera attribution and evidence
+drill-down for encounter-anchored entries (Place-level entries stay camera-free);
+nine camera/Stream filters consolidated onto one `CameraFilter` + URL
+vocabulary (Review Queue and target-selecting forms deliberately kept);
+`associated` cross-camera review alerts present as one Attention item with
+per-user acknowledgement and global resolution intact. The legacy
+`DEFAULT_MAX_CONCURRENT_STREAMS = 2` limit was verified (legacy RTSP/USB/
+DirectShow supervisor only; Camera Node exempt; previews carry a separate
+2-slot cap) and documented in the README and runtime map. Validation: focused
+backend (Story/Attention/cross-camera/new scenario) 122+ passed; frontend
+typecheck/build clean; full browser suite 226/226; Core 6374 passed / 2 failed /
+4 skipped -- `test_scene_confusor_repository::test_revision_from_real_to_false_
+retracts_stale_real_protection` fails identically on the pre-change baseline
+(pre-existing, not attributable) and `test_transport_worker::test_retryable_
+failure_...` passes in isolation (flaky under full-suite load).
+
+**Scheduler reconciliation, 2026-10-03 (accepted delta only; no history
+rewritten):** *Research Export & Ecological Workflow Completion v1* is
+**ACCEPTED, classification A** at HEAD `f886400`; schema `v62` (unchanged);
+Core 6365 passed / 0 failed; browser 218/218. Current authorized milestone:
+**Multi-Camera Attribution & Filter Consolidation v1**.
+
+**1.0 scope lock, 2026-10-03 (owner-side scope decisions, recorded without
+expansion):**
+
+- Environmental Sensor Ingestion: **deferred post-1.0**.
+- Intervention & Habitat Outcomes: **deferred post-1.0**; dependent Ecosystem
+  UX work that exists only for those new domains is deferred with them.
+- Resource-aware replacement for the legacy 2-Stream local-camera cap:
+  **deferred**; the real supported limit is documented instead (see
+  [multi-camera-attribution-filter-consolidation-contract.md](multi-camera-attribution-filter-consolidation-contract.md)).
+- Remote LTE/data-budget operator productization, Multi-Observatory Software
+  Model, optional closed-browser/background push transport, packaged Linux Host
+  distribution: **post-1.0**.
+- Native Windows remains the first public 1.0 Host acceptance/support target.
+- BirdNET acoustics remain release-ready **optional**; official MockingBird
+  packaging is prohibited from redistributing BirdNET model weights.
+- Built-in cloud remote access is **not** part of 1.0; documented
+  overlay-network remote access remains the supported posture.
+- Gate G remains **waived, not passed**.
+- The two disclosed Camera Node rollback residuals are not a feature
+  milestone; they are release-hardening defects only if they reproduce against
+  the supported 1.0 update/recovery path.
+
+Items 5-7 and 9-12 of the §8 queue are re-scoped accordingly (annotated there).
+
+**Superseded header (kept for history):** the last authorized
+milestone before this one, *Research Export & Ecological Workflow Completion v1* (Milestone 4),
+is executed and closed below.
 
 **Closure recorded, 2026-10-02, by Research Export & Ecological Workflow
 Completion v1** (see [report](research-export-ecological-workflow-completion-v1-report.md)).
@@ -14167,15 +14223,15 @@ carrier/power acceptance remains external.
 1. Attention Integrity & Health Reliability v1 -- **ACCEPTED, A**.
 2. Everyday UX & Accessibility Closure v1 -- **ACCEPTED, A** (`e5cbfa3`).
 3. Orphan Media Integrity & Recovery v1 -- **ACCEPTED, A** (`6b927da`).
-4. Research Export & Ecological Workflow Completion v1 -- **EXECUTED, pending acceptance** (§3).
-5. Environmental Sensor Ingestion Foundation v1.
-6. Intervention & Habitat Outcomes v1.
-7. Ecosystem UX Closure v1, limited to then-reproduced residuals.
-8. Multi-Camera Attribution & Filter Consolidation v1.
-9. Legacy Local-Camera Concurrency & Remote Operator UX v1.
-10. Multi-Observatory Software Model v1.
-11. Optional Background Notification Transport v1.
-12. Linux Host Distribution & Service Lifecycle v1.
+4. Research Export & Ecological Workflow Completion v1 -- **ACCEPTED, A** (`f886400`; Core 6365/0, browser 218/218).
+5. Environmental Sensor Ingestion Foundation v1 -- **deferred post-1.0** (2026-10-03 scope lock).
+6. Intervention & Habitat Outcomes v1 -- **deferred post-1.0** (2026-10-03 scope lock).
+7. Ecosystem UX Closure v1 -- **deferred** with items 5-6 where it exists only for those domains.
+8. Multi-Camera Attribution & Filter Consolidation v1 -- **EXECUTED 2026-10-03, pending acceptance** (§3).
+9. Legacy Local-Camera Concurrency & Remote Operator UX v1 -- resource-aware scheduler **deferred**; real limit documented instead; remote LTE/data-budget operator UX **post-1.0**.
+10. Multi-Observatory Software Model v1 -- **post-1.0**.
+11. Optional Background Notification Transport v1 -- **post-1.0**.
+12. Linux Host Distribution & Service Lifecycle v1 -- **post-1.0**.
 13. Public Product, Deployment & Support Closure v1.
 14. Final 1.0 Hardening & Launch Candidate.
 
@@ -15515,7 +15571,7 @@ rather than rewriting accepted history in place.
 *(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Research Export & Ecological Workflow Completion v1.
+- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Multi-Camera Attribution & Filter Consolidation v1. Latest accepted: Research Export & Ecological Workflow Completion v1 (`f886400`, schema `v62`, Core 6365/0, browser 218/218, A).
 - **Latest accepted milestone:** Orphan Media Integrity & Recovery v1,
   classification A (HEAD `6b927da`, schema `v62`; Core 6312/0, browser 211/211).
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
