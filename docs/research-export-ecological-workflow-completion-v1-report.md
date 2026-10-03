@@ -59,6 +59,11 @@ Starting HEAD `bbc803b`, schema `v62` (unchanged, no migration).
   `tests/test_research_export_download.py` (auth, traversal, absolute path, stale,
   symlinked dir/members, determinism, temp cleanup); Playwright download spec.
 
+Completion-pass validation (on `73429ee`): research/export/camtrap/privacy/eligibility
+subset 408 passed; `tsc --noEmit` and production build clean; Core
+(`verify_core.py`) 6365 passed / 0 failed, 4 skipped, 11 xfailed; full browser
+suite 218/218 (shared page and client changed, so the full suite was run).
+
 ## Bounded limitations
 
 - Darwin Core / iNaturalist submissions reference media but do not copy bytes.
