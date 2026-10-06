@@ -2,7 +2,8 @@
 
 Date: 2026-10-03. Starting state: `main` at `28463ea`, schema `v62`, source
 version `0.1.0`. Docs/public-surface milestone; no application code, schema,
-packaging build, or version change. Acceptance: pending independent review.
+packaging build, or version change. Acceptance: **ACCEPTED, classification A** (2026-10-06, accepted HEAD
+`b7f708c`; docs tier, targeted run 125 passed).
 
 ## Contract
 

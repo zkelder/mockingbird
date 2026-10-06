@@ -51,6 +51,17 @@ milestone, *Everyday UX & Accessibility Closure v1*, was then authorized,
 executed, and closed -- see §3. Current authorization is **NONE -- GLOBAL
 RECONCILIATION REQUIRED**.
 
+**Accepted 2026-10-06 (scheduler reconciliation; accepted delta only):**
+*Public Product, Deployment & Support Closure v1* is accepted at
+classification **A** by ChatGPT global sequencing: HEAD `b7f708c`, schema
+`v62` (unchanged), source version `0.1.0` (unchanged). Accepted validation:
+docs tier, including the completed targeted run of **125 passed** (no Core
+or browser run -- no runtime behavior changed). This reconciliation re-ran no
+validation and changed no application code, packaging, version, or schema.
+Current authorization remains **NONE -- ChatGPT GLOBAL SEQUENCING DECISION
+PENDING**. No feature-freeze declaration, Final 1.0 Hardening authorization,
+version bump, tag, push, or release is made by this record.
+
 **Corrected 2026-09-06 by Global Remaining Product-Development &
 Release-Queue Reconciliation v1** (see
 [global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)).
@@ -1001,6 +1012,13 @@ supersede that checkpoint state.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Current accepted state, 2026-10-06 (supersedes the dated notes below where
+they conflict):** latest accepted milestone *Public Product, Deployment &
+Support Closure v1*, classification **A**; HEAD `b7f708c`; schema `v62`;
+version `0.1.0`; authorization **NONE** pending ChatGPT's global sequencing
+decision. Working tree: the seven preserved untracked detector files (§13) and
+`uv.lock`, untouched. See §3.
 
 **Current sequencing correction, 2026-09-29, by Pre-1.0 Software Gap Audit &
 Contract Lock v1:** the accepted implementation/artifact facts below remain the
@@ -4138,14 +4156,35 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Authorization: NONE -- GLOBAL RECONCILIATION REQUIRED.** The last authorized
-milestone, *Public Product, Deployment & Support Closure v1*, is executed and
-closed below. Final 1.0 Hardening and every other later item are not
+**Authorization: NONE -- AWAITING ChatGPT GLOBAL SEQUENCING DECISION.** The last
+authorized milestone, *Public Product, Deployment & Support Closure v1*, is
+executed, closed, and now **ACCEPTED, classification A** (see the acceptance
+record directly below). Final 1.0 Hardening and every other later item are not
 authorized, and no feature-freeze declaration is made by this record.
+
+**Acceptance recorded, 2026-10-06 (scheduler reconciliation; accepted delta
+only; no validation rerun):** *Public Product, Deployment & Support Closure v1*
+is accepted at classification **A**: accepted HEAD `b7f708c` (includes the
+acceptance-correction commit that reverted the unauthorized `pyproject.toml`
+delta), schema `v62` (unchanged), source version `0.1.0` (unchanged). Accepted
+validation: docs tier -- links, stale-claim greps, notices and packaging-doc
+tests -- with the completed targeted run of **125 passed**; Core and browser
+suites were not required because no application, schema, packaging or runtime
+behavior changed. Lane status: Gate F / Lane P public-presentation surface
+(README, support matrix, privacy-and-security, troubleshooting, SUPPORT/
+SECURITY/THIRD_PARTY_NOTICES, issue templates) is delivered and accepted; it
+is not re-opened. Open items recorded by the milestone and **supported by
+current evidence** (none is a new feature dependency): the `pyproject.toml`
+"v0.1 public release" comment/description and the `api/main.py:750` /
+`model-adapter-guardrails.md:9` "outdoor video intelligence" wording are
+Final 1.0 Hardening follow-ups; the owner-side checklist items in
+[owner-release-checklist.md](owner-release-checklist.md) remain undone; Windows
+11 and minimum GPU-driver support remain unvalidated by design. Local `main` is
+unpushed (30 commits ahead of `origin/main` at this reconciliation).
 
 **Closure recorded, 2026-10-03, by Public Product, Deployment & Support
 Closure v1** (see [report](public-product-deployment-support-closure-v1-report.md)).
-**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
+**Status: ACCEPTED -- classification A (recorded 2026-10-06; accepted HEAD `b7f708c`).**
 Starting HEAD `28463ea`, schema `v62` unchanged, source version `0.1.0`
 unchanged. Docs/public-surface only: no application code, schema, package build
 or version bump (`pyproject.toml` unchanged versus `28463ea`). New canonical documents: [support-matrix.md](support-matrix.md)
@@ -14267,7 +14306,7 @@ carrier/power acceptance remains external.
 10. Multi-Observatory Software Model v1 -- **post-1.0**.
 11. Optional Background Notification Transport v1 -- **post-1.0**.
 12. Linux Host Distribution & Service Lifecycle v1 -- **post-1.0**.
-13. Public Product, Deployment & Support Closure v1 -- **EXECUTED 2026-10-03, pending acceptance** (§3).
+13. Public Product, Deployment & Support Closure v1 -- **ACCEPTED, A** (`b7f708c`; docs tier, targeted 125 passed).
 14. Final 1.0 Hardening & Launch Candidate.
 
 No item is currently authorized. Each later item requires acceptance of its
@@ -15606,9 +15645,10 @@ rather than rewriting accepted history in place.
 *(Updated 2026-10-01; the checkpoint above is historical. §3 is the
 authoritative record.)*
 
-- **Authorization:** **NONE -- GLOBAL RECONCILIATION REQUIRED.** Latest executed, pending acceptance: Public Product, Deployment & Support Closure v1. Latest accepted: Multi-Camera Attribution & Filter Consolidation v1 (`28463ea`, schema `v62`, browser 226/226, Core 6374 passed with two attributed non-regressions, A).
-- **Latest accepted milestone:** Orphan Media Integrity & Recovery v1,
-  classification A (HEAD `6b927da`, schema `v62`; Core 6312/0, browser 211/211).
+- **Authorization:** **NONE -- AWAITING ChatGPT GLOBAL SEQUENCING DECISION.** Nothing is executed-pending-acceptance. Prior accepted: Multi-Camera Attribution & Filter Consolidation v1 (`28463ea`, schema `v62`, browser 226/226, Core 6374 passed with two attributed non-regressions, A).
+- **Latest accepted milestone:** Public Product, Deployment & Support Closure
+  v1, classification A (HEAD `b7f708c`, schema `v62`; docs tier, targeted
+  125 passed; accepted 2026-10-06).
 - **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
   `0.1.0` release; first public target `1.0.0`.
 - **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
@@ -15620,4 +15660,4 @@ authoritative record.)*
 - **Gate G:** waived, not passed. The owner is the sole pre-release
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
-- **Next action:** acceptance review of Milestone 4 and the next sequencing decision.
+- **Next action:** ChatGPT global sequencing decision (whether to declare the 1.0 capability set frozen and whether to authorize Final 1.0 Hardening).
