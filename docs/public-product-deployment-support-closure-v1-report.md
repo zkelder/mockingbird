@@ -2,15 +2,15 @@
 
 Date: 2026-10-03. Starting state: `main` at `28463ea`, schema `v62`, source
 version `0.1.0`. Docs/public-surface milestone; no application code, schema,
-packaging build, or version change.
+packaging build, or version change. Acceptance: pending independent review.
 
 ## Contract
 
 - **Phase:** pre-1.0 product completion; final planned pre-freeze docs and
   release-foundation milestone. Final 1.0 Hardening is **not** started.
 - **Allowed surfaces:** README, `docs/**`, SECURITY/SUPPORT/CONTRIBUTING/
-  THIRD_PARTY_NOTICES, `.github/ISSUE_TEMPLATE`, `pyproject.toml` comment and
-  `description` metadata.
+  THIRD_PARTY_NOTICES, `.github/ISSUE_TEMPLATE`. (`pyproject.toml` was not
+  authorized absent a reproduced release-blocking defect.)
 - **Non-goals:** deferred 1.0 capabilities, version bump, tag, push, new
   schema/providers/models, a website, telemetry.
 - **Validation tier:** docs tier (links, stale-claim greps, notices tests,
@@ -27,7 +27,7 @@ packaging build, or version change.
 | `SECURITY.md` | "no track record of tagged releases… most recent tagged release" language; no link to posture/matrix. | Updated for 1.0; links added; unsigned release noted. |
 | Privacy/security | No single public explanation of Local Only, outbound requests, remote access, credentials. Support bundle path disclosure undocumented publicly. | `docs/privacy-and-security.md` created from the Local-Only closure report and code. |
 | Support path | No troubleshooting page, SUPPORT.md or issue templates. | `docs/troubleshooting.md`, `SUPPORT.md`, `.github/ISSUE_TEMPLATE/*` added. |
-| Version language | `pyproject.toml` comment said the repo is "executing the MockingBird v0.1 public release"; description called it an "outdoor video intelligence API". Roadmap/release-state already say 1.0. | Comment and description corrected; no version bump. |
+| Version language | `pyproject.toml` comment says the repo is "executing the MockingBird v0.1 public release"; description says "outdoor video intelligence API". Roadmap/release-state already say 1.0. | Out of authorized scope (no release-blocking defect); an initial edit was reverted in the acceptance-correction pass. Left unchanged; logged as a follow-up for Final 1.0 Hardening's authorized version bump. |
 | `CONTRIBUTING.md` | Pointed to README sections that moved. | Repointed. |
 | Camera Node guide | Reviewed; consistent with the matrix (Pi 4 reference). | Unchanged. |
 | `README-FIRST.txt` (build script) | Reviewed; accurate (local data, network use, FFmpeg/BirdNET exclusions, uninstall). | Unchanged; no package rebuild needed. |

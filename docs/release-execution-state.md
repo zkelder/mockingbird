@@ -4145,10 +4145,10 @@ authorized, and no feature-freeze declaration is made by this record.
 
 **Closure recorded, 2026-10-03, by Public Product, Deployment & Support
 Closure v1** (see [report](public-product-deployment-support-closure-v1-report.md)).
-**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
 Starting HEAD `28463ea`, schema `v62` unchanged, source version `0.1.0`
 unchanged. Docs/public-surface only: no application code, schema, package build
-or version bump. New canonical documents: [support-matrix.md](support-matrix.md)
+or version bump (`pyproject.toml` unchanged versus `28463ea`). New canonical documents: [support-matrix.md](support-matrix.md)
 (the one 1.0 support statement), [privacy-and-security.md](privacy-and-security.md),
 [troubleshooting.md](troubleshooting.md), [developer-setup.md](developer-setup.md)
 (the former README developer content), [owner-release-checklist.md](owner-release-checklist.md),
@@ -4160,8 +4160,10 @@ repository truth: BirdNET install instructions that a packaged-Windows user
 cannot follow (the packaged runtime has no package installer -- documented as
 no supported route on the ZIP); Windows 11 overstated as validated (only
 Windows 10 Pro `10.0.19045` is in the evidence); the support bundle described
-as "safe to share" although it includes local paths by default; stale "v0.1
-public release" wording in `pyproject.toml`. Unresolved, owner-side: see the
+as "safe to share" although it includes local paths by default. (A
+`pyproject.toml` comment/description cleanup made by this milestone was outside
+its authorized scope and was reverted by the acceptance-correction pass; the
+stale "v0.1 public release" comment there is therefore unchanged.) Unresolved, owner-side: see the
 owner checklist (push, version bump, final artifacts, Releases page, tag,
 private-vulnerability-reporting enablement, NVIDIA notice confirmation,
 signing position, BirdNET legal stance). Push: not performed.
@@ -4179,7 +4181,7 @@ is preserved unchanged.
 **Closure recorded, 2026-10-03, by Multi-Camera Attribution & Filter
 Consolidation v1** (see [report](multi-camera-attribution-filter-consolidation-v1-report.md)
 and [contract](multi-camera-attribution-filter-consolidation-contract.md)).
-**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
 Starting HEAD `f886400`, schema `v62` unchanged. All three residuals reproduced
 (none stale): Place Story now carries per-camera attribution and evidence
 drill-down for encounter-anchored entries (Place-level entries stay camera-free);
@@ -4233,7 +4235,7 @@ is executed and closed below.
 
 **Closure recorded, 2026-10-02, by Research Export & Ecological Workflow
 Completion v1** (see [report](research-export-ecological-workflow-completion-v1-report.md)).
-**Status: EXECUTED -- proposed classification A, pending acceptance review.**
+**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
 Starting HEAD `6b927da`, schema `v62` unchanged. Delivered `include_media` byte
 bundling (generic + Camtrap DP), Visit -> export deep link with `visit_ids`, and
 the filter/bundle UI. Validation: Core 6342 passed / 0 failed; browser 218/218.
