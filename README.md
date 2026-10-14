@@ -1,12 +1,18 @@
 # MockingBird
 
-MockingBird is an open, local-first, hardware-agnostic, evidence-backed
-**ecosystem observatory**. It helps you notice, understand, confirm, and
-remember the wildlife around a place -- bird-first, but built for wildlife in
-general. Cameras, detectors, and classifiers are the instruments; the product
-is a trustworthy, growing record of what actually visits your place.
+**A local-first nature observatory that turns camera footage into a record you can trust.**
 
-It runs on your own computer. No account, no cloud service, no telemetry.
+MockingBird watches the outdoor cameras you choose, notices candidate wildlife
+visits, and shows you the best evidence with a *labeled suggestion* of what it
+thinks the animal is. **You** confirm or correct it. Only that human decision
+becomes the record behind the Bird Log, analytics, and exports. Bird-first, but
+built for wildlife in general. It runs on your own computer: no account, no
+cloud service, no telemetry.
+
+![A Visit in the Review Queue: the evidence image, a "Likely -- AI suggestion" label, and a "Needs Review" state](docs/assets/screenshots/05-visit-evidence-suggestion.png)
+
+*A real Visit from the bundled demo (public-domain footage, run through the real
+detector and species model). The suggestion is labeled evidence, not truth.*
 
 > **Not surveillance software.** MockingBird is for nature observation. It is
 > not an NVR, a security-alert system, or a person-tracking tool, and it keeps
@@ -23,13 +29,39 @@ It runs on your own computer. No account, no cloud service, no telemetry.
 | **Remember** | Reviewed history is local, durable, backed up, and exportable. |
 | **Improve** | Your corrections are the dataset-grade truth that analytics, exports, and future models rely on. |
 
+## Try it without a bird
+
+You don't need a live camera. [`scripts/prepare_demo_instance.py`](scripts/prepare_demo_instance.py)
+feeds three **public-domain (CC0) recorded clips** from Wikimedia Commons through
+the *unmodified* production path -- recorded-video import, the real MegaDetector
+v5a detector, tracking, Visit admission, and the real BioCLIP 2 identification
+assistant -- into a disposable, conspicuously labelled **DEMO** instance. Nothing
+is simulated and nothing is pre-confirmed: the demo deliberately includes a
+correct suggestion, a *confidently wrong* one, and an abstention, so you can see
+why a human stays in the loop.
+
+Step-by-step: **[Portfolio demo walkthrough](docs/portfolio-demo-walkthrough.md)**.
+
+| Review: judge the evidence | A suggestion that is wrong | An honest "I'm not sure" |
+|---|---|---|
+| ![Review Queue with candidate Visits waiting for a human](docs/assets/screenshots/04-review-queue.png) | ![A pileated woodpecker the model labels "Red-bellied Woodpecker"](docs/assets/screenshots/06-visit-wrong-suggestion.png) | ![Two goldfinches the model declines to name](docs/assets/screenshots/07-visit-abstained.png) |
+
+After you confirm, the Bird Log and Today are built **only** from what you
+decided:
+
+![Bird Log showing the confirmed Northern Mockingbird record](docs/assets/screenshots/08-bird-log.png)
+
+More screenshots (first-run setup, queue after review) are in
+[`docs/assets/screenshots/`](docs/assets/screenshots/). They were captured from
+the demo instance described in the walkthrough; no private data appears in them.
+
 ## What you can trust
 
 - **Suggestions are provisional.** Detector output and species guesses
   (MegaDetector v5a, BioCLIP 2, optional BirdNET) are evidence. Only a human
   confirmation or correction becomes reviewed truth, and Bird Log, analytics,
   and reviewed-only exports derive only from that truth. "Unknown" is a valid
-  answer.
+  answer, and the product abstains when candidates are too close to call.
 - **Local first.** Detection and species suggestion run on your computer. Data
   stays on disk you control. The cloud is optional and never required; see
   [Privacy & security](docs/privacy-and-security.md).
@@ -38,6 +70,52 @@ It runs on your own computer. No account, no cloud service, no telemetry.
 - **Hardware-agnostic by design.** A Raspberry Pi 4 is the *validated
   reference* Camera Node, not the product's identity. Network (RTSP/ONVIF),
   USB, still-image, and imported media are all first-class sources.
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph Sources
+    CN[Camera Node<br/>Raspberry Pi 4 reference]
+    NET[RTSP / ONVIF / USB]
+    IMP[Imported media<br/>photos and video]
+    MIC[Optional microphone]
+  end
+  subgraph Host["Host (your computer) -- FastAPI + SQLite + React"]
+    OE[Observation Engine<br/>MegaDetector v5a on ONNX Runtime CUDA<br/>tracking, Zones, Visit admission]
+    EV[(Evidence<br/>Events, Visits, media)]
+    ID[Identification assistant<br/>BioCLIP 2 on CPU<br/>suggestion only]
+    REV[Review decision<br/>human confirmation or correction]
+    TRUTH[(Reviewed truth)]
+    OUT[Today, Bird Log, Place Story,<br/>Insights, exports, backups]
+  end
+  CN --> OE
+  NET --> OE
+  IMP --> OE
+  MIC -. BirdNET suggestion .-> EV
+  OE --> EV --> ID --> REV --> TRUTH --> OUT
+  EV --> REV
+```
+
+The one rule the architecture is built around: **model output flows into
+evidence; only an explicit human review decision flows into truth.** A single
+function, `review_provenance.is_authority_eligible`, decides truth eligibility,
+so no analytics, export, or UI path can quietly treat a model guess as fact.
+Design detail: [Architecture](docs/architecture.md), [Runtime map](docs/runtime-map.md),
+[Glossary](docs/glossary.md).
+
+### Technology
+
+| Layer | Choice | Why |
+|---|---|---|
+| Host API | Python 3.11+, FastAPI, Pydantic, SQLAlchemy | typed contracts end to end; one process, no services to run |
+| Storage | SQLite (schema version 62, forward migrations, verified backups) | local-first, zero-admin, inspectable |
+| UI | React 19, TypeScript, Vite | single-page app served by the Host itself |
+| Detection | MegaDetector v5a exported to ONNX, ONNX Runtime GPU (CUDA) | a wildlife-trained detector; evidence only |
+| Species suggestion | BioCLIP 2 via OpenCLIP, CPU, closed candidate list | ranked, uncalibrated suggestions; abstains when uncertain |
+| Acoustic (optional) | BirdNET, CPU, never bundled | suggestions only; model license is non-commercial |
+| Camera Node | small Python service on a Raspberry Pi, systemd-supervised | replaceable capture/transport edge; not the system of record |
+| Verification | pytest (backend), Playwright (browser), a perception replay harness | see [Engineering quality](#engineering-quality) |
 
 ## What 1.0 supports
 
@@ -60,11 +138,51 @@ The first public release is **1.0**. Its supported scope is stated in one place:
   weights are non-commercial licensed) and has no supported add-on route for the
   Windows ZIP.
 
+## Known limitations
+
+Stated plainly, because a trustworthy record starts with honest boundaries:
+
+- **Species identification is a closed-set suggestion, not an authority.** The
+  bundled candidate list is a small regional backyard set (14 species). A bird
+  outside it can be named *confidently and wrongly* -- the demo shows exactly
+  this (a pileated woodpecker suggested as a red-bellied woodpecker). Confirmed
+  species outside the bundled taxonomy are saved as local labels but do not yet
+  appear in the Bird Log. No accuracy figure is claimed.
+- **Multi-subject handling over-splits some encounters.** One woodpecker in the
+  demo clip becomes two sibling Visits; review lets you act on each.
+- **Recorded clips have no known capture time.** Visits from imported video say
+  "Capture time unknown" and are kept out of time-windowed Today/Place Story
+  analytics by design (the Bird Log still lists them).
+- **Live detection is NVIDIA-GPU only** and the validated Host is Windows 10.
+  Real-world field validation was performed on one Raspberry Pi 4 Camera Node
+  and one desktop RTX 4060 Ti; broader hardware is unvalidated.
+- **Not published yet.** No public release artifact, tag, or version 1.0 bump
+  exists; see [Status](#status).
+
+## Engineering quality
+
+- **Tests:** about 350 backend test modules and 50 Playwright browser specs. The
+  last recorded full runs (in [release-execution-state.md](docs/release-execution-state.md))
+  are 6,278 backend tests passing and 203 browser tests passing, at schema 62.
+  They were not re-run in full for the portfolio pass; the changes made here
+  were verified with focused runs (see the walkthrough).
+- **Validation tiers and a test-isolation contract** keep an automated test from
+  ever touching a real database
+  ([development-workflow.md](docs/development-workflow.md),
+  [test-repository-isolation-contract.md](docs/test-repository-isolation-contract.md)).
+- **A perception replay harness** re-runs recorded footage through the real
+  admission stack in a disposable database, so a perception fix does not have to
+  wait for another real bird
+  ([perception-replay-regression-harness-contract.md](docs/perception-replay-regression-harness-contract.md)).
+- **Design contracts** under [`docs/`](docs/) record the decisions and their
+  evidence (hundreds of documents; start at [Architecture](docs/architecture.md)).
+
 ## Get started
 
 - **Install and use MockingBird (Windows):** [Using MockingBird](docs/using-mockingbird.md)
   -- download, verify, unpack, first-run setup, add a camera, observe, review,
   back up, update.
+- **Try the demo:** [Portfolio demo walkthrough](docs/portfolio-demo-walkthrough.md).
 - **Add a Camera Node** (Raspberry Pi or similar): [Camera Node install guide](docs/camera-node-install-guide.md).
 - **Something wrong?** [Troubleshooting & support](docs/troubleshooting.md) and
   [SUPPORT.md](SUPPORT.md).
@@ -90,6 +208,8 @@ Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
 ## Documentation map
 
 - [docs/using-mockingbird.md](docs/using-mockingbird.md): normal-user guide
+- [docs/portfolio-demo-walkthrough.md](docs/portfolio-demo-walkthrough.md): the reproducible demo
+- [docs/portfolio/case-study.md](docs/portfolio/case-study.md): engineering case study (source for a portfolio page)
 - [docs/support-matrix.md](docs/support-matrix.md): **canonical** 1.0 support and compatibility statement
 - [docs/troubleshooting.md](docs/troubleshooting.md): troubleshooting, Doctor, support bundle, how to file an issue
 - [docs/privacy-and-security.md](docs/privacy-and-security.md): privacy and security posture
@@ -109,7 +229,8 @@ Focused feature contracts remain under `docs/`.
 The repository is a **pre-release** of the first public release (**1.0**),
 pending final release hardening. The source tree currently reports version
 `0.1.0`; the 1.0 version bump, final artifacts, and release tag are performed
-during release hardening and are not yet done.
+during release hardening and are not yet done. The demo and screenshots show
+the current source tree, not a published release.
 
 ## License
 
@@ -120,5 +241,6 @@ redistributes or depends on -- including the bundled MDv5a and BioCLIP-2
 model weights, and the optional BirdNET bird-sound identification feature
 MockingBird deliberately does **not** bundle -- are licensed under their own
 separate terms, not necessarily MIT, and remain governed by those terms.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete
+The demo clips are CC0 recordings fetched on request, never committed or
+bundled. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete
 account of what is bundled, what is not, and under what license.

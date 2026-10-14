@@ -199,6 +199,16 @@ MockingBird's official packaging never bundles bird-sound identification
   acoustic feature specifically -- see `docs/release-execution-state.md`
   §2 for the standing caveat.
 
+## Demonstration media (fetched on request, never bundled)
+
+`scripts/prepare_demo_instance.py --fetch-media` downloads three recorded
+wildlife clips from Wikimedia Commons for the portfolio/demo walkthrough. All
+three are dedicated to the public domain under **CC0 1.0**; their authors,
+source pages and SHA-1 hashes are recorded in
+`docs/demo/demo-media-manifest.json`. They are stored only under the git-ignored
+`data/demo-media/` folder, are never committed, and are not part of any official
+MockingBird package. A few frames from them appear in `docs/assets/screenshots/`.
+
 ## Where to look for anything not covered here
 
 - MockingBird's own source-code license: MIT -- see `LICENSE` at the
