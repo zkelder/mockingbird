@@ -449,6 +449,25 @@ export default function App() {
     });
   }, []);
 
+  // The Administrator-chosen installation name (e.g. a clearly-labelled DEMO
+  // instance) replaces the generic tagline so a differently-purposed
+  // instance is never mistaken for a real Place. Display-only; a failure
+  // keeps the default tagline.
+  const [installationName, setInstallationName] = useState<string | null>(null);
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let cancelled = false;
+    void apiClient
+      .getInstallationSettings()
+      .then((settings) => {
+        if (!cancelled) setInstallationName(settings.installation_name ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
+
   function handleSignedIn(user: CurrentUser) {
     setCurrentUser(user);
     setAuthStatus("authenticated");
@@ -1302,7 +1321,7 @@ export default function App() {
           <span className="brand-mark">MB</span>
           <div>
             <strong>MockingBird</strong>
-            <span>Local wildlife observatory</span>
+            <span>{installationName ?? "Local wildlife observatory"}</span>
           </div>
         </div>
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />

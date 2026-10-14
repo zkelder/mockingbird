@@ -94,6 +94,18 @@ test("a fresh install creates the first administrator, shows guided setup, persi
   await page.reload();
   await expect(page.getByRole("heading", { name: "1. Add your camera" })).toBeVisible();
 
+  // Portfolio & Demo Release Closure v1: losing the session mid-wizard (a
+  // cleared cookie, an expired session, a different browser profile) used to
+  // dead-end on a "Create your administrator account" form that could only
+  // answer "An Administrator already exists". The wizard must instead offer
+  // sign-in and resume at the saved step -- never replay account creation.
+  await page.context().clearCookies();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create your administrator account" })).toHaveCount(0);
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "1. Add your camera" })).toBeVisible();
+
   // Finishing without a camera is an explicit, honest escape hatch (the
   // milestone does not require every step during first run); the app then
   // shows the normal product shell instead of the wizard. Nothing is
@@ -110,6 +122,15 @@ test("a fresh install creates the first administrator, shows guided setup, persi
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Welcome to MockingBird" })).toHaveCount(0);
   await expect(page.getByText("Ada Admin")).toBeVisible();
+
+  // An Administrator-chosen installation name replaces the generic sidebar
+  // tagline (this is how a demo instance is conspicuously labelled).
+  const renamed = await page.request.put("/api/admin/installation-settings", {
+    data: { installation_name: "MockingBird DEMO - sample clips" },
+  });
+  expect(renamed.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.locator("aside.sidebar .brand-block")).toContainText("MockingBird DEMO - sample clips");
 
   // First-run bootstrap must never be replayable once an Administrator
   // exists -- signing out returns to sign-in, never back to account setup.
