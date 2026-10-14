@@ -113,8 +113,8 @@ and exactly which optional features may touch the network are documented in
 - **Duplicate or fragmented Visits.** One animal can become several Visits, and
   several animals can share one encounter. The repository records a sequence of
   fixes (continuity, ambiguous-boundary arbitration, multi-subject assembly) and
-  an honest remaining over-split: in the demo, one woodpecker becomes two
-  sibling Visits.
+  an honest remaining over-split: in the demo, one woodpecker became two
+  sibling Visits on one machine and one Visit on another.
 - **Honest time.** Recorded video has no trustworthy capture time, so the
   system refuses to fabricate one; those Visits are excluded from time-windowed
   analytics. A deliberate trade of completeness for correctness.

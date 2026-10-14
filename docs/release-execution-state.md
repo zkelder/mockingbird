@@ -4162,6 +4162,37 @@ executed, closed, and now **ACCEPTED, classification A** (see the acceptance
 record directly below). Final 1.0 Hardening and every other later item are not
 authorized, and no feature-freeze declaration is made by this record.
 
+**Closure recorded, 2026-10-14, by Portfolio & Demo Release Closure v1
+(owner-requested, bounded; status: EXECUTED, PENDING ACCEPTANCE -- not accepted
+by this record).** Starting HEAD `5de219d`, schema `v62` and source version
+`0.1.0` unchanged; no packaging, version, schema, tag or push. Delivered: a
+reproducible demo ([portfolio-demo-walkthrough.md](portfolio-demo-walkthrough.md),
+`scripts/prepare_demo_instance.py`, [demo manifest](demo/demo-media-manifest.json))
+that runs three CC0 clips through the unmodified recorded-video import,
+MegaDetector Observation Engine and BioCLIP identification assistant into a
+disposable DEMO-labelled instance, never writing a review decision; a
+presentation-oriented README with authentic screenshots
+(`docs/assets/screenshots/`); a case-study source and project card
+([docs/portfolio/](portfolio/case-study.md)); a THIRD_PARTY_NOTICES entry for the
+demo media. Two bounded product fixes: the first-run wizard now offers sign-in
+(and resumes at the saved step) when the session is lost mid-onboarding instead
+of dead-ending on account creation, and the Administrator-chosen installation
+name replaces the generic sidebar tagline. Validation: Tier 2 -- onboarding
+Playwright project 6/6 (new assertions for both fixes; the sign-in assertion was
+observed failing before the fix), `tsc --noEmit` clean, 4 new script-guard tests,
+notices/README/support-matrix doc tests 14 passed, BirdNET-exclusion tests 2
+passed. Native Windows: packaged build `a3479c1` deployed and demo run end to
+end natively (details in the walkthrough); the interactive UI click-through was
+verified on a source-checkout instance, not by hand on Windows. Core and the full
+browser suite were not re-run (no backend, schema or cross-cutting change).
+Findings reported, **not fixed** (no new authorization): a reviewed species
+outside the 14-species bundled taxonomy (e.g. pileated woodpecker, American
+goldfinch) is stored as a local label but is excluded from Bird Log/reviewed
+analytics; recorded-video Visits carry an epoch-anchored Event time, so they stay
+out of time-windowed Today/Place Story; one animal can over-split into sibling
+Visits (count varies by machine). Authorization remains **NONE**; this record
+does not authorize a next milestone.
+
 **Acceptance recorded, 2026-10-06 (scheduler reconciliation; accepted delta
 only; no validation rerun):** *Public Product, Deployment & Support Closure v1*
 is accepted at classification **A**: accepted HEAD `b7f708c` (includes the

@@ -149,7 +149,8 @@ Stated plainly, because a trustworthy record starts with honest boundaries:
   species outside the bundled taxonomy are saved as local labels but do not yet
   appear in the Bird Log. No accuracy figure is claimed.
 - **Multi-subject handling over-splits some encounters.** One woodpecker in the
-  demo clip becomes two sibling Visits; review lets you act on each.
+  demo clip became two sibling Visits on one machine and one on another; review
+  lets you act on each.
 - **Recorded clips have no known capture time.** Visits from imported video say
   "Capture time unknown" and are kept out of time-windowed Today/Place Story
   analytics by design (the Bird Log still lists them).
