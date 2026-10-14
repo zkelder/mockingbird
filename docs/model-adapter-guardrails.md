@@ -6,7 +6,7 @@ These guardrails protect MockingBird's product loop as real local model adapters
 
 ## Product Doctrine Reminder
 
-MockingBird is a local-first outdoor video intelligence platform. Streams, zones, events, visits, review, corrections, exports, analytics, and adapter evaluation are the product loop. Future source adapters remain underneath the product, not the product center.
+MockingBird is a local-first wildlife observatory. Streams, zones, events, visits, review, corrections, exports, analytics, and adapter evaluation support the product loop; trustworthy reviewed Observations are the product. Future source adapters remain underneath the product, not the product center.
 
 ## Truth Boundary
 

@@ -146,8 +146,11 @@ Stated plainly, because a trustworthy record starts with honest boundaries:
   bundled candidate list is a small regional backyard set (14 species). A bird
   outside it can be named *confidently and wrongly* -- the demo shows exactly
   this (a pileated woodpecker suggested as a red-bellied woodpecker). Confirmed
-  species outside the bundled taxonomy are saved as local labels but do not yet
-  appear in the Bird Log. No accuracy figure is claimed.
+  species outside the bundled taxonomy are kept as your saved review label and
+  counted as "unclassified reviewed" in Insights, but are deliberately not
+  promoted into the Bird Log: with no taxonomy category, MockingBird cannot tell
+  a wildlife species from a pet or vehicle. The Review Queue says so when you
+  type such a label. No accuracy figure is claimed.
 - **Multi-subject handling over-splits some encounters.** One woodpecker in the
   demo clip became two sibling Visits on one machine and one on another; review
   lets you act on each.

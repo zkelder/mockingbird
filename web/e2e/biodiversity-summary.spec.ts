@@ -315,3 +315,37 @@ test("a taxon's history with no place context omits the habitat/environment sect
   await page.goto("/bird-log/northern_cardinal");
   await expect(page.getByText("Habitat & environment")).toHaveCount(0);
 });
+
+test("a taxon whose latest sighting has no capture time never shows the placeholder time or a daylight claim", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  await mockJournalOverview(page);
+  // A recorded video with no capture-time fact is anchored at 1970 internally;
+  // the server marks it `capture_time_known: false`.
+  const placeholder = "1970-01-01T00:00:00Z";
+  await mockJournalHistory(page, "northern_cardinal", {
+    latest_observation: {
+      visit_id: "visit-unknown-time",
+      observed_at: placeholder,
+      stream_name: "Recorded clips",
+      capture_time_known: false,
+    },
+    place_context: {
+      observed_at: placeholder,
+      environmental_context: {
+        available: true,
+        daylight_state: "night",
+        reason: "computed",
+        weather: { status: "not_configured" },
+      },
+      phenology_context: [],
+    },
+  });
+
+  await page.goto("/bird-log/northern_cardinal");
+  await expect(page.getByText("Capture time unknown").first()).toBeVisible();
+  await expect(page.getByText("Recorded alongside the most recent sighting")).toHaveCount(0);
+  await expect(page.getByText("Recorded at night")).toHaveCount(0);
+  await expect(page.getByText(/Dec 31|Jan 1, 1970/)).toHaveCount(0);
+});

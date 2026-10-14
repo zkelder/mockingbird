@@ -118,7 +118,9 @@ GPUs may differ slightly.
 
 Each imported clip also appears as one "unknown animal" item in the Review
 Queue: that is the ordinary manual-import record of the file itself, separate
-from the detector's Visits. Expect about **10--11** items waiting in total (11 on the Linux run, 10 on Windows).
+from the detector's Visits. Its displayed time (e.g. "Oct 14, 3:46 PM") is when
+the file was *imported*, not when it was filmed; the detector's Visits, whose
+capture time is genuinely unknown, say so. Expect about **10--11** items waiting in total (11 on the Linux run, 10 on Windows).
 
 ## Presentation script (about five minutes)
 
@@ -150,15 +152,25 @@ from the detector's Visits. Expect about **10--11** items waiting in total (11 o
    capture time and the product refuses to invent one.
 6. **Improve** -- *Say:* every correction is dataset-grade reviewed truth that
    exports and analytics rely on; a later model can suggest but never overwrite
-   it. (Optional: open *Exports* to show the reviewed-only gate.)
+   it. (Skip the *Exports* record list on a recorded-clip demo: it still prints the
+internal placeholder start time -- see the limits below.)
 
 ### Honest limits you should say out loud
 
 - The pileated woodpecker and the goldfinches are **outside the bundled
-  taxonomy**, so confirming them saves a local label but they do not appear in
-  the Bird Log or reviewed analytics yet. Only the mockingbird confirmations do.
-- Today and Place Story stay sparse: recorded clips carry no capture time, so
-  they do not feed time-windowed analytics.
+  taxonomy**, so your correction is saved as a reviewed label (the Review Queue
+  warns you when you type one) but it is not promoted into the Bird Log or
+  species analytics: with no taxonomy category the product cannot prove it is
+  wildlife rather than, say, a pet. Insights counts it as "unclassified
+  reviewed". Only the mockingbird confirmations reach the Bird Log.
+- Today, Place Story, Place Report and Insights stay sparse or show **0
+  confirmed**: recorded clips carry no capture time, so they never feed
+  time-windowed analytics -- even though the Bird Log lists your four
+  confirmations. Do not present those pages for this demo; say why if asked.
+- Two plain-data pages still render the internal 1970 placeholder as a date for
+  recorded-clip Visits (Exports readiness records: "Started Dec 31, 7:00 PM";
+  Local Data: "Oldest managed file 12/31/1969"). They are not capture times and
+  are known, unfixed display gaps.
 - One woodpecker became two Visits; multi-subject assembly can over-split.
 - No claim is made about identification accuracy from this demo.
 
@@ -180,14 +192,35 @@ scrubbed environment as shown above:
   items. The qualitative story is the same as on Linux; the woodpecker split
   differs (1 Visit here, 2 there), so exact Visit counts are **not**
   guaranteed across machines.
-- The packaged UI rendered in headless Edge. The interactive click-through
-  (confirming Visits, Bird Log) was verified with Playwright against the
-  source-checkout instance, **not** by hand on the native Windows instance.
+- The packaged UI rendered in headless Edge. (The interactive pass on the
+  native instance is recorded in the next section.)
 
 Not verified: the unpack-and-run ZIP experience on a clean machine for this
 commit (the build was deployed with the repository's Windows dev-deployment
 tool, not downloaded as a release ZIP), Windows 11, and any GPU other than the
 RTX 4060 Ti.
+
+### Interactive native-Windows pass (portfolio acceptance, 2026-10-14)
+
+Driven through Windows-side Edge (Playwright, headless) against the same packaged
+`a3479c1` build, a fresh disposable home, and a scrubbed environment; identity
+re-confirmed via `GET /api/product/instance`.
+
+| Step | Result |
+|---|---|
+| First-run onboarding (welcome, administrator account, data location, skip camera) | Pass. Dashboard reached; "Local storage space is getting low" shown at ~26 GB free (host-disk threshold, not a demo fault). |
+| Demo preparation natively | Pass. 4 / 1 / 2 Visits, 10 queue items, nothing confirmed. |
+| Review Queue; Visit detail (suggestion labelled "Likely -- AI suggestion", "Reviewed: not reviewed") | Pass. |
+| Goldfinch Visit: no species suggestion | Pass. |
+| Correct woodpecker to "Pileated Woodpecker"; confirm 4 mockingbird Visits | Pass. Visit status becomes Reviewed. |
+| Bird Log lists only Northern Mockingbird (4); pileated woodpecker absent | Pass (matches the stated limit). |
+| Bird Log species history | **Defect found and fixed in source** (placeholder "Dec 31, 7:00 PM" habitat line); the fix is **not** in this packaged build. |
+| Doctor, Local Data, Activity Library, Cameras, Place Story/Report, Insights pages load | Pass (Insights/Today show 0 confirmed by design, see limits). |
+| Exports readiness list; Local Data storage dates | Placeholder 1970 time displayed -- not fixed, disclosed. |
+
+Not verified on native Windows: the corrected copy and the Bird Log fix (the
+packaged build was not rebuilt; they were verified by TypeScript and Playwright
+against a source-checkout server), the release-ZIP experience, Windows 11.
 
 ## Reproducibility and verification record
 

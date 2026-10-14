@@ -38,21 +38,41 @@ were the product?*
 
 ## Role and engineering ownership
 
-**[OWNER TO CONFIRM exact role wording.]** What the repository itself shows:
+**[OWNER TO CONFIRM exact role title and which parts you personally hand-wrote
+or hand-ran; the repository cannot establish either.]** What the repository
+itself shows:
 
-- A single owner directs the product: the doctrine
-  ([product-doctrine.md](../product-doctrine.md)), the roadmap, and every
-  acceptance decision are recorded in-repo.
-- Implementation was done with AI coding agents under written guardrails
-  ([AGENTS.md](../../AGENTS.md)): a task packet before any edit, a conditional
-  design-document router, validation tiers, and an acceptance record per
-  milestone. About 467 of the 770 commits carry a Claude co-author trailer. This
-  is disclosed deliberately: the engineering story here is *specifying,
-  constraining, verifying, and accepting* agent-written work, not typing every
-  line.
-- The owner's accountable decisions include: the truth model, what is frozen
+- **AI-assisted development, disclosed.** Most of the code was written by AI
+  coding agents working from the owner's task packets. 469 of the 772 commits
+  at this writing carry a Claude co-author trailer; the remaining commits carry
+  no such trailer, and the repository does not record which tool or person
+  produced them, so no claim is made about them either way. Nothing here
+  presents the project as hand-typed or single-handedly coded.
+- **Architecture and direction (owner).** One owner set the product doctrine
+  ([product-doctrine.md](../product-doctrine.md)), the truth model, the
+  roadmap, and the scope of each milestone, and recorded them in-repo. Those
+  choices are what the agents were asked to implement, for example "model
+  output is evidence; only explicit review is truth".
+- **Engineering process (owner-directed, agent-executed).** Agents worked
+  under written guardrails ([AGENTS.md](../../AGENTS.md)): a task packet before
+  any edit, a conditional design-document router, validation tiers, and an
+  acceptance record per milestone. The owner wrote those rules and made the
+  acceptance calls.
+- **Implementation (agents, under that direction).** Agents wrote most of the
+  backend, frontend, Camera Node, and test code, plus the design contracts that
+  explain it.
+- **Integration and validation (shared).** Agents ran the test tiers and the
+  hardware sessions recorded in
+  [release-execution-state.md](../release-execution-state.md), including field
+  runs on a Raspberry Pi 4 Camera Node and a native Windows machine with an
+  NVIDIA GPU; those runs happen on the owner's own equipment and the owner
+  decides whether a result is accepted.
+- **Accountable owner decisions** include: the truth model, what is frozen
   versus re-opened, which candidate models are *not* promoted, and the
-  licensing posture.
+  licensing posture (MIT for the code; third-party model terms kept separate).
+
+The engineering story is therefore *specifying, constraining, integrating,
+verifying, and accepting* agent-written work, not typing every line.
 
 ## Architecture and major technical decisions
 

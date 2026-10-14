@@ -730,6 +730,13 @@ export function BirdLogPage({
   }
 
   const activeHistory = history;
+  // False only on positive server provenance that the latest observation's
+  // time is the recorded-video placeholder (see `formatCaptureDateTime`).
+  const snapshotTimeKnown = activeHistory?.latest_observation?.capture_time_known !== false;
+  const hasHistoryAssociations =
+    [...(activeHistory?.habitat_associations ?? []), ...(activeHistory?.weather_associations ?? [])].some(
+      (association) => association.status !== "no_clear_association",
+    );
   // Everyday Product / Discovery UX Closure v1: a multi-subject Visit
   // Assembly Event (schema 36) can have two simultaneous individuals of the
   // same species -- with nothing marking them as concurrent, a same-species
@@ -915,25 +922,34 @@ export function BirdLogPage({
                 <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.first_observation.observed_at, activeHistory.first_observation.capture_time_known)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
                 <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.latest_observation.observed_at, activeHistory.latest_observation.capture_time_known)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
               </section>
-              {activeHistory.place_context ? (
+              {activeHistory.place_context && (snapshotTimeKnown || hasHistoryAssociations) ? (
                 // Biodiversity & Place Intelligence v1: context tied to the
                 // single most recent reviewed observation only -- never a
                 // per-Visit or statistical summary, and never phrased as a
                 // cause. See docs/biodiversity-place-intelligence-v1-contract.md.
+                //
+                // Portfolio acceptance: when that observation came from a
+                // recorded video with no capture-time fact, its stored time is
+                // the 1970 placeholder -- rendering it (or daylight/phenology
+                // computed from it) would invent a capture time. The snapshot
+                // lines are shown only when the server says the time is known;
+                // history-wide associations below do not depend on it.
                 <section className="journal-history-grid">
                   <div className="panel">
                     <h2>Habitat &amp; environment</h2>
-                    <span className="meta-text">
-                      Recorded alongside the most recent sighting, {formatDateTime(activeHistory.place_context.observed_at)} — association only, never a cause.
-                    </span>
-                    {activeHistory.place_context.environmental_context.available ? (
+                    {snapshotTimeKnown ? (
+                      <span className="meta-text">
+                        Recorded alongside the most recent sighting, {formatDateTime(activeHistory.place_context.observed_at)} — association only, never a cause.
+                      </span>
+                    ) : null}
+                    {snapshotTimeKnown && activeHistory.place_context.environmental_context.available ? (
                       <p className="meta-text">
                         {activeHistory.place_context.environmental_context.daylight_state === "day"
                           ? "Recorded during daylight"
                           : "Recorded at night"}
                       </p>
                     ) : null}
-                    {activeHistory.place_context.phenology_context.length > 0 ? (
+                    {snapshotTimeKnown && activeHistory.place_context.phenology_context.length > 0 ? (
                       <ul className="habitat-phenology-list">
                         {activeHistory.place_context.phenology_context.map((observation) => (
                           <li key={observation.id}>

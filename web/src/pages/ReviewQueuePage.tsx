@@ -5387,7 +5387,8 @@ function LabelValidationLine({ status }: { status: LabelValidationStatus }) {
     suggested: "Matches suggested label.",
     recent: "Matches recent correction.",
     taxonomy: "Matches taxonomy.",
-    custom: "Custom label. Saved only after you apply it.",
+    custom:
+      "Custom label. Saved as your answer when you apply it, but it is not in the species list, so it will not appear in Bird Log or species analytics yet.",
   };
 
   return (

@@ -140,6 +140,13 @@ test("a ranked species suggestion becomes correction, Bird Log, and export truth
   const afterPrefill = await (await page.request.get(`/api/visits/${visitId}`)).json();
   expect(afterPrefill.review_status).toBe("needs_review");
 
+  // A species outside the taxonomy is allowed but the reviewer is told, before
+  // saving, that it will not reach Bird Log (portfolio acceptance).
+  await correctionField.fill("Pileated Woodpecker");
+  await expect(page.getByText(/not in the species list, so it will not appear in Bird Log/)).toBeVisible();
+  await correctionField.fill("blue_jay");
+  await expect(page.getByText(/not in the species list/)).toHaveCount(0);
+
   await page.getByRole("button", { name: "Confirm species" }).click();
   await expect(page.getByText("Correction saved and suggestion marked accepted.")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Blue Jay");

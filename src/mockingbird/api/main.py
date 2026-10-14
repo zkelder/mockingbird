@@ -747,8 +747,9 @@ app = FastAPI(
     title="MockingBird API",
     version=APP_VERSION,
     description=(
-        "Local-first outdoor video intelligence centered on streams, zones, "
-        "events, visits, review, corrections, exports, and analytics."
+        "Local-first wildlife observatory API: Sources, Streams, Zones, Events, "
+        "Visits, human review and correction, exports, and analytics. Model "
+        "output is evidence; only explicit review becomes truth."
     ),
     lifespan=_app_lifespan,
 )

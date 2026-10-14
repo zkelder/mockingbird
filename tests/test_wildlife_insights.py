@@ -447,3 +447,42 @@ async def test_wildlife_insights_validate_ranges_and_return_an_empty_active_stat
         "first_observation": None,
         "latest_observation": None,
     }
+
+
+async def test_species_outside_taxonomy_is_saved_truth_but_not_bird_log_wildlife(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Portfolio acceptance: a human-confirmed species with no taxonomy row.
+
+    A free-text label ("Pileated Woodpecker") has no taxonomy category, so
+    MockingBird cannot prove it is wildlife rather than a pet or vehicle. It
+    is therefore kept as the reviewer's saved ReviewLabel and counted as
+    "unclassified reviewed" context, but deliberately NOT promoted into Bird
+    Log wildlife. This pins the intentional rule (and its visibility) so it
+    is never silently loosened or silently dropped from the count.
+    """
+
+    add_insights_graph(isolated_repository)
+    when = datetime(2026, 7, 2, 12, tzinfo=UTC)
+    add_visit(isolated_repository, visit_id="known-cardinal", started_at=when)
+    add_visit(isolated_repository, visit_id="outside-taxonomy", started_at=when)
+    await review_visit(client, "known-cardinal", "northern_cardinal")
+    await review_visit(client, "outside-taxonomy", "Pileated Woodpecker")
+
+    detail = await client.get("/api/visits/outside-taxonomy/detail")
+    assert detail.status_code == 200
+    assert detail.json()["visit"]["reviewed_label"] == "pileated_woodpecker"
+
+    journal = await client.get("/api/bird-log/journal")
+    assert journal.status_code == 200
+    labels = {row["label"] for row in journal.json()["labels"]}
+    assert "northern_cardinal" in labels
+    assert "pileated_woodpecker" not in labels
+
+    insights = await client.post(
+        "/api/analytics/wildlife-insights",
+        json={"preset": "custom", "start_date": "2026-07-01", "end_date": "2026-07-07"},
+    )
+    assert insights.status_code == 200
+    assert insights.json()["review_context"]["unclassified_reviewed_count"] == 1

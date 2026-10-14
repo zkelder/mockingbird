@@ -73,7 +73,13 @@ export function TaxonomyLabelInput({
             } as ${matchedLabel.label} (${formatLabel(matchedLabel.category)}${
               matchedLabel.is_species ? " species" : ""
             }).`
-          : "Custom local labels are allowed when taxonomy does not have the right match yet."}
+          : intent === "truth" && value.trim()
+            ? /* A label with no taxonomy row has no category, so MockingBird cannot
+                 tell wildlife from a pet or vehicle: it is saved as the reviewer's
+                 own answer but is not promoted into Bird Log or species analytics.
+                 Say so before the reviewer saves it, not after. */
+              "Custom local label: saved as your answer, but it is not in the species list, so it will not appear in Bird Log or species analytics yet."
+            : "Custom local labels are allowed when taxonomy does not have the right match yet."}
       </span>
     </label>
   );
