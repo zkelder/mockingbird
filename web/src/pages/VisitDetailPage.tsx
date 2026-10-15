@@ -163,7 +163,11 @@ export function VisitDetailPage({
         current ||
         nextDetail.visit.reviewed_label ||
         nextDetail.visit.species_guess ||
-        nextDetail.visit.subject_label,
+        // An unreviewed Visit with no species guess must not arrive with the
+        // detector's generic subject ("Unknown Bird") pre-typed beside a
+        // prominent Confirm: one click would record a label nobody chose.
+        // The reviewer names it, or presses Not sure.
+        (nextDetail.visit.review_status === "needs_review" ? "" : nextDetail.visit.subject_label),
       );
     } catch (caught) {
       setError(userFacingErrorMessage(caught, "Could not load visit detail."));
@@ -1156,12 +1160,12 @@ export function VisitDetailPage({
               value={label}
               onChange={setLabel}
               placeholder={
-                isSpeciesVisit ? "reviewed species, unknown_bird, or false_positive" : "confirmed label"
+                isSpeciesVisit ? "Type a species, e.g. Northern Cardinal" : "confirmed label"
               }
               quickPicks="collapsed"
             />
             <div className="visit-decision-actions">
-              <button className="primary-action" disabled={isSaving} type="submit">
+              <button className="primary-action" disabled={isSaving || !label.trim()} type="submit">
                 {isSaving ? "Saving…" : isSpeciesVisit ? "Confirm species" : "Save correction"}
               </button>
               <button

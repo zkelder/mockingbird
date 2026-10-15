@@ -527,3 +527,47 @@ test("representative thumbnails centre a vouched subject, keep crops whole, and 
   expect(transforms[2].transform).toBe("");
   expect(transforms[3]).toEqual({ framed: false, lowRes: false, transform: "" });
 });
+
+// ---------------------------------------------------------------------------
+// Final acceptance review (field-data pass): two concrete defects.
+
+test("an unreviewed Visit with no species guess does not arrive pre-filled with a label nobody chose", async ({ page }) => {
+  // A detector-only Visit: subject label "unknown_bird", no species guess.
+  const created = await page.request.post("/api/sources", { data: { name: `No Guess Feeder ${Date.now()}` } });
+  const { stream } = await created.json();
+  const imported = await page.request.post("/api/media/import", {
+    multipart: {
+      file: { name: "no-guess.png", mimeType: "image/png", buffer: solidPng(640, 480) },
+      stream_id: stream.id,
+      subject_label: "unknown_bird",
+    },
+  });
+  const visitId = (await imported.json()).visit.id as string;
+  await page.goto(`/visits/${visitId}`);
+  const decision = page.getByRole("region", { name: "Your decision" });
+  await expect(decision).toBeVisible();
+  await expect(page.getByRole("combobox", { name: /^Species correction/ })).toHaveValue("");
+  // Confirm cannot record a vacuous label; abstaining stays one explicit click.
+  await expect(decision.getByRole("button", { name: "Confirm species" })).toBeDisabled();
+  await expect(decision.getByRole("button", { name: "Not sure" })).toBeEnabled();
+  expect((await (await page.request.get(`/api/visits/${visitId}`)).json()).review_status).toBe("needs_review");
+});
+
+test("a reviewed Visit's action buttons stay inside the decision column at desktop and phone width", async ({ page }) => {
+  const { visitId } = await createSuggestedVisit(page);
+  await showSpeciesGuess(page, visitId, "northern_cardinal");
+  await page.goto(`/visits/${visitId}`);
+  await page.getByRole("button", { name: "Confirm species" }).click();
+  await expect(page.getByRole("button", { name: "Edit identification" })).toBeVisible();
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const overflow = await page.locator(".visit-primary-decision").evaluate((column) => {
+      const edge = column.getBoundingClientRect().right;
+      return Array.from(column.querySelectorAll("button")).filter((button) => button.getBoundingClientRect().right > edge + 1).length;
+    });
+    expect(overflow).toBe(0);
+  }
+});

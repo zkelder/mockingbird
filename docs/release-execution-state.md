@@ -4208,7 +4208,17 @@ layout) rather than in the first viewport; Today still shows "Best moments" and
 "Recent activity" separately; the pre-existing Bird Log mobile spec depends on
 earlier specs' data when run alone (reproduced at the baseline). Evidence in
 the ignored `dist/everyday-refinement-v1-a69d55e-evidence/` (before/after
-screenshots, Windows scripts and captures). **Subsequent authorization: NONE.**
+screenshots, Windows scripts and captures). **Final acceptance review (field-data pass, isolated copy of the field database
+and media; originals untouched):** two presentation/correctness defects fixed
+with regression tests -- an unreviewed Visit with no species guess arrived with
+the detector's generic "Unknown Bird" pre-typed beside a prominent Confirm (now
+empty, Confirm disabled until a label is entered, Not sure unchanged), and the
+reviewed-state action buttons spilled past the decision column. Findings
+reported, not fixed (data, not code): the three real House Finch Visits are
+whole 4624x3472 yard frames with no persisted subject geometry, so the finch is
+small in its thumbnail (correctly not cropped); the one confirmed Northern
+Cardinal frame is badly overexposed. Acceptance remains pending.
+**Subsequent authorization: NONE.**
 
 **Closure recorded, 2026-10-14, by Portfolio & Demo Release Closure v1
 (owner-requested, bounded; status: EXECUTED, PENDING ACCEPTANCE -- not accepted

@@ -10592,3 +10592,19 @@ fieldset.camera-filter {
   font-weight: 700;
   color: #243a2d;
 }
+
+/* Reviewed Visit: the readiness actions live in the narrow decision column,
+   so stack them instead of letting a button spill past the panel edge. */
+.visit-primary-decision .case-readiness-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.visit-primary-decision .case-readiness-panel .detail-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.visit-primary-decision .case-readiness-panel .detail-actions button {
+  width: 100%;
+}
