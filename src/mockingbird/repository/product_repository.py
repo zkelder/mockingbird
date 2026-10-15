@@ -177,6 +177,7 @@ from mockingbird.analytics.soundscape import (
 )
 from mockingbird.analytics.representative_evidence import (
     EvidenceCandidateFact,
+    resolve_subject_region,
     select_representative_evidence,
 )
 from mockingbird.analytics.zone_insights import (
@@ -37368,20 +37369,19 @@ class ProductRepository:
             # report at a broken image (regression: missing/deleted media
             # gracefully yields no representative).
             return None
-        subject_box = frame.normalized_track_box or frame.normalized_crop_box
-        subject_width: int | None = None
-        subject_height: int | None = None
-        if subject_box is not None and frame.width and frame.height:
-            left, top, right, bottom = subject_box
-            subject_width = round((right - left) * frame.width)
-            subject_height = round((bottom - top) * frame.height)
+        has_subject_region, subject_pixel_area = resolve_subject_region(
+            width=frame.width,
+            height=frame.height,
+            normalized_track_box=frame.normalized_track_box,
+            normalized_crop_box=frame.normalized_crop_box,
+        )
         return EvidenceCandidateFact(
             visit_id=summary.id,
             media_asset_id=frame.media_asset_id,
             captured_at=frame.captured_at,
             is_native_resolution=frame.resolution_provenance == "synchronized",
-            has_subject_region=subject_width is not None and subject_height is not None,
-            subject_pixel_area=(subject_width or 0) * (subject_height or 0),
+            has_subject_region=has_subject_region,
+            subject_pixel_area=subject_pixel_area,
             asset_pixel_area=(frame.width or 0) * (frame.height or 0),
         )
 
