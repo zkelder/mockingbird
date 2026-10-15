@@ -4162,6 +4162,54 @@ executed, closed, and now **ACCEPTED, classification A** (see the acceptance
 record directly below). Final 1.0 Hardening and every other later item are not
 authorized, and no feature-freeze declaration is made by this record.
 
+**Implementation recorded, 2026-10-14, by Everyday Wildlife Experience &
+Presentation Refinement v1 (owner-authorized bounded refinement of the existing
+everyday UI; status: EXECUTED, PENDING ACCEPTANCE -- not accepted by this
+record).** Starting HEAD `1575b3f`, schema `v62` and source version `0.1.0`
+unchanged; no model/detector change, no schema change, no review-authority
+change, no push. Commits: `bb9ca44` (A), `a753792` (C selector), `a69d55e`
+(B/C/D/E UI). Delivered, presentation only: (A) Today "Recent activity"
+thumbnails no longer overlap (preview wrapper was caught by a generic row rule),
+and Alerts / Local Data no longer render the epoch placeholder as "Dec 31" /
+"12/31/1969"; (B) Visit detail leads with the wildlife image beside one
+decision panel (Confirm species / Change / Not sure, guess labelled "not
+confirmed", species shown by display name), with suggestions, evidence trail,
+export readiness and notes/collections/tags behind disclosures and no taxonomy
+keys, ids or MIME facts in the default view; Review Queue/Fast Review cards in
+plain language; (C) `resolve_subject_region` fixes a unit mismatch in the
+canonical representative selector's input (a derived crop's parent-relative
+box was applied to the crop's own pixels), ordering and truth precedence
+unchanged, plus subject-centred / whole-crop / low-resolution-safe thumbnail
+framing; (D) empty Biodiversity and year-of-history placeholders omitted on
+Today, optional Place prompts collapsed, Insights without a grid of zeros;
+(E) six primary destinations (Today, Cameras, Review Queue, Bird Log, Place,
+Settings) with a contextual secondary list so every existing page stays
+reachable, plus Bird Log find-a-species and a recently-seen strip. Details,
+the navigation evaluation and the deliberate non-changes:
+[everyday-wildlife-experience-presentation-refinement-v1-report.md](everyday-wildlife-experience-presentation-refinement-v1-report.md).
+Validation: `tsc --noEmit` clean; complete browser regression 250/250 (default
+suite 238, onboarding 6, review-queue 4, bounded-media 2; 11 new specs here,
+10 existing specs updated for the new structure -- the thumbnail test was
+observed failing without its CSS fix); focused backend 126 passed (selector,
+place activity report, wildlife insights); Fast gate 1817 passed. **Core gate
+was not run** (the only backend change is one pure function and its call
+site). Native Windows: packaged build `a69d55e` built and deployed with the
+dev-deployment tool (identity confirmed via `GET /api/product/instance`),
+started with a scrubbed environment and a disposable data home, demo prepared
+natively on the packaged GPU build, then driven in Windows Edge at 1440x900 and
+390x844: no horizontal overflow, no fake epoch date, 62 px thumbnails, six-item
+nav, decision button inside the first desktop viewport, no raw identifiers or
+file facts, and a real Review -> Confirm -> Bird Log journey (no page errors).
+Not verified: the unpacked release-ZIP experience on a clean machine (a
+dev-deployment build, not a downloaded ZIP), Windows 11, a field (live-camera)
+dataset (demo/recorded-clip data only), and a human interactive pass. Known
+limits: on a phone the decision panel sits below the evidence image (stacked
+layout) rather than in the first viewport; Today still shows "Best moments" and
+"Recent activity" separately; the pre-existing Bird Log mobile spec depends on
+earlier specs' data when run alone (reproduced at the baseline). Evidence in
+the ignored `dist/everyday-refinement-v1-a69d55e-evidence/` (before/after
+screenshots, Windows scripts and captures). **Subsequent authorization: NONE.**
+
 **Closure recorded, 2026-10-14, by Portfolio & Demo Release Closure v1
 (owner-requested, bounded; status: EXECUTED, PENDING ACCEPTANCE -- not accepted
 by this record).** Starting HEAD `5de219d`, schema `v62` and source version
@@ -15692,3 +15740,4 @@ authoritative record.)*
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
 - **Next action:** ChatGPT global sequencing decision (whether to declare the 1.0 capability set frozen and whether to authorize Final 1.0 Hardening).
+- **Latest executed, pending acceptance:** Everyday Wildlife Experience & Presentation Refinement v1 (HEAD `a69d55e`, see §3). Authorization after it: **NONE**.
