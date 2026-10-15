@@ -5,7 +5,7 @@ import { useAttention } from "../attention/AttentionProvider";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { StatusPill } from "./StatusPill";
-import { formatDateTime } from "../utils";
+import { formatInstantOrUnknown } from "../utils";
 
 const filters: Array<{ value: AlertCategory | undefined; label: string }> = [
   { value: undefined, label: "All" },
@@ -87,7 +87,7 @@ function AlertRow({
         <div>
           <h3>{alert.title}</h3>
           <span className="meta-text">
-            {ATTENTION_CATEGORY_LABEL[alert.attention_category]} · {formatDateTime(alert.created_at)}
+            {ATTENTION_CATEGORY_LABEL[alert.attention_category]} · {formatInstantOrUnknown(alert.created_at)}
           </span>
         </div>
         <StatusPill label={alert.status} tone={tone(alert)} />

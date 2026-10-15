@@ -251,6 +251,24 @@ export function formatDateTime(value: string): string {
 // server's `capture_time_known` fact -- never the date's age -- decides.
 export const CAPTURE_TIME_UNKNOWN_LABEL = "Capture time unknown";
 
+// Everyday Wildlife Experience & Presentation Refinement v1: surfaces that
+// show a bare instant with no per-record `capture_time_known` fact (Alerts,
+// Local Data's oldest/newest media) mirror the server's own placeholder
+// prefilter (`CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING`, 1971-01-01): no
+// real MockingBird observation, import or alert can predate it, so an instant
+// before it is the epoch anchor of a recording with no capture-time fact and
+// is never rendered as a date. Nothing is invented in its place.
+const PLACEHOLDER_INSTANT_CEILING_MS = Date.UTC(1971, 0, 1);
+
+export function isPlaceholderInstant(value: string): boolean {
+  const parsed = new Date(value).getTime();
+  return !Number.isNaN(parsed) && parsed < PLACEHOLDER_INSTANT_CEILING_MS;
+}
+
+export function formatInstantOrUnknown(value: string, format: (value: string) => string = formatDateTime): string {
+  return isPlaceholderInstant(value) ? CAPTURE_TIME_UNKNOWN_LABEL : format(value);
+}
+
 export function formatCaptureDateTime(value: string, captureTimeKnown: boolean | undefined): string {
   return captureTimeKnown === false ? CAPTURE_TIME_UNKNOWN_LABEL : formatDateTime(value);
 }

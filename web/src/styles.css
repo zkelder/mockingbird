@@ -1544,6 +1544,19 @@ details > summary:focus-visible {
   font-size: 0.84rem;
 }
 
+/* The preview wrapper is itself a direct child <div>, so the generic
+   `> div` rule above (flex: 1 1 auto; display: grid) used to override its
+   fixed 82x62 box and let the image render at natural height, overlapping the
+   rows below. Pin it back to a clipped, fixed thumbnail. */
+.dashboard-visit-row > .dashboard-visit-preview-wrap {
+  display: block;
+  flex: 0 0 82px;
+  width: 82px;
+  height: 62px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
 .dashboard-visit-row .primary-action,
 .dashboard-visit-row > .secondary-action,
 .dashboard-observation-row > .text-action {

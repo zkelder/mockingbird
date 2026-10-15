@@ -16,7 +16,7 @@ import { NotificationPreferences } from "../components/NotificationPreferences";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { StorageIntegrityPanel } from "../components/StorageIntegrityPanel";
-import { formatBytes, formatLabel, userFacingErrorMessage } from "../utils";
+import { formatBytes, formatLabel, isPlaceholderInstant, userFacingErrorMessage } from "../utils";
 
 interface LocalDataPageProps {
   onOpenDashboard: () => void;
@@ -30,7 +30,12 @@ interface LocalDataPageProps {
 
 function formatBackupTime(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  // Imported recordings with no capture-time fact are anchored at 1970
+  // internally; never show that anchor as the "oldest" media date.
+  return isPlaceholderInstant(value) ? "Time not recorded" : date.toLocaleString();
 }
 
 function storageRequestKey(prefix: string) {
