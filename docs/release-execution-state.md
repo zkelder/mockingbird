@@ -4162,10 +4162,58 @@ executed, closed, and now **ACCEPTED, classification A** (see the acceptance
 record directly below). Final 1.0 Hardening and every other later item are not
 authorized, and no feature-freeze declaration is made by this record.
 
+**Acceptance recorded, 2026-10-15 (scheduler reconciliation; documentation
+only; no validation rerun, no application code changed):** *Everyday Wildlife
+Experience & Presentation Refinement v1* is **ACCEPTED WITH LIMITATIONS** by
+ChatGPT global sequencing. Final accepted implementation commit: **`fd8a57b`**
+(on `a69d55e`; schema **`v62`** unchanged, source version `0.1.0` unchanged).
+Acceptance is by a bounded final review of the refined UI against an isolated
+copy of the real field database and media (originals untouched), at 1440x900
+and 390 px across Today, Visit detail, Review Queue, Bird Log and Place, with
+reviewed, legacy, unreviewed and abstained states checked. That review found
+and fixed, with regression tests that fail without the fix: (1) *corrected
+unreviewed-label behavior* -- an unreviewed Visit with no species guess no
+longer arrives with the detector's generic "Unknown Bird" pre-typed beside a
+prominent Confirm; the species field starts empty, **Confirm species** is
+disabled until the reviewer enters a label, and **Not sure** is unchanged and
+still never accepts a suggestion; (2) reviewed-state action buttons no longer
+overflow the decision column (stacked, at desktop and phone width); (3) the
+empty species field's placeholder no longer shows raw taxonomy keys.
+
+*Validation, with the code revision each result belongs to (do not read the
+earlier results as covering the final commit):*
+
+| Result | Code revision | Status |
+|---|---|---|
+| Complete default browser suite **240 passed** (238 + 2 new regression specs) | final `fd8a57b` | final regression result |
+| Multi-configuration browser regression **250/250** (default 238, onboarding 6, review-queue 4, bounded-media 2) | `a69d55e` | accepted as reported evidence; **not rerun** at `fd8a57b` (only the default suite was) |
+| Fast gate **1,817 passed**; `tsc` clean; focused backend 126 passed | `a69d55e` | accepted as reported evidence; not rerun |
+| Native-Windows packaged validation (build `a69d55e` deployed with the dev-deployment tool, identity confirmed, scrubbed environment, disposable home, demo prepared on the packaged GPU build, Windows Edge at both sizes, Review -> Confirm -> Bird Log journey) | `a69d55e` | accepted as reported evidence |
+
+**Limitations carried by this acceptance.** (a) The latest commit `fd8a57b` has
+**not** been packaged and tested on native Windows; the packaged validation
+above is of `a69d55e`. The delta is a frontend-only presentation/behavior
+change (Visit detail initial-label rule, one CSS block, one placeholder). Core
+was not run for this milestone. (b) *Authentic field-image quality:* the three
+real House Finch Visits are whole 4624x3472 yard frames with no persisted
+subject geometry, so the finch is small in its thumbnail (correctly not
+cropped to a subject the data does not vouch for); the one confirmed Northern
+Cardinal frame is badly overexposed. These are properties of the captured
+evidence, not UI defects, and no capture was altered. (c) No human interactive
+pass; the first-time-user journey was exercised by automated browsers only.
+(d) Known minor items unchanged from the implementation record: on a phone the
+decision panel sits below the evidence image; Today lists "Best moments" and
+"Recent activity" separately. **Portfolio capture and publication remain
+owner-controlled next actions** (the field imagery above, not the cardinal
+Visit, is a reason to prefer the demo clips for any recording). Existing
+roadmap lanes and queues are preserved unchanged. **Authorization after this
+acceptance: NONE** -- no new implementation milestone is authorized and no
+push, tag, packaging or publication is performed or authorized by this record.
+
 **Implementation recorded, 2026-10-14, by Everyday Wildlife Experience &
 Presentation Refinement v1 (owner-authorized bounded refinement of the existing
-everyday UI; status: EXECUTED, PENDING ACCEPTANCE -- not accepted by this
-record).** Starting HEAD `1575b3f`, schema `v62` and source version `0.1.0`
+everyday UI; status: EXECUTED -- later ACCEPTED WITH LIMITATIONS, see the
+acceptance record directly above).** Starting HEAD `1575b3f`, schema `v62` and source version `0.1.0`
 unchanged; no model/detector change, no schema change, no review-authority
 change, no push. Commits: `bb9ca44` (A), `a753792` (C selector), `a69d55e`
 (B/C/D/E UI). Delivered, presentation only: (A) Today "Recent activity"
@@ -4217,7 +4265,8 @@ reviewed-state action buttons spilled past the decision column. Findings
 reported, not fixed (data, not code): the three real House Finch Visits are
 whole 4624x3472 yard frames with no persisted subject geometry, so the finch is
 small in its thumbnail (correctly not cropped); the one confirmed Northern
-Cardinal frame is badly overexposed. Acceptance remains pending.
+Cardinal frame is badly overexposed. (Accepted with limitations 2026-10-15; see
+the acceptance record above.)
 **Subsequent authorization: NONE.**
 
 **Closure recorded, 2026-10-14, by Portfolio & Demo Release Closure v1
@@ -15750,4 +15799,4 @@ authoritative record.)*
   tester.
 - **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
 - **Next action:** ChatGPT global sequencing decision (whether to declare the 1.0 capability set frozen and whether to authorize Final 1.0 Hardening).
-- **Latest executed, pending acceptance:** Everyday Wildlife Experience & Presentation Refinement v1 (HEAD `a69d55e`, see §3). Authorization after it: **NONE**.
+- **Latest accepted milestone:** Everyday Wildlife Experience & Presentation Refinement v1, **ACCEPTED WITH LIMITATIONS** 2026-10-15 at `fd8a57b` (schema `v62`; browser 240 passed at `fd8a57b`; 250/250, Fast 1,817 and native-Windows packaged validation are of earlier `a69d55e`; `fd8a57b` not yet packaged on native Windows; see §3). Portfolio capture/publication are owner-controlled. Authorization after it: **NONE**.
