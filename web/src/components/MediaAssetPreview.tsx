@@ -11,6 +11,10 @@ interface MediaAssetPreviewProps {
    * evidence stores the observed time as `created_at`, which is the 1970
    * placeholder for a recording with no capture-time fact. */
   captureTimeKnown?: boolean;
+  /** Everyday Wildlife Experience & Presentation Refinement v1: list cards
+   * already say when/where; the MIME type and byte size are file facts, not
+   * wildlife facts, so they are omitted there. */
+  hideFileFacts?: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -31,6 +35,7 @@ export function MediaAssetPreview({
   compact = false,
   surfaceOverlay,
   captureTimeKnown,
+  hideFileFacts = false,
 }: MediaAssetPreviewProps) {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [imageDimensions, setImageDimensions] = useState<{
@@ -107,12 +112,14 @@ export function MediaAssetPreview({
         )}
         {canPreview && (asset.media_type === "video" || asset.media_type === "audio") ? surfaceOverlay : null}
       </div>
+      {hideFileFacts ? null : (
       <div className="media-preview-meta">
         <strong>{asset.original_filename}</strong>
         <span>{asset.content_type}</span>
         <span>{formatBytes(asset.file_size_bytes)}</span>
         <span>{formatCaptureDateTime(asset.created_at, captureTimeKnown)}</span>
       </div>
+      )}
     </div>
   );
 }

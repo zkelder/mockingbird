@@ -26,7 +26,10 @@ test("Place Report is reachable from the persistent nav and loads a real report"
   await completeSetup(page);
   await page.goto("/");
 
-  const navItem = page.getByRole("button", { name: "Place Report", exact: true });
+  // Place Report is a secondary page under the "Place" destination
+  // (Everyday Wildlife Experience & Presentation Refinement v1).
+  await page.getByRole("navigation", { name: "Product navigation" }).getByRole("button", { name: "Place", exact: true }).click();
+  const navItem = page.getByRole("navigation", { name: "Product navigation" }).getByRole("button", { name: "Place Report", exact: true });
   await expect(navItem).toBeVisible();
 
   const [response] = await Promise.all([

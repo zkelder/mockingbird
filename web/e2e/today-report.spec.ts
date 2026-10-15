@@ -1282,6 +1282,8 @@ test("Import Media is reachable from the persistent nav without enabling Develop
   await page.goto("/");
   await expect(page.getByText("Developer tools")).toHaveCount(0);
 
+  // Import Media is a secondary page under the "Cameras" destination.
+  await page.getByRole("navigation", { name: "Product navigation" }).getByRole("button", { name: "Cameras", exact: true }).click();
   const importNavItem = page.getByRole("button", { name: "Import Media", exact: true });
   await expect(importNavItem).toBeVisible();
   await importNavItem.click();

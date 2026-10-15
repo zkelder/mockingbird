@@ -26,6 +26,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
+import { thumbnailFraming } from "../components/subjectFraming";
 import {
   changeStatusBadge,
   formatCaptureDateTime,
@@ -219,15 +220,23 @@ function JournalThumbnail({
       </div>
     );
   }
+  const framing = thumbnailFraming(evidence);
   return (
     <img
       alt={thumbnailAlt(label, observedAt, captureTimeKnown)}
+      className={framing.className || undefined}
+      style={framing.style}
       loading="lazy"
       onError={() => setFailed(true)}
       src={`${apiClient.baseUrl}${evidence.preview_url}`}
     />
   );
 }
+
+// Search/recency only earn their space once the log is long enough to need them.
+const MIN_SPECIES_FOR_SEARCH = 4;
+const MIN_SPECIES_FOR_RECENT_STRIP = 6;
+const RECENT_STRIP_SIZE = 5;
 
 type LikelySightingEvidenceSource = "identification" | "visit_preview" | "unavailable";
 
@@ -404,6 +413,9 @@ export function BirdLogPage({
   const [customEndDate, setCustomEndDate] = useState(location.endDate || localDateInputValue());
   const [zones, setZones] = useState<Zone[]>([]);
   const [overview, setOverview] = useState<WildlifeJournalOverviewResponse | null>(null);
+  // Everyday Wildlife Experience & Presentation Refinement v1: client-side
+  // find-a-species over the already-loaded overview -- no new endpoint.
+  const [speciesSearch, setSpeciesSearch] = useState("");
   const [history, setHistory] = useState<WildlifeJournalHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -597,6 +609,23 @@ export function BirdLogPage({
     }
   };
 
+  const searchTerm = speciesSearch.trim().toLowerCase();
+  const visibleLabels = (overview?.labels ?? []).filter(
+    (item) =>
+      !searchTerm ||
+      item.display_name.toLowerCase().includes(searchTerm) ||
+      item.label.replace(/_/g, " ").toLowerCase().includes(searchTerm),
+  );
+  // Most recent first; a label whose latest time is the recorded-video
+  // placeholder has no real "recent" time, so it never claims a recency slot.
+  const recentlySeen =
+    (overview?.labels.length ?? 0) >= MIN_SPECIES_FOR_RECENT_STRIP
+      ? [...(overview?.labels ?? [])]
+          .filter((item) => item.latest_capture_time_known !== false)
+          .sort((a, b) => b.latest_observed_at.localeCompare(a.latest_observed_at))
+          .slice(0, RECENT_STRIP_SIZE)
+      : [];
+
   if (!journalLabel) {
     return (
       <div className="page-stack">
@@ -623,6 +652,17 @@ export function BirdLogPage({
               {overviewOrders.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
+          {overview && overview.labels.length >= MIN_SPECIES_FOR_SEARCH ? (
+            <label>
+              Find a species
+              <input
+                onChange={(event) => setSpeciesSearch(event.target.value)}
+                placeholder="Search by name"
+                type="search"
+                value={speciesSearch}
+              />
+            </label>
+          ) : null}
         </section>
         {likelySpecies.length > 0 ? (
           <section className="panel journal-likely-panel" aria-label="Likely sightings awaiting confirmation">
@@ -679,9 +719,39 @@ export function BirdLogPage({
             action={<button className="secondary-action" onClick={streams.length === 0 ? onOpenStreams : onOpenReview} type="button">{streams.length === 0 ? "Add Camera" : "Open Review Queue"}</button>}
           />
         ) : null}
-        {overview?.labels.length ? (
+        {recentlySeen.length > 0 && !searchTerm ? (
+          <section aria-label="Recently seen" className="panel journal-recent-strip">
+            <div className="section-heading">
+              <div>
+                <h2>Recently seen</h2>
+                <span className="meta-text">The latest confirmed species — open one to see its history.</span>
+              </div>
+            </div>
+            <div className="journal-recent-list">
+              {recentlySeen.map((item) => (
+                <button className="journal-recent-item" key={item.label} onClick={() => navigateJournalLabel(item.label)} type="button">
+                  <strong>{item.display_name}</strong>
+                  <span className="meta-text">{formatCaptureDateTime(item.latest_observed_at, item.latest_capture_time_known)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {searchTerm && overview && visibleLabels.length === 0 ? (
+          <EmptyState
+            title={`No species match “${speciesSearch.trim()}”`}
+            description="Check the spelling, or clear the search to see everything you have confirmed."
+            action={<button className="secondary-action" onClick={() => setSpeciesSearch("")} type="button">Clear search</button>}
+          />
+        ) : null}
+        {searchTerm && overview && visibleLabels.length > 0 ? (
+          <span className="meta-text" role="status">
+            Showing {visibleLabels.length} of {overview.labels.length} species
+          </span>
+        ) : null}
+        {visibleLabels.length ? (
           <section className="journal-label-grid" aria-label="Confirmed wildlife labels">
-            {overview.labels.map((item) => (
+            {visibleLabels.map((item) => (
               <article className="journal-label-card" key={item.label}>
                 <button className="journal-label-image" onClick={() => navigateJournalLabel(item.label)} type="button">
                   <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} captureTimeKnown={item.latest_capture_time_known} representative={item.representative} />

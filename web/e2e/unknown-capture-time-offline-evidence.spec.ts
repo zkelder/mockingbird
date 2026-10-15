@@ -94,6 +94,8 @@ test("an offline-analysis Visit's evidence panel does not call it manual media",
   const consoleErrors = trackConsoleErrors(page);
   const visitId = await seedOfflineUnknownCaptureTimeVisit(page);
   await page.goto(`/visits/${visitId}`);
+  // Evidence-trail copy lives in the "Visit details" disclosure.
+  await page.getByText("Visit details, evidence trail & export readiness").click();
 
   await expect(page.getByText("Found by offline analysis of an imported recording.", { exact: false })).toBeVisible();
   await expect(page.getByText(/No separate detection records are stored for this visit/)).toBeVisible();
@@ -108,6 +110,7 @@ test("a real manual import keeps its real date and its manual-media wording", as
   await page.goto(`/visits/${visitId}`);
 
   await expect(page.locator("section.visit-evidence-panel")).toBeVisible();
+  await page.getByText("Visit details, evidence trail & export readiness").click();
   await expect(page.getByText("Capture time unknown")).toHaveCount(0);
   await expect(page.getByText("No detections are attached to this manual media visit.")).toBeVisible();
 

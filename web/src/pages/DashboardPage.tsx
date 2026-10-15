@@ -592,6 +592,12 @@ export function DashboardPage({
   const recentRegularsOverflow = today.recent_regulars.filter(
     (species) => !highlightedLabels.has(species.label),
   );
+  const placeDetailsConfigured =
+    Boolean(environmentalContext?.basis_latitude != null || environmentalContext?.available) ||
+    (habitatContext?.habitat_facts.length ?? 0) > 0 ||
+    (habitatContext?.current_phenology.length ?? 0) > 0 ||
+    (habitatContext?.recent_phenology.length ?? 0) > 0 ||
+    (placeFeatures?.length ?? 0) > 0;
   const dayHasAnyOwnActivity =
     today.best_moments.length > 0 || newTodayOverflow.length > 0 || recentRegularsOverflow.length > 0;
   return (
@@ -679,11 +685,11 @@ export function DashboardPage({
       {/* Biodiversity & Place Intelligence v1: a fourth sibling card, same
           reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
           see docs/biodiversity-place-intelligence-v1-contract.md. */}
-      <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
+      <BiodiversitySummaryCard hideWhenNothingConfirmed onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
       {/* Year-over-Year Seasonality & Long-Term Place Memory v1: a fifth
           sibling card, same reasoning as the others above — see
           docs/year-over-year-seasonality-long-term-place-memory-v1-report.md. */}
-      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
+      <YearOverYearCard comparison={yearOverYear} hideWhenNoYearOfHistory onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single
           change sentence — this links to the fuller exploration surface
@@ -905,16 +911,20 @@ export function DashboardPage({
           prompts used to sit directly under today's report, above any
           wildlife, each as its own unexplained card. Grouped here, after the
           wildlife content, and labelled as optional. */}
-      <section aria-labelledby="dashboard-place-details-heading" className="page-stack dashboard-place-details">
-        <div className="section-heading">
-          <div>
-            <h2 id="dashboard-place-details-heading">About your place</h2>
-            <span className="meta-text">
-              Optional. A rough location, habitat notes, and features like feeders or water give your sightings
-              more context.
-            </span>
-          </div>
-        </div>
+      {/* Open only once the Place already has some of this recorded (so the
+          reviewer sees and can edit it); while all three are still empty it
+          stays one calm, collapsed line instead of three setup prompts. */}
+      <details
+        className="panel dashboard-place-details-disclosure"
+        open={placeDetailsConfigured || undefined}
+      >
+        <summary>
+          <strong>About your place</strong>
+          <span className="meta-text">
+            Optional — a rough location, habitat notes, and feeders or water give your sightings more context.
+          </span>
+        </summary>
+      <section aria-label="About your place" className="page-stack dashboard-place-details">
         {/* Environmental Context Foundation v1: a sibling of the report panel
             above, not nested inside it — see docs/environmental-context-
             foundation-v1-contract.md "Frontend surface" and this component's
@@ -955,6 +965,7 @@ export function DashboardPage({
           zones={zones}
         />
       </section>
+      </details>
       <LiveCameraOverview
         onOpenReview={(streamId) =>
           onOpenReview({ source: "live-motion", search: streamId, status: "unreviewed" })

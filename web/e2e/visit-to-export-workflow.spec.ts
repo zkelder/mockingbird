@@ -35,6 +35,8 @@ test("a Visit opens the export workflow scoped to it and an unreviewed Visit is 
   const visitId = (await imported.json()).visit.id as string;
 
   await page.goto(`/visits/${visitId}`);
+  // Export actions live in the "Visit details" disclosure.
+  await page.getByText("Visit details, evidence trail & export readiness").click();
   await page.getByRole("button", { name: "Check export eligibility" }).click();
 
   await expect(page).toHaveURL(new RegExp(`/ecological-destinations\\?visit=${visitId}`));

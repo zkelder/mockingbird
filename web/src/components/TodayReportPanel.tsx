@@ -5,6 +5,7 @@ import type {
   PlaceActivityReportResponse,
 } from "../api/types";
 import { apiClient } from "../api/client";
+import { thumbnailFraming } from "./subjectFraming";
 import { EmptyState } from "./EmptyState";
 import { SourceActivityList } from "./SourceActivityList";
 import { StatusPill } from "./StatusPill";
@@ -128,14 +129,18 @@ function SpeciesThumbnail({ highlight }: { highlight: PlaceActivityReportDigestS
   const evidence = highlight.representative_evidence?.evidence;
   useEffect(() => setFailed(false), [evidence?.media_asset_id]);
   if (!evidence || failed) return null;
+  const framing = thumbnailFraming(evidence);
   return (
-    <img
-      alt={representativeAlt(highlight)}
-      className="today-report-species-thumb"
-      loading="lazy"
-      onError={() => setFailed(true)}
-      src={`${apiClient.baseUrl}${evidence.preview_url}`}
-    />
+    <span className="today-report-species-thumb-frame">
+      <img
+        alt={representativeAlt(highlight)}
+        className={`today-report-species-thumb ${framing.className}`.trim()}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        src={`${apiClient.baseUrl}${evidence.preview_url}`}
+        style={framing.style}
+      />
+    </span>
   );
 }
 

@@ -262,27 +262,51 @@ export function WildlifeInsightsPanel({
             />
           ) : (
             <>
-              <section className="metric-grid wildlife-insights-metrics">
-                <MetricCard label="Reviewed wildlife" value={summary.headline.reviewed_wildlife_observation_count} detail="confirmed observations" />
-                <MetricCard label="Confirmed labels" value={summary.headline.unique_confirmed_label_count} detail="in this range" />
-                <MetricCard label="Unresolved Visits" value={summary.headline.unresolved_visit_count} detail="need review" />
-                <MetricCard label="Reviewed non-bird" value={summary.headline.reviewed_non_bird_activity_count} detail="kept separate" />
-                <MetricCard label="Busiest Stream" value={summary.headline.busiest_stream?.name ?? "—"} detail={summary.headline.busiest_stream ? `${summary.headline.busiest_stream.count} confirmed observations` : "No confirmed activity"} />
-                <MetricCard label="Peak hour" value={summary.headline.peak_activity_hour == null ? "—" : activityHourLabel(summary.headline.peak_activity_hour)} detail="confirmed activity" />
-              </section>
+              {/* Everyday Wildlife Experience & Presentation Refinement v1: a
+                  grid of zeros (and a "same as last period" notice comparing
+                  zero with zero) says nothing; with no confirmed wildlife the
+                  one actionable fact -- how many Visits wait for review -- is
+                  carried by the empty state below. Otherwise only non-empty
+                  figures are shown. */}
+              {summary.headline.reviewed_wildlife_observation_count > 0 ? (
+                <>
+                  <section className="metric-grid wildlife-insights-metrics">
+                    <MetricCard label="Reviewed wildlife" value={summary.headline.reviewed_wildlife_observation_count} detail="confirmed observations" />
+                    {summary.headline.unique_confirmed_label_count > 0 ? (
+                      <MetricCard label="Confirmed labels" value={summary.headline.unique_confirmed_label_count} detail="in this range" />
+                    ) : null}
+                    {summary.headline.unresolved_visit_count > 0 ? (
+                      <MetricCard label="Unresolved Visits" value={summary.headline.unresolved_visit_count} detail="need review" />
+                    ) : null}
+                    {summary.headline.reviewed_non_bird_activity_count > 0 ? (
+                      <MetricCard label="Reviewed non-bird" value={summary.headline.reviewed_non_bird_activity_count} detail="kept separate" />
+                    ) : null}
+                    {summary.headline.busiest_stream ? (
+                      <MetricCard label="Busiest Stream" value={summary.headline.busiest_stream.name} detail={`${summary.headline.busiest_stream.count} confirmed observations`} />
+                    ) : null}
+                    {summary.headline.peak_activity_hour != null ? (
+                      <MetricCard label="Peak hour" value={activityHourLabel(summary.headline.peak_activity_hour)} detail="confirmed activity" />
+                    ) : null}
+                  </section>
 
-              <section className="notice-panel wildlife-insights-comparison">
-                <strong>{comparisonCopy(summary)}</strong>
-                <span>
-                  {summary.comparison.new_labels.length ? `New labels: ${summary.comparison.new_labels.join(", ")}. ` : ""}
-                  {summary.comparison.labels_not_seen.length ? `Not seen this range: ${summary.comparison.labels_not_seen.join(", ")}.` : ""}
-                </span>
-              </section>
+                  <section className="notice-panel wildlife-insights-comparison">
+                    <strong>{comparisonCopy(summary)}</strong>
+                    <span>
+                      {summary.comparison.new_labels.length ? `New labels: ${summary.comparison.new_labels.join(", ")}. ` : ""}
+                      {summary.comparison.labels_not_seen.length ? `Not seen this range: ${summary.comparison.labels_not_seen.join(", ")}.` : ""}
+                    </span>
+                  </section>
+                </>
+              ) : null}
 
               {summary.headline.reviewed_wildlife_observation_count === 0 ? (
                 <EmptyState
                   title="Activity is present, but no confirmed wildlife yet"
-                  description="Review Visits to create corrected observation truth. Blank, false, ambiguous, and unknown outcomes stay out of wildlife counts."
+                  description={`${
+                    summary.headline.unresolved_visit_count > 0
+                      ? `${summary.headline.unresolved_visit_count} ${summary.headline.unresolved_visit_count === 1 ? "Visit is" : "Visits are"} waiting for review. `
+                      : ""
+                  }Review Visits to create corrected observation truth. Blank, false, ambiguous, and unknown outcomes stay out of wildlife counts.`}
                   action={<button className="secondary-action" onClick={onOpenReview} type="button">Open Review Queue</button>}
                 />
               ) : (
@@ -328,6 +352,10 @@ export function WildlifeInsightsPanel({
                 </>
               )}
 
+              {/* The same counts already appear above (or are zero); the review-
+                  context breakdown stays available on demand. */}
+              <details className="wildlife-insights-context-details">
+              <summary>Review context &amp; how outcomes are counted</summary>
               <section className="wildlife-insights-context">
                 <div><strong>Confirmed wildlife</strong><span>{summary.headline.reviewed_wildlife_observation_count} latest reviewed bird observations.</span></div>
                 <div><strong>Reviewed non-bird activity</strong><span>{summary.headline.reviewed_non_bird_activity_count} people, pets, vehicles, squirrels, or similar activity under existing semantics.</span></div>
@@ -340,6 +368,7 @@ export function WildlifeInsightsPanel({
                     already does instead. No change to what is counted, only how it reads. */}
                 <div><strong>Review-quality outcomes</strong><span>{summary.review_context.blank_or_false_count} blank/false · {summary.review_context.ambiguous_or_unknown_count} confirmed wildlife, species unresolved · {summary.review_context.pending_suggestion_evidence_count} pending suggestion evidence</span></div>
               </section>
+              </details>
             </>
           )}
         </div>

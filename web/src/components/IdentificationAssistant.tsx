@@ -1,4 +1,5 @@
-import type { VisitIdentificationAssistantResponse } from "../api/types";
+import type { TaxonomyLabel, VisitIdentificationAssistantResponse } from "../api/types";
+import { displayTaxonomyLabel } from "./taxonomy";
 import { explainSpeciesSuggestion } from "./suggestionExplanation";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -8,6 +9,9 @@ interface IdentificationAssistantProps {
   isLoading?: boolean;
   isRunning?: boolean;
   prefilledSuggestionId?: string | null;
+  // Presentation only: lets a suggestion read as "Blue Jay", never the raw
+  // taxonomy key. Absent, the key is humanized by formatLabel.
+  taxonomyLabels?: TaxonomyLabel[];
   onAnalyze: () => void;
   onUseSuggestion: (label: string, suggestionId: string) => void;
   onRejectSuggestion?: (suggestionId: string) => void;
@@ -20,6 +24,7 @@ export function IdentificationAssistant({
   isLoading = false,
   isRunning = false,
   prefilledSuggestionId,
+  taxonomyLabels = [],
   onAnalyze,
   onUseSuggestion,
   onRejectSuggestion,
@@ -52,16 +57,17 @@ export function IdentificationAssistant({
       {isLoading ? <span className="meta-text">Checking local analyzer availability...</span> : null}
       {error ? <div className="error-panel compact-error">{error}</div> : null}
       {availability ? (
+        <>
+          {/* Default view: one plain sentence. The model-input, candidate-pack
+              and truth-boundary facts stay available on demand. */}
+          <p className="meta-text">
+            {availability.status === "identification_uncertain"
+              ? explainSpeciesSuggestion({ isUncertain: true })
+              : availability.message}
+          </p>
+          <details className="review-diagnostic-details">
+            <summary>How suggestions work</summary>
         <div className="review-identification-grid">
-          <div className="data-row">
-            <span>Availability</span>
-            <strong>{formatLabel(availability.status)}</strong>
-            <small>
-              {availability.status === "identification_uncertain"
-                ? explainSpeciesSuggestion({ isUncertain: true })
-                : availability.message}
-            </small>
-          </div>
           <div className="data-row">
             <span>Selected model input</span>
             <strong>{selectedFrame ? "One saved image" : "No saved image"}</strong>
@@ -84,6 +90,8 @@ export function IdentificationAssistant({
             <small>Use a suggestion to prefill, then save through the existing correction workflow.</small>
           </div>
         </div>
+          </details>
+        </>
       ) : null}
 
       <div className="identification-assistant-controls">
@@ -101,17 +109,11 @@ export function IdentificationAssistant({
       ) : null}
       {prefilledSuggestionId && onClearPrefill ? (
         <div className="suggestion-prefill-summary">
-          <span>Suggestion {prefilledSuggestionId} only prefilled the correction field.</span>
+          <span>A suggestion filled in the species field. Nothing is saved until you confirm.</span>
           <button className="text-action" onClick={onClearPrefill} type="button">Clear prefill</button>
         </div>
       ) : null}
 
-      {assistant?.run ? (
-        <span className="meta-text">
-          Latest explicit request: {formatLabel(String(assistant.run.status ?? "recorded"))} ·{" "}
-          {formatLabel(String(assistant.run.request_origin ?? "user-triggered"))}
-        </span>
-      ) : null}
       {assistant?.suggestions.length ? (
         <div className="identification-assistant-results-layout">
           {selectedFrame ? (
@@ -128,15 +130,15 @@ export function IdentificationAssistant({
               <div className="item-title-row">
                 <div>
                   <span className="meta-text">
-                    {suggestion.origin === "previously_generated" ? "Previously generated evidence" : "User-triggered review assistance"}
+                    {suggestion.origin === "previously_generated" ? "Suggested earlier" : "Suggested on request"}
                   </span>
-                  <h4>Suggested label: {suggestion.label}</h4>
+                  <h4>{displayTaxonomyLabel(suggestion.label, taxonomyLabels)}</h4>
                 </div>
-                <strong>Rank {suggestion.rank}</strong>
+                <strong>{suggestion.rank === 1 ? "Best match" : `Option ${suggestion.rank}`}</strong>
               </div>
               <p>
-                {explainSpeciesSuggestion({ label: suggestion.label }) ??
-                  `Suggested label: ${suggestion.label}.`}
+                {explainSpeciesSuggestion({ label: displayTaxonomyLabel(suggestion.label, taxonomyLabels) }) ??
+                  `Suggested: ${displayTaxonomyLabel(suggestion.label, taxonomyLabels)}.`}
               </p>
               <span className="meta-text">{formatDateTime(suggestion.analyzed_at)}</span>
               <details className="review-diagnostic-details">
@@ -158,7 +160,7 @@ export function IdentificationAssistant({
                 >
                   Use suggestion
                 </button>
-                <span className="field-helper">Prefills only. Explicit correction save remains required.</span>
+                <span className="field-helper">Fills in the species field only — you still confirm it.</span>
                 {onRejectSuggestion && suggestion.status === "pending" ? (
                   <button
                     className="text-action"

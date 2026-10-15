@@ -10,6 +10,9 @@ interface TaxonomyLabelInputProps {
   label?: string;
   placeholder?: string;
   intent?: "truth" | "evidence";
+  // "collapsed" tucks the quick picks behind a disclosure for dense layouts
+  // (the Visit decision panel); every pick stays available.
+  quickPicks?: "visible" | "collapsed";
 }
 
 const preferredLabels = [
@@ -28,6 +31,7 @@ export function TaxonomyLabelInput({
   label = "Corrected label",
   placeholder = "confirmed species or event label",
   intent = "truth",
+  quickPicks = "visible",
 }: TaxonomyLabelInputProps) {
   const listId = useId();
   const matchedLabel = findTaxonomyLabel(value, labels);
@@ -40,7 +44,9 @@ export function TaxonomyLabelInput({
       {label}
       <input
         list={listId}
-        value={value}
+        // A resolvable taxonomy key is shown by its display name; the stored
+        // value may still be the key (resolved either way on save).
+        value={matchedLabel && matchedLabel.label === value ? matchedLabel.display_name : value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
       />
@@ -49,6 +55,9 @@ export function TaxonomyLabelInput({
           <option key={taxonomyLabel.id} label={taxonomyLabel.label} value={taxonomyLabel.display_name} />
         ))}
       </datalist>
+      {quickPicks === "collapsed" ? (
+        <details className="taxonomy-quick-picks-details">
+          <summary>Common choices</summary>
       <div className="taxonomy-quick-picks">
         {quickLabels.map((taxonomyLabel) => (
           <button
@@ -66,13 +75,35 @@ export function TaxonomyLabelInput({
           </button>
         ))}
       </div>
+        </details>
+      ) : (
+      <div className="taxonomy-quick-picks">
+        {quickLabels.map((taxonomyLabel) => (
+          <button
+            aria-pressed={matchedLabel?.id === taxonomyLabel.id}
+            className={matchedLabel?.id === taxonomyLabel.id ? "selected" : ""}
+            key={taxonomyLabel.id}
+            /* UI/UX & First-Run Adoption v1: a quick pick used to write the
+               internal id ("northern_cardinal") into the field while the
+               dropdown wrote the display name; `findTaxonomyLabel` resolves
+               either, so both now show the readable name. */
+            onClick={() => onChange(taxonomyLabel.display_name)}
+            type="button"
+          >
+            {taxonomyLabel.display_name}
+          </button>
+        ))}
+      </div>
+      )}
       <span className="field-helper">
         {matchedLabel
-          ? `${matchedLabel.display_name} ${
-              intent === "truth" ? "will save" : "matches taxonomy"
-            } as ${matchedLabel.label} (${formatLabel(matchedLabel.category)}${
-              matchedLabel.is_species ? " species" : ""
-            }).`
+          ? /* Plain words, never the internal taxonomy key (that stays in the
+               saved record and the advanced details). */
+            intent === "truth"
+            ? `${matchedLabel.display_name} will save as ${
+                matchedLabel.is_species ? "a species" : `a ${formatLabel(matchedLabel.category).toLowerCase()} outcome`
+              } in your record.`
+            : `${matchedLabel.display_name} is in the species list.`
           : intent === "truth" && value.trim()
             ? /* A label with no taxonomy row has no category, so MockingBird cannot
                  tell wildlife from a pet or vehicle: it is saved as the reviewer's

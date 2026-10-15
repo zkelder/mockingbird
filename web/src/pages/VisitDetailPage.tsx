@@ -482,9 +482,16 @@ export function VisitDetailPage({
     }
   }
 
-  async function saveCorrection(event: FormEvent<HTMLFormElement>) {
+  function saveCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmedLabel = label.trim();
+    return submitCorrection(label);
+  }
+
+  // `fromGuess: false` is the explicit "Not sure" / abstention path: it
+  // saves the reviewer's own answer and never marks a prefilled suggestion
+  // accepted -- an abstention must not read as acceptance of a guess.
+  async function submitCorrection(rawLabel: string, options: { fromGuess?: boolean } = {}) {
+    const trimmedLabel = rawLabel.trim();
     if (!trimmedLabel) {
       setMessage("Add a label before saving a correction.");
       return;
@@ -505,7 +512,7 @@ export function VisitDetailPage({
         taxonomyLabels,
       )} will be used as local dataset truth.`;
 
-      if (correctionSuggestionId) {
+      if (correctionSuggestionId && options.fromGuess !== false) {
         const sourceSuggestion = speciesSuggestions.find(
           (suggestion) => suggestion.id === correctionSuggestionId,
         );
@@ -757,6 +764,33 @@ export function VisitDetailPage({
         })
         .filter((name): name is string => name !== null)
     : [];
+  // Everyday Wildlife Experience & Presentation Refinement v1: plain
+  // presentation facts for the default view; nothing here is persisted.
+  const guessName =
+    !detail.visit.reviewed_label && detail.visit.species_guess
+      ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
+      : null;
+  const decisionTitle = guessName
+    ? `Is this a ${guessName}?`
+    : isSpeciesVisit
+      ? "What did you see?"
+      : "What was this?";
+  const visitPlaceText = detail.primary_zone
+    ? `${detail.stream.name} · ${detail.primary_zone.name}`
+    : detail.stream.name;
+  const evidenceCountText =
+    detail.evidence_frames.length > 0
+      ? `${detail.evidence_frames.length} ${
+          detail.evidence_frames[0]?.content_type.startsWith("audio/") ? "recording" : "photo"
+        }${detail.evidence_frames.length === 1 ? "" : "s"}`
+      : null;
+  const visitContextSentence = [
+    formatCaptureDateTime(detail.event.started_at, detail.capture_time_known),
+    visitPlaceText,
+    evidenceCountText,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const fullResolutionFrame = detail.evidence_frames.find(
     (frame) => frame.evidence_role === "high_resolution_original",
   ) ?? null;
@@ -800,7 +834,7 @@ export function VisitDetailPage({
 
   return (
     <div className="page-stack">
-      <div className="stream-detail-heading">
+      <div className="stream-detail-heading visit-detail-heading">
         <div>
           <span className="page-eyebrow">One visit</span>
           <StatusPill
@@ -811,25 +845,12 @@ export function VisitDetailPage({
             <StatusPill label={identificationBadge.label} tone={identificationBadge.tone} />
           ) : null}
           <h1>{displayTaxonomyLabel(visitLabel, taxonomyLabels)} visit</h1>
-          <p>{detail.review_summary}</p>
-          {headlineAlternativeNames.length > 0 ? (
-            <p className="meta-text">Other possibilities: {headlineAlternativeNames.join(", ")}</p>
-          ) : null}
+          {/* Everyday Wildlife Experience & Presentation Refinement v1: one
+              human sentence of context (when, where, how much evidence)
+              instead of the export-readiness sentence and pill; export
+              readiness lives in "Visit details" below. */}
+          <p>{visitContextSentence}</p>
         </div>
-        <StatusPill
-          label={
-            detail.dataset_ready && isSpeciesVisit
-              ? isUnidentifiedWildlifeVisit
-                ? "Ready for wildlife dataset export"
-                : "Ready for species dataset export"
-              : detail.dataset_ready
-                ? "Ready for local dataset export"
-                : isSpeciesVisit
-                  ? "Resolve species before export"
-                  : "Needs review before export"
-          }
-          tone={detail.dataset_ready ? "good" : "review"}
-        />
       </div>
 
       {/*
@@ -843,7 +864,7 @@ export function VisitDetailPage({
         navigation/context only, never a shared correction surface.
       */}
       {detail.sibling_visits.length > 0 ? (
-        <div className="notice-panel">
+        <div className="notice-panel visit-context-banner">
           <EvidenceBadge label="Shared encounter" tone="evidence" />
           <p>
             {detail.sibling_visits.length} other subject{detail.sibling_visits.length === 1 ? "" : "s"} detected in
@@ -900,7 +921,7 @@ export function VisitDetailPage({
               taxonAgreement: association.taxon_agreement,
             });
             return (
-              <div className="notice-panel" key={association.association_id}>
+              <div className="notice-panel visit-context-banner" key={association.association_id}>
                 <EvidenceBadge
                   label={association.other_modality === "acoustic" ? "Also heard nearby" : "Also seen nearby"}
                   tone="evidence"
@@ -952,7 +973,7 @@ export function VisitDetailPage({
               taxonomyLabels,
             );
             return (
-              <div className="notice-panel" key={association.association_id}>
+              <div className="notice-panel visit-context-banner" key={association.association_id}>
                 <EvidenceBadge label={`Also seen on ${association.other_source_name}`} tone="evidence" />
                 {association.taxon_agreement === "agrees" ? (
                   <EvidenceBadge label="Evidence agrees" tone="evidence" />
@@ -984,6 +1005,8 @@ export function VisitDetailPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
 
+      <div className="visit-primary-grid">
+        <div className="visit-primary-evidence">
       {/*
         Primary evidence hero: the one place on this page that always shows
         the actual saved image, for every Visit provenance. The panels below
@@ -1014,37 +1037,14 @@ export function VisitDetailPage({
           </div>
           <EvidenceBadge label="Evidence only" tone="evidence" />
         </div>
-        <div className="visit-evidence-context-line">
-          <span>{formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)}</span>
-          <span>
-            {detail.stream.name}
-            {detail.primary_zone
-              ? ` · ${detail.primary_zone.name}${
-                  formatLabel(detail.primary_zone.zone_type).toLowerCase() ===
-                  detail.primary_zone.name.toLowerCase()
-                    ? ""
-                    : ` (${formatLabel(detail.primary_zone.zone_type)})`
-                }`
-              : ""}
-          </span>
-          {/* UI/UX & First-Run Adoption v1: this line showed a reviewed label
-              and a model guess identically, with no way to tell them apart. */}
-          <span>
-            {detail.visit.reviewed_label ? (
-              <>
-                <strong>{displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)}</strong>
-                <EvidenceBadge label="You confirmed this" tone="truth" />
-              </>
-            ) : detail.visit.species_guess ? (
-              <>
-                <span>Likely {displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)}</span>
-                <EvidenceBadge label="MockingBird's guess" tone="evidence" />
-              </>
-            ) : (
-              "Not identified yet"
-            )}
-          </span>
-        </div>
+        {detail.visit.reviewed_label ? (
+          <div className="visit-evidence-context-line">
+            <span>
+              <strong>{displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)}</strong>
+              <EvidenceBadge label="You confirmed this" tone="truth" />
+            </span>
+          </div>
+        ) : null}
         {detail.evidence_frames.length > 0 ? (
           <VisitEvidenceSequence
             frames={detail.evidence_frames}
@@ -1060,6 +1060,508 @@ export function VisitDetailPage({
             <span>No saved evidence image could be found for this Visit.</span>
           </div>
         )}
+      </section>
+
+          {/* Visit Same-Frame Classifier Evidence Visibility v1: the frame the
+              guess was actually based on stays visible beside the decision,
+              never hidden behind the suggestions disclosure. */}
+      {detail.classifier_supporting_evidence ? (
+        <section className="classifier-supporting-evidence-panel">
+          <div className="section-heading">
+            <div>
+              <h4>Species suggestion evidence</h4>
+              <span className="meta-text">
+                {classifierSupportingEvidenceSuggestion
+                  ? `MockingBird's suggestion of ${displayTaxonomyLabel(classifierSupportingEvidenceSuggestion.suggested_label, taxonomyLabels)} was based on this frame — not the Visit evidence image above.`
+                  : "MockingBird's species suggestion was based on this frame — not the Visit evidence image above."}
+              </span>
+            </div>
+            <EvidenceBadge
+              label={
+                // Source-Resolution + Multi-Frame Species Evidence v1:
+                // plain language only -- normal users do not need
+                // "resolution_provenance"/"synchronized" jargon, just
+                // whether a genuinely higher-resolution photo was used.
+                detail.classifier_supporting_evidence.input_type === "native_resolution_crop"
+                  ? "Higher-resolution photo"
+                  : "Supporting evidence"
+              }
+              tone="evidence"
+            />
+          </div>
+          <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} captureTimeKnown={detail.capture_time_known} />
+        </section>
+      ) : null}
+        </div>
+        <div className="visit-primary-decision">
+      {activeCorrectionPrefill ? (
+        <section className="prefill-notice">
+          <div>
+            <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
+            <span>
+              {detail.visit.review_status === "needs_review"
+                ? `${correctionPrefillLabel} is evidence in the correction field. Submit the correction to create reviewed truth; the suggestion is marked accepted only after save succeeds.`
+                : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
+            </span>
+          </div>
+          {detail.visit.review_status === "needs_review" ? (
+            <button className="text-action" onClick={clearCorrectionPrefill} type="button">
+              Clear prefill
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {currentCorrection ? (
+        <CorrectionTruthPanel
+          latest={currentCorrection}
+          older={priorCorrections}
+          taxonomyLabels={taxonomyLabels}
+        />
+      ) : null}
+
+      {detail.visit.review_status === "needs_review" ? (
+        <section aria-label="Your decision" className="panel visit-decision-panel">
+          <div className="section-heading">
+            <div>
+              <h2>{decisionTitle}</h2>
+              <span className="meta-text">
+                {guessName
+                  ? "MockingBird's guess is a suggestion. You decide what goes in your record."
+                  : isSpeciesVisit
+                    ? "Name what you see, or say you are not sure — an honest “not sure” is more useful than a guess."
+                    : "Save the label that describes what this really was."}
+              </span>
+            </div>
+          </div>
+          {guessName ? (
+            <div className="visit-decision-suggestion">
+              <strong>{guessName}</strong>
+              <EvidenceBadge label="MockingBird's guess — not confirmed" tone="evidence" />
+              {headlineAlternativeNames.length > 0 ? (
+                <span className="meta-text">Other possibilities: {headlineAlternativeNames.join(", ")}</span>
+              ) : null}
+            </div>
+          ) : null}
+          {!guessName && speciesSuggestions.some((suggestion) => suggestion.status === "pending") ? (
+            <p className="meta-text">
+              MockingBird has {speciesSuggestions.filter((suggestion) => suggestion.status === "pending").length}{" "}
+              suggestion(s) for this Visit — see “More suggestions” below. Nothing is chosen for you.
+            </p>
+          ) : null}
+          <form className="correction-form visit-decision-form" onSubmit={saveCorrection}>
+            <TaxonomyLabelInput
+              label={isSpeciesVisit ? "Species correction" : "Corrected label"}
+              labels={taxonomyLabels}
+              value={label}
+              onChange={setLabel}
+              placeholder={
+                isSpeciesVisit ? "reviewed species, unknown_bird, or false_positive" : "confirmed label"
+              }
+              quickPicks="collapsed"
+            />
+            <div className="visit-decision-actions">
+              <button className="primary-action" disabled={isSaving} type="submit">
+                {isSaving ? "Saving…" : isSpeciesVisit ? "Confirm species" : "Save correction"}
+              </button>
+              <button
+                className="secondary-action"
+                disabled={isSaving}
+                onClick={(event) => {
+                  const field = event.currentTarget
+                    .closest("form")
+                    ?.querySelector<HTMLInputElement>("input[list]");
+                  field?.focus();
+                  field?.select();
+                }}
+                type="button"
+              >
+                Change
+              </button>
+              <button
+                className="secondary-action"
+                disabled={isSaving}
+                onClick={() => void submitCorrection(isSpeciesVisit ? "unknown_bird" : "unknown_animal", { fromGuess: false })}
+                type="button"
+              >
+                Not sure
+              </button>
+            </div>
+            <label className="visit-decision-note">
+              Note (optional)
+              <textarea
+                rows={1}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="optional review note"
+              />
+            </label>
+          </form>
+          <p className="meta-text visit-decision-footnote">
+            {label && !detail.visit.reviewed_label && label === detail.visit.species_guess
+              ? "The box is filled in with MockingBird's guess. Change it if it is wrong. Nothing is recorded until you confirm."
+              : "Nothing is recorded until you confirm, and a later model run can suggest a different answer but can never overwrite yours."}
+          </p>
+          {isDeveloperMode && detail.detection_proposals.length > 0 ? (
+            <button className="text-action" onClick={onOpenDetectionProposals} type="button">
+              Detection Proposals
+            </button>
+          ) : null}
+        </section>
+      ) : (
+        <section className="panel case-readiness-panel">
+          <div>
+            <h2>Dataset readiness</h2>
+            <p>{detail.review_summary}</p>
+          </div>
+          <div className="detail-actions">
+            <button
+              className="primary-action"
+              disabled={isSaving || isReopening}
+              onClick={beginReviewedRevision}
+              type="button"
+            >
+              Edit identification
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving || isReopening}
+              onClick={() => void reopenReviewedVisit()}
+              type="button"
+            >
+              {isReopening ? "Reopening..." : "Reopen as needs review"}
+            </button>
+            <button className="secondary-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
+              Prepare for export or an external destination
+            </button>
+          </div>
+          {isEditingReviewed ? (
+            <section className="species-suggestion-review-context">
+              <div className="section-heading">
+                <div>
+                  <h3>Revise reviewed outcome</h3>
+                  <span className="meta-text">
+                    The current correction stays in history. Saving creates a new reviewed truth.
+                  </span>
+                </div>
+                <EvidenceBadge label="Explicit revision" tone="truth" />
+              </div>
+              <div className="correction-truth-note">
+                <strong>Current reviewed correction</strong>
+                <span>
+                  {currentCorrection
+                    ? `${displayTaxonomyLabel(currentCorrection.label ?? "unknown", taxonomyLabels)} saved ${formatDateTime(currentCorrection.created_at)}.`
+                    : "No current correction is available; refresh this Visit before revising it."}
+                </span>
+              </div>
+              <div className="promoted-review-context-grid">
+                <ContextItem label="Stream" value={detail.stream.name} />
+                <ContextItem
+                  label="Zone"
+                  value={
+                    detail.primary_zone
+                      ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+                      : "Unzoned"
+                  }
+                />
+                <ContextItem label="Visit date and time" value={formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)} />
+                <ContextItem
+                  label="Suggestions"
+                  value={
+                    speciesSuggestions.length > 0
+                      ? `${speciesSuggestions.length} evidence-only suggestion${speciesSuggestions.length === 1 ? "" : "s"}`
+                      : "No suggestions"
+                  }
+                />
+              </div>
+              {detail.evidence_frames.length > 0 ? (
+                <VisitEvidenceSequence
+                  frames={detail.evidence_frames}
+                  recommendedMediaAssetId={recommendedMediaAssetId}
+                  recommendationNote={recommendationNote}
+                  captureTimeKnown={detail.capture_time_known}
+                />
+              ) : detail.media_asset ? (
+                <MediaAssetPreview asset={detail.media_asset} captureTimeKnown={detail.capture_time_known} />
+              ) : (
+                <span className="meta-text">No saved evidence frame is attached to this Visit.</span>
+              )}
+              <p className="evidence-panel-copy">
+                Suggestions remain evidence only while revising. They are never accepted or
+                promoted automatically.
+              </p>
+              <form className="correction-form" onSubmit={saveReviewedRevision}>
+                <TaxonomyLabelInput
+                  label={isSpeciesVisit ? "Revised species or outcome" : "Revised outcome"}
+                  labels={taxonomyLabels}
+                  value={label}
+                  onChange={setLabel}
+                  placeholder="supported species, non_bird, blank, ambiguous, or false_positive"
+                />
+                <label>
+                  Revision reason
+                  <textarea
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="optional short reason for this change"
+                  />
+                </label>
+                <div className="detail-actions">
+                  <button className="primary-action" disabled={isSaving} type="submit">
+                    {isSaving ? "Saving..." : "Save revised identification"}
+                  </button>
+                  <button className="secondary-action" onClick={cancelReviewedRevision} type="button">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </section>
+          ) : null}
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
+          {detail.detection_proposals.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          ) : null}
+        </section>
+      )}
+        </div>
+      </div>
+
+      <details className="panel visit-suggestions-details">
+        <summary>
+          More suggestions &amp; help identifying
+          {speciesSuggestions.length > 0
+            ? ` (${speciesSuggestions.length} suggestion${speciesSuggestions.length === 1 ? "" : "s"})`
+            : ""}
+        </summary>
+        <IdentificationAssistant
+          assistant={identificationAssistant}
+          error={identificationAssistantError}
+          isLoading={isLoadingIdentificationAssistant}
+          isRunning={isRunningIdentificationAssistant}
+          onAnalyze={() => void runIdentificationAssistant()}
+          onClearPrefill={clearCorrectionPrefill}
+          onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
+          onUseSuggestion={useIdentificationAssistantSuggestion}
+          prefilledSuggestionId={correctionSuggestionId}
+          taxonomyLabels={taxonomyLabels}
+        />
+        {detail.visit.review_status === "needs_review" ? (
+          <>
+          <section className="species-suggestion-review-context">
+            <div className="section-heading">
+              <div>
+                <h3>Species Suggestions</h3>
+                <span className="meta-text">
+                  Suggestions are evidence only. Submitting a correction creates reviewed truth.
+                </span>
+              </div>
+              <EvidenceBadge
+                label={`${speciesSuggestions.length} suggestion${
+                  speciesSuggestions.length === 1 ? "" : "s"
+                }`}
+                tone={speciesSuggestions.length > 0 ? "evidence" : "quiet"}
+              />
+            </div>
+            {isDeveloperMode ? (
+              <div className="mock-suggestion-action">
+                <label>
+                  Mock label
+                  <input
+                    value={mockSuggestedLabel}
+                    onChange={(event) => setMockSuggestedLabel(event.target.value)}
+                    placeholder="optional; defaults to unknown_bird"
+                  />
+                </label>
+                <button
+                  className="secondary-action"
+                  disabled={isCreatingMockSuggestion}
+                  onClick={() => void createMockSuggestion()}
+                  type="button"
+                >
+                  {isCreatingMockSuggestion ? "Creating..." : "Create mock suggestion"}
+                </button>
+                <span className="field-helper">
+                  Developer Mode only. Creates demo SpeciesSuggestion evidence only. It does not
+                  run a model or create reviewed truth.
+                </span>
+              </div>
+            ) : null}
+            {correctionSuggestionId ? (
+              <div className="suggestion-prefill-summary">
+                <div>
+                  <strong>Correction prefilled from suggestion {correctionSuggestionId}</strong>
+                  <span>
+                    {activeSuggestionLabel} is in the correction field. Edit it if needed; status is
+                    marked accepted only after the correction succeeds.
+                  </span>
+                </div>
+                <button className="text-action" onClick={clearCorrectionPrefill} type="button">
+                  Clear prefill
+                </button>
+              </div>
+            ) : null}
+            {isLoadingSpeciesSuggestions ? (
+              <span className="meta-text">Loading suggestions for this visit...</span>
+            ) : null}
+            {speciesSuggestionError ? (
+              <div className="error-panel compact-error">{speciesSuggestionError}</div>
+            ) : null}
+            {!isLoadingSpeciesSuggestions &&
+            !speciesSuggestionError &&
+            speciesSuggestions.length === 0 ? (
+              <span className="meta-text">No SpeciesSuggestions are linked to this visit yet.</span>
+            ) : null}
+            {!isLoadingSpeciesSuggestions &&
+            !speciesSuggestionError &&
+            speciesSuggestions.length > 0 ? (
+              <div className="visit-suggestion-list">
+                {sortedSpeciesSuggestions.map((suggestion) => (
+                  <article
+                    className={
+                      correctionSuggestionId === suggestion.id
+                        ? `visit-suggestion-card visit-suggestion-${suggestion.status} selected`
+                        : `visit-suggestion-card visit-suggestion-${suggestion.status}`
+                    }
+                    key={suggestion.id}
+                  >
+                    <div className="item-title-row">
+                      <div>
+                        <span className="meta-text">{suggestion.adapter_name}</span>
+                        <h4>{displayTaxonomyLabel(suggestion.suggested_label, taxonomyLabels)}</h4>
+                        {suggestion.suggested_common_name ||
+                        suggestion.suggested_scientific_name ? (
+                          <span className="meta-text">
+                            {[
+                              suggestion.suggested_common_name,
+                              suggestion.suggested_scientific_name,
+                            ]
+                              .filter(Boolean)
+                              .join(" / ")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <SpeciesSuggestionStatusBadge status={suggestion.status} />
+                    </div>
+                    <span className="meta-text">{speciesSuggestionStatusCopy(suggestion.status)}</span>
+                    <div className="species-suggestion-meta">
+                      <span>Rank {suggestion.rank}</span>
+                      <span>
+                        {formatConfidence(suggestion.confidence)}{" "}
+                        {speciesSuggestionMetricLabel(suggestion)}
+                      </span>
+                      <span>{formatDateTime(suggestion.created_at)}</span>
+                    </div>
+                    {suggestion.notes ? (
+                      <p className="species-suggestion-note">{suggestion.notes}</p>
+                    ) : null}
+                    {suggestion.status === "pending" || suggestion.status === "accepted" ? (
+                      <div className="suggestion-action-stack">
+                        <button
+                          className="secondary-action"
+                          onClick={() => useSpeciesSuggestionAsCorrection(suggestion)}
+                          type="button"
+                        >
+                          Use as correction prefill
+                        </button>
+                        <span className="field-helper">
+                          Prefills only. It does not save truth or change status before correction.
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="meta-text">
+                        {formatLabel(suggestion.status)} suggestion is read-only here and remains
+                        separate from reviewed truth.
+                      </span>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+          </>
+        ) : null}
+      </details>
+
+      <VisitCurationPanel
+        detail={detail}
+        onCurationChanged={onCorrectionSaved}
+        onOpenVisit={onOpenVisit}
+        onReload={() => loadDetail({ showLoading: false })}
+      />
+
+      <details className="panel visit-advanced-details">
+        <summary>Visit details, evidence trail &amp; export readiness</summary>
+        <div className="visit-advanced-body">
+          <div className="detail-actions">
+            <button className="text-action" onClick={onOpenExports} type="button">
+              Exports
+            </button>
+            <button className="text-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
+              Check export eligibility
+            </button>
+          </div>
+      <section className="panel species-review-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{isSpeciesVisit ? "Species review" : "Review correction"}</h2>
+            <span className="meta-text">
+              Suggestion evidence is not truth. Corrected species is local dataset truth.
+            </span>
+          </div>
+          <EvidenceBadge
+            label={
+              detail.dataset_ready && isSpeciesVisit
+                ? isUnidentifiedWildlifeVisit
+                  ? "Ready for wildlife dataset export"
+                  : "Ready for species dataset export"
+                : "Resolve species"
+            }
+            tone={detail.dataset_ready ? "truth" : "review"}
+          />
+        </div>
+        <div className="species-state-grid">
+          <div>
+            <span className="meta-text">
+              {isSpeciesVisit ? (isUnidentifiedWildlifeVisit ? "Wildlife confirmed" : "Reviewed species") : "Reviewed label"}
+            </span>
+            <strong>
+              {detail.visit.reviewed_label
+                ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
+                : "Not reviewed"}
+            </strong>
+            <TaxonomyBadge label={reviewedTaxonomy} value={detail.visit.reviewed_label} />
+          </div>
+          <div>
+            <span className="meta-text">Species guess</span>
+            <strong>
+              {detail.visit.species_guess
+                ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
+                : "No species suggestion"}
+            </strong>
+            <TaxonomyBadge label={speciesGuessTaxonomy} value={detail.visit.species_guess ?? "unknown_bird"} />
+          </div>
+          <div>
+            <span className="meta-text">Dataset export</span>
+            <strong>
+              {detail.dataset_ready
+                ? isSpeciesVisit
+                  ? isUnidentifiedWildlifeVisit
+                    ? "Ready for wildlife dataset export"
+                    : "Ready for species dataset export"
+                  : "Ready for local dataset export"
+                : isSpeciesVisit
+                  ? "Resolve species"
+                  : "Needs review"}
+            </strong>
+            <span className="meta-text">
+              {detail.dataset_ready ? "Corrected truth is available." : "Save a correction before export."}
+            </span>
+          </div>
+        </div>
       </section>
 
       {fullResolutionFrame ? (
@@ -1105,24 +1607,6 @@ export function VisitDetailPage({
                 </article>
               ))}
             </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {activeCorrectionPrefill ? (
-        <section className="prefill-notice">
-          <div>
-            <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
-            <span>
-              {detail.visit.review_status === "needs_review"
-                ? `${correctionPrefillLabel} is evidence in the correction field. Submit the correction to create reviewed truth; the suggestion is marked accepted only after save succeeds.`
-                : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
-            </span>
-          </div>
-          {detail.visit.review_status === "needs_review" ? (
-            <button className="text-action" onClick={clearCorrectionPrefill} type="button">
-              Clear prefill
-            </button>
           ) : null}
         </section>
       ) : null}
@@ -1246,14 +1730,6 @@ export function VisitDetailPage({
         />
       ) : null}
 
-      {currentCorrection ? (
-        <CorrectionTruthPanel
-          latest={currentCorrection}
-          older={priorCorrections}
-          taxonomyLabels={taxonomyLabels}
-        />
-      ) : null}
-
       <section className="case-summary-grid">
         <div className="panel case-summary-card">
           <span className="meta-text">Subject</span>
@@ -1351,73 +1827,6 @@ export function VisitDetailPage({
             </div>
           );
         })()}
-      </section>
-
-      <VisitCurationPanel
-        detail={detail}
-        onCurationChanged={onCorrectionSaved}
-        onOpenVisit={onOpenVisit}
-        onReload={() => loadDetail({ showLoading: false })}
-      />
-
-      <section className="panel species-review-panel">
-        <div className="section-heading">
-          <div>
-            <h2>{isSpeciesVisit ? "Species review" : "Review correction"}</h2>
-            <span className="meta-text">
-              Suggestion evidence is not truth. Corrected species is local dataset truth.
-            </span>
-          </div>
-          <EvidenceBadge
-            label={
-              detail.dataset_ready && isSpeciesVisit
-                ? isUnidentifiedWildlifeVisit
-                  ? "Ready for wildlife dataset export"
-                  : "Ready for species dataset export"
-                : "Resolve species"
-            }
-            tone={detail.dataset_ready ? "truth" : "review"}
-          />
-        </div>
-        <div className="species-state-grid">
-          <div>
-            <span className="meta-text">
-              {isSpeciesVisit ? (isUnidentifiedWildlifeVisit ? "Wildlife confirmed" : "Reviewed species") : "Reviewed label"}
-            </span>
-            <strong>
-              {detail.visit.reviewed_label
-                ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
-                : "Not reviewed"}
-            </strong>
-            <TaxonomyBadge label={reviewedTaxonomy} value={detail.visit.reviewed_label} />
-          </div>
-          <div>
-            <span className="meta-text">Species guess</span>
-            <strong>
-              {detail.visit.species_guess
-                ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
-                : "No species suggestion"}
-            </strong>
-            <TaxonomyBadge label={speciesGuessTaxonomy} value={detail.visit.species_guess ?? "unknown_bird"} />
-          </div>
-          <div>
-            <span className="meta-text">Dataset export</span>
-            <strong>
-              {detail.dataset_ready
-                ? isSpeciesVisit
-                  ? isUnidentifiedWildlifeVisit
-                    ? "Ready for wildlife dataset export"
-                    : "Ready for species dataset export"
-                  : "Ready for local dataset export"
-                : isSpeciesVisit
-                  ? "Resolve species"
-                  : "Needs review"}
-            </strong>
-            <span className="meta-text">
-              {detail.dataset_ready ? "Corrected truth is available." : "Save a correction before export."}
-            </span>
-          </div>
-        </div>
       </section>
 
       {detail.media_asset ? (
@@ -1547,357 +1956,12 @@ export function VisitDetailPage({
         </div>
       </section>
 
-      {/* UI/UX & First-Run Adoption v1: the correction form (the one
-          action this page exists for) used to sit below notes,
-          collections, tags and the identification assistant -- about
-          1900px down on desktop and far further on a phone. Evidence,
-          then optional assist, then confirm; private organization
-          (notes/collections/tags) follows. */}
-      <section className="panel">
-        <IdentificationAssistant
-          assistant={identificationAssistant}
-          error={identificationAssistantError}
-          isLoading={isLoadingIdentificationAssistant}
-          isRunning={isRunningIdentificationAssistant}
-          onAnalyze={() => void runIdentificationAssistant()}
-          onClearPrefill={clearCorrectionPrefill}
-          onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
-          onUseSuggestion={useIdentificationAssistantSuggestion}
-          prefilledSuggestionId={correctionSuggestionId}
-        />
-      </section>
+        </div>
+      </details>
 
-      {detail.visit.review_status === "needs_review" ? (
-        <section className="panel">
-          <div className="section-heading">
-            <h2>{isSpeciesVisit ? "Resolve species" : "Correct visit label"}</h2>
-            <EvidenceBadge label="Dataset truth" tone="truth" />
-          </div>
-          <p className="evidence-panel-copy">
-            {isSpeciesVisit
-              ? "Confirm the species, or choose Unknown if the evidence isn't clear enough — an honest “unknown” is more useful than a guess. What you save becomes your record in Bird Log, Insights, and exports."
-              : "Save the label that describes what this really was. What you save becomes your record in Bird Log, Insights, and exports."}
-          </p>
-          <div className="correction-truth-note">
-            <strong>Your answer is the one that counts</strong>
-            <span>
-              {label && !detail.visit.reviewed_label && label === detail.visit.species_guess
-                ? "The box below is prefilled with MockingBird's own guess — change it if it is wrong, or clear it and choose Unknown. Nothing is recorded until you save."
-                : "Change the label or notes however you like. Nothing is recorded until you save, and a later model run can suggest a different answer but can never overwrite yours."}
-            </span>
-          </div>
-          <section className="species-suggestion-review-context">
-            <div className="section-heading">
-              <div>
-                <h3>Species Suggestions</h3>
-                <span className="meta-text">
-                  Suggestions are evidence only. Submitting a correction creates reviewed truth.
-                </span>
-              </div>
-              <EvidenceBadge
-                label={`${speciesSuggestions.length} suggestion${
-                  speciesSuggestions.length === 1 ? "" : "s"
-                }`}
-                tone={speciesSuggestions.length > 0 ? "evidence" : "quiet"}
-              />
-            </div>
-            {isDeveloperMode ? (
-              <div className="mock-suggestion-action">
-                <label>
-                  Mock label
-                  <input
-                    value={mockSuggestedLabel}
-                    onChange={(event) => setMockSuggestedLabel(event.target.value)}
-                    placeholder="optional; defaults to unknown_bird"
-                  />
-                </label>
-                <button
-                  className="secondary-action"
-                  disabled={isCreatingMockSuggestion}
-                  onClick={() => void createMockSuggestion()}
-                  type="button"
-                >
-                  {isCreatingMockSuggestion ? "Creating..." : "Create mock suggestion"}
-                </button>
-                <span className="field-helper">
-                  Developer Mode only. Creates demo SpeciesSuggestion evidence only. It does not
-                  run a model or create reviewed truth.
-                </span>
-              </div>
-            ) : null}
-            {correctionSuggestionId ? (
-              <div className="suggestion-prefill-summary">
-                <div>
-                  <strong>Correction prefilled from suggestion {correctionSuggestionId}</strong>
-                  <span>
-                    {activeSuggestionLabel} is in the correction field. Edit it if needed; status is
-                    marked accepted only after the correction succeeds.
-                  </span>
-                </div>
-                <button className="text-action" onClick={clearCorrectionPrefill} type="button">
-                  Clear prefill
-                </button>
-              </div>
-            ) : null}
-            {detail.classifier_supporting_evidence ? (
-              <section className="classifier-supporting-evidence-panel">
-                <div className="section-heading">
-                  <div>
-                    <h4>Species suggestion evidence</h4>
-                    <span className="meta-text">
-                      {classifierSupportingEvidenceSuggestion
-                        ? `MockingBird's suggestion of ${displayTaxonomyLabel(classifierSupportingEvidenceSuggestion.suggested_label, taxonomyLabels)} was based on this frame — not the Visit evidence image above.`
-                        : "MockingBird's species suggestion was based on this frame — not the Visit evidence image above."}
-                    </span>
-                  </div>
-                  <EvidenceBadge
-                    label={
-                      // Source-Resolution + Multi-Frame Species Evidence v1:
-                      // plain language only -- normal users do not need
-                      // "resolution_provenance"/"synchronized" jargon, just
-                      // whether a genuinely higher-resolution photo was used.
-                      detail.classifier_supporting_evidence.input_type === "native_resolution_crop"
-                        ? "Higher-resolution photo"
-                        : "Supporting evidence"
-                    }
-                    tone="evidence"
-                  />
-                </div>
-                <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} captureTimeKnown={detail.capture_time_known} />
-              </section>
-            ) : null}
-            {isLoadingSpeciesSuggestions ? (
-              <span className="meta-text">Loading suggestions for this visit...</span>
-            ) : null}
-            {speciesSuggestionError ? (
-              <div className="error-panel compact-error">{speciesSuggestionError}</div>
-            ) : null}
-            {!isLoadingSpeciesSuggestions &&
-            !speciesSuggestionError &&
-            speciesSuggestions.length === 0 ? (
-              <span className="meta-text">No SpeciesSuggestions are linked to this visit yet.</span>
-            ) : null}
-            {!isLoadingSpeciesSuggestions &&
-            !speciesSuggestionError &&
-            speciesSuggestions.length > 0 ? (
-              <div className="visit-suggestion-list">
-                {sortedSpeciesSuggestions.map((suggestion) => (
-                  <article
-                    className={
-                      correctionSuggestionId === suggestion.id
-                        ? `visit-suggestion-card visit-suggestion-${suggestion.status} selected`
-                        : `visit-suggestion-card visit-suggestion-${suggestion.status}`
-                    }
-                    key={suggestion.id}
-                  >
-                    <div className="item-title-row">
-                      <div>
-                        <span className="meta-text">{suggestion.adapter_name}</span>
-                        <h4>{displayTaxonomyLabel(suggestion.suggested_label, taxonomyLabels)}</h4>
-                        {suggestion.suggested_common_name ||
-                        suggestion.suggested_scientific_name ? (
-                          <span className="meta-text">
-                            {[
-                              suggestion.suggested_common_name,
-                              suggestion.suggested_scientific_name,
-                            ]
-                              .filter(Boolean)
-                              .join(" / ")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <SpeciesSuggestionStatusBadge status={suggestion.status} />
-                    </div>
-                    <span className="meta-text">{speciesSuggestionStatusCopy(suggestion.status)}</span>
-                    <div className="species-suggestion-meta">
-                      <span>Rank {suggestion.rank}</span>
-                      <span>
-                        {formatConfidence(suggestion.confidence)}{" "}
-                        {speciesSuggestionMetricLabel(suggestion)}
-                      </span>
-                      <span>{formatDateTime(suggestion.created_at)}</span>
-                    </div>
-                    {suggestion.notes ? (
-                      <p className="species-suggestion-note">{suggestion.notes}</p>
-                    ) : null}
-                    {suggestion.status === "pending" || suggestion.status === "accepted" ? (
-                      <div className="suggestion-action-stack">
-                        <button
-                          className="secondary-action"
-                          onClick={() => useSpeciesSuggestionAsCorrection(suggestion)}
-                          type="button"
-                        >
-                          Use as correction prefill
-                        </button>
-                        <span className="field-helper">
-                          Prefills only. It does not save truth or change status before correction.
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="meta-text">
-                        {formatLabel(suggestion.status)} suggestion is read-only here and remains
-                        separate from reviewed truth.
-                      </span>
-                    )}
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </section>
-          <form className="correction-form" onSubmit={saveCorrection}>
-            <TaxonomyLabelInput
-              label={isSpeciesVisit ? "Species correction" : "Corrected label"}
-              labels={taxonomyLabels}
-              value={label}
-              onChange={setLabel}
-              placeholder={
-                isSpeciesVisit ? "reviewed species, unknown_bird, or false_positive" : "confirmed label"
-              }
-            />
-            <label>
-              Notes
-              <textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="optional review note"
-              />
-            </label>
-            <button className="primary-action" disabled={isSaving} type="submit">
-              {isSaving ? "Saving…" : isSpeciesVisit ? "Confirm species" : "Save correction"}
-            </button>
-          </form>
-          <button className="text-action" onClick={onOpenExports} type="button">
-            Exports
-          </button>
-          <button className="text-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
-            Check export eligibility
-          </button>
-          {isDeveloperMode && detail.detection_proposals.length > 0 ? (
-            <button className="text-action" onClick={onOpenDetectionProposals} type="button">
-              Detection Proposals
-            </button>
-          ) : null}
-        </section>
-      ) : (
-        <section className="panel case-readiness-panel">
-          <div>
-            <h2>Dataset readiness</h2>
-            <p>{detail.review_summary}</p>
-          </div>
-          <div className="detail-actions">
-            <button
-              className="primary-action"
-              disabled={isSaving || isReopening}
-              onClick={beginReviewedRevision}
-              type="button"
-            >
-              Edit identification
-            </button>
-            <button
-              className="secondary-action"
-              disabled={isSaving || isReopening}
-              onClick={() => void reopenReviewedVisit()}
-              type="button"
-            >
-              {isReopening ? "Reopening..." : "Reopen as needs review"}
-            </button>
-            <button className="secondary-action" onClick={() => onOpenEcologicalDestinations(visitId)} type="button">
-              Prepare for export or an external destination
-            </button>
-          </div>
-          {isEditingReviewed ? (
-            <section className="species-suggestion-review-context">
-              <div className="section-heading">
-                <div>
-                  <h3>Revise reviewed outcome</h3>
-                  <span className="meta-text">
-                    The current correction stays in history. Saving creates a new reviewed truth.
-                  </span>
-                </div>
-                <EvidenceBadge label="Explicit revision" tone="truth" />
-              </div>
-              <div className="correction-truth-note">
-                <strong>Current reviewed correction</strong>
-                <span>
-                  {currentCorrection
-                    ? `${displayTaxonomyLabel(currentCorrection.label ?? "unknown", taxonomyLabels)} saved ${formatDateTime(currentCorrection.created_at)}.`
-                    : "No current correction is available; refresh this Visit before revising it."}
-                </span>
-              </div>
-              <div className="promoted-review-context-grid">
-                <ContextItem label="Stream" value={detail.stream.name} />
-                <ContextItem
-                  label="Zone"
-                  value={
-                    detail.primary_zone
-                      ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
-                      : "Unzoned"
-                  }
-                />
-                <ContextItem label="Visit date and time" value={formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)} />
-                <ContextItem
-                  label="Suggestions"
-                  value={
-                    speciesSuggestions.length > 0
-                      ? `${speciesSuggestions.length} evidence-only suggestion${speciesSuggestions.length === 1 ? "" : "s"}`
-                      : "No suggestions"
-                  }
-                />
-              </div>
-              {detail.evidence_frames.length > 0 ? (
-                <VisitEvidenceSequence
-                  frames={detail.evidence_frames}
-                  recommendedMediaAssetId={recommendedMediaAssetId}
-                  recommendationNote={recommendationNote}
-                  captureTimeKnown={detail.capture_time_known}
-                />
-              ) : detail.media_asset ? (
-                <MediaAssetPreview asset={detail.media_asset} captureTimeKnown={detail.capture_time_known} />
-              ) : (
-                <span className="meta-text">No saved evidence frame is attached to this Visit.</span>
-              )}
-              <p className="evidence-panel-copy">
-                Suggestions remain evidence only while revising. They are never accepted or
-                promoted automatically.
-              </p>
-              <form className="correction-form" onSubmit={saveReviewedRevision}>
-                <TaxonomyLabelInput
-                  label={isSpeciesVisit ? "Revised species or outcome" : "Revised outcome"}
-                  labels={taxonomyLabels}
-                  value={label}
-                  onChange={setLabel}
-                  placeholder="supported species, non_bird, blank, ambiguous, or false_positive"
-                />
-                <label>
-                  Revision reason
-                  <textarea
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                    placeholder="optional short reason for this change"
-                  />
-                </label>
-                <div className="detail-actions">
-                  <button className="primary-action" disabled={isSaving} type="submit">
-                    {isSaving ? "Saving..." : "Save revised identification"}
-                  </button>
-                  <button className="secondary-action" onClick={cancelReviewedRevision} type="button">
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </section>
-          ) : null}
-          <button className="secondary-action" onClick={onOpenExports}>
-            Open Dataset Exports
-          </button>
-          {detail.detection_proposals.length > 0 ? (
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
-            </button>
-          ) : null}
-        </section>
-      )}
-
+      <details className="panel visit-organization-details">
+        <summary>Notes, collections &amp; tags</summary>
+        <div className="visit-organization-body">
       <section className="panel observation-notes">
         <div className="section-heading"><div><h2>Observation notes</h2><span className="meta-text">Private local context. Notes never change the reviewed label.</span></div><StatusPill label={detail.visit.review_status === "reviewed" ? "Reviewed" : "Needs review"} tone={detail.visit.review_status === "reviewed" ? "good" : "review"} /></div>
         {organization ? <>
@@ -1926,6 +1990,8 @@ export function VisitDetailPage({
         <label>Create and add tag <input maxLength={50} value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></label><span className="field-helper">{newTagName.length}/50 characters</span><button className="secondary-action" onClick={() => void createAndAddTag()} type="button">Create and add</button>
         {tagMessage ? <span className="meta-text">{tagMessage}</span> : null}
       </section>
+        </div>
+      </details>
 
 
     </div>

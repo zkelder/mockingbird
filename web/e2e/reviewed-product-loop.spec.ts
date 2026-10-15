@@ -110,7 +110,7 @@ test("a ranked species suggestion becomes correction, Bird Log, and export truth
   await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
   const visitCard = page.locator(`article.queue-card[data-target-id="${visitId}"]`);
   await expect(visitCard).toHaveCount(1);
-  await expect(visitCard).toContainText("species not confirmed");
+  await expect(visitCard).toContainText("needs your check");
   await expect(visitCard).toContainText(stream.name);
   await expect(visitCard).toContainText("Feeder");
   await expect(visitCard).toContainText("Northern Cardinal");
@@ -126,15 +126,18 @@ test("a ranked species suggestion becomes correction, Bird Log, and export truth
 
   // Visit Detail: the ranked alternatives are offered as evidence; choosing
   // rank 2 only prefills the correction form.
+  // The assistant lives in a disclosure under the decision (Everyday
+  // Wildlife Experience & Presentation Refinement v1).
+  await page.getByText(/More suggestions & help identifying/).click();
   const assistant = page.getByRole("region", { name: "Identification Assistant" });
   await expect(assistant).toContainText("Evidence only");
   const rankTwo = assistant
     .locator("article")
-    .filter({ has: page.getByRole("heading", { name: "Suggested label: blue_jay" }) });
-  await expect(rankTwo).toContainText("Rank 2");
+    .filter({ has: page.getByRole("heading", { name: "Blue Jay" }) });
+  await expect(rankTwo).toContainText("Option 2");
   await rankTwo.getByRole("button", { name: "Use suggestion" }).click();
   const correctionField = page.getByRole("combobox", { name: /^Species correction/ });
-  await expect(correctionField).toHaveValue("blue_jay");
+  await expect(correctionField).toHaveValue("Blue Jay");
 
   // Prefilling is not saving.
   const afterPrefill = await (await page.request.get(`/api/visits/${visitId}`)).json();

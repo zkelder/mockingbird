@@ -81,6 +81,16 @@ const PRODUCT_REVIEW_PAGE_SIZE = 25;
 
 function productReviewTitle(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   if (item.product_category === "animal") {
+    // Everyday Wildlife Experience & Presentation Refinement v1: a card that
+    // carries MockingBird's explicit suggestion leads with it, still plainly
+    // provisional ("Likely", "needs your check") -- never a confirmation.
+    if (
+      item.suggestion_id &&
+      item.identification?.suggestion?.id === item.suggestion_id &&
+      item.media_asset?.media_type !== "audio"
+    ) {
+      return `Likely ${displayTaxonomyLabel(item.identification.suggestion.suggested_label, taxonomyLabels)} — needs your check`;
+    }
     // Acoustic / BirdNET Observation Foundation v1: honest about whether
     // this candidate's evidence was heard or seen.
     return item.media_asset?.media_type === "audio"
@@ -3867,7 +3877,7 @@ function ProductReviewCard({
       data-target-id={reviewQueueTargetId(item)}
     >
       {item.media_asset ? (
-        <MediaAssetPreview asset={item.media_asset} compact captureTimeKnown={item.capture_time_known} />
+        <MediaAssetPreview asset={item.media_asset} compact captureTimeKnown={item.capture_time_known} hideFileFacts />
       ) : (
         <div className="review-product-image-unavailable">
           Primary evidence unavailable
@@ -3887,29 +3897,21 @@ function ProductReviewCard({
           />
         </div>
         <div className="review-product-facts">
-          <span>{evidenceClass}</span>
-          {item.detector_score != null ? <span>Score {item.detector_score.toFixed(3)}</span> : null}
+          {/* The detector-class sentence duplicates the badge above for the
+              ordinary animal card; it stays for the non-obvious categories. */}
+          {item.product_category === "animal" ? null : <span>{evidenceClass}</span>}
           <span>
-            {item.evidence_count === 1 ? "1 evidence item" : `${item.evidence_count} evidence items`}
+            {item.evidence_count === 1 ? "1 saved item" : `${item.evidence_count} saved items`}
           </span>
         </div>
         {explicitSuggestion ? (
           <div className="review-product-suggestion">
-            <strong>Species suggestions</strong>
             <span>
               {explainSpeciesSuggestion({
                 label: displayTaxonomyLabel(explicitSuggestion.suggested_label, taxonomyLabels),
-              })}
+              })}{" "}
+              <span className="meta-text">Evidence only.</span>
             </span>
-            <span className="meta-text">Evidence only.</span>
-            <span>
-              {item.identification?.candidate_pack
-                ? `Candidate pack ${item.identification.candidate_pack.display_name} v${item.identification.candidate_pack.version}`
-                : "Open the Visit for full suggestion evidence."}
-            </span>
-            <button className="text-action" onClick={onOpenReview} type="button">
-              View all suggestions
-            </button>
           </div>
         ) : null}
         <div className="detail-actions">
@@ -3935,6 +3937,12 @@ function ProductReviewCard({
         <details className="review-diagnostic-details">
           <summary>Advanced evidence</summary>
           <div className="review-diagnostic-grid">
+            {item.detector_score != null ? <span>Detector score: {item.detector_score.toFixed(3)}</span> : null}
+            {item.identification?.candidate_pack ? (
+              <span>
+                Candidate pack: {item.identification.candidate_pack.display_name} v{item.identification.candidate_pack.version}
+              </span>
+            ) : null}
             <span>Queue item: {item.id}</span>
             <span>Track generation: {item.track_generation_id ?? "not recorded"}</span>
             <span>Detector: {item.detector_class ?? "not recorded"}</span>
@@ -4651,39 +4659,29 @@ function FastReviewPanel({
           <label>New tag <input maxLength={50} value={newPostCorrectionTag} onChange={(event) => setNewPostCorrectionTag(event.target.value)} /></label><button className="text-action" disabled={!newPostCorrectionTag.trim()} onClick={() => void createAndTagLastCorrectedVisit()} type="button">Create and add</button>
         </div>
       ) : null}
-      <div className="fast-review-context">
-        <div className="data-row">
-          <span>Stream</span>
-          <strong>{reviewQueueStreamLabel(activeItem)}</strong>
-          <small>{reviewQueueSourceLabel(activeItem)}</small>
-        </div>
-        <div className="data-row">
-          <span>Zone</span>
-          <strong>{reviewItemZoneLabel(activeItem)}</strong>
-          <small>{activeItem.activity_session_id ? "Live activity Visit" : "Review Queue Visit"}</small>
-        </div>
-        <div className="data-row">
-          <span>Visit time</span>
-          <strong>
-            {activeItem.activity_started_at
-              ? formatCaptureDateTime(activeItem.activity_started_at, activeItem.capture_time_known)
-              : activeItem.media_asset?.created_at
-                ? formatCaptureDateTime(activeItem.media_asset.created_at, activeItem.capture_time_known)
-                : "Unavailable"}
-          </strong>
-          <small>Duration {fastReviewDuration(activeItem)}</small>
-        </div>
-        <div className="data-row">
-          <span>Queue progress</span>
-          <strong>
-            {orderedTargets.findIndex(
-              (target) => target.target_id === reviewQueueTargetId(activeItem),
-            ) + 1}{" "}
-            / {orderedTargets.length}
-          </strong>
-          <small>Current active filters only</small>
-        </div>
-      </div>
+      {/* Everyday Wildlife Experience & Presentation Refinement v1: four
+          label/value cards ("Live activity Visit", "Current active filters
+          only", ...) collapsed into one plain sentence. Same facts. */}
+      <p className="fast-review-context fast-review-context-line">
+        {[
+          reviewQueueStreamLabel(activeItem),
+          reviewItemZoneLabel(activeItem),
+          activeItem.activity_started_at
+            ? formatCaptureDateTime(activeItem.activity_started_at, activeItem.capture_time_known)
+            : activeItem.media_asset?.created_at
+              ? formatCaptureDateTime(activeItem.media_asset.created_at, activeItem.capture_time_known)
+              : null,
+          activeItem.activity_started_at && activeItem.activity_last_seen_at ? fastReviewDuration(activeItem) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        <span className="meta-text">
+          {" "}
+          — Visit{" "}
+          {orderedTargets.findIndex((target) => target.target_id === reviewQueueTargetId(activeItem)) + 1} of{" "}
+          {orderedTargets.length}
+        </span>
+      </p>
       <div className="fast-review-content">
         <div className="fast-review-evidence">
           {activeItem.evidence_frames.length > 0 ? (
@@ -4693,7 +4691,7 @@ function FastReviewPanel({
               captureTimeKnown={activeItem.capture_time_known}
             />
           ) : activeItem.media_asset ? (
-            <MediaAssetPreview asset={activeItem.media_asset} compact captureTimeKnown={activeItem.capture_time_known} />
+            <MediaAssetPreview asset={activeItem.media_asset} compact captureTimeKnown={activeItem.capture_time_known} hideFileFacts />
           ) : (
             <div className="fast-review-no-evidence">No saved evidence frame is available for this Visit.</div>
           )}
@@ -4725,6 +4723,7 @@ function FastReviewPanel({
             onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
             onUseSuggestion={useIdentificationAssistantSuggestion}
             prefilledSuggestionId={assistantPrefillSuggestionId}
+            taxonomyLabels={taxonomyLabels}
           />
           <div className="fast-review-suggestions">
             <strong>Evidence-only suggestions</strong>
@@ -4952,7 +4951,7 @@ function IdentificationAssistPanel({
         ) : null}
         <div className="data-row">
           <span>Best frame</span>
-          <strong>{identification.media_asset_id ?? "No best frame"}</strong>
+          <strong>{identification.media_asset_id ? "One saved frame" : "No saved frame"}</strong>
           <small>
             {identification.can_run_on_best_frame
               ? "Runnable media"

@@ -127,7 +127,7 @@ test("gallery defaults to the recommended frame, exposes every saved frame, and 
 
   // The correction form -- Visit-level review state -- is completely
   // unaffected by which evidence image happens to be on screen.
-  await expect(form.locator("input").first()).toHaveValue("unknown_animal");
+  await expect(form.locator("input").first()).toHaveValue("Unknown Animal");
   await expect(form.locator("textarea")).toHaveValue(
     "e2e: switching evidence frames must not disturb this note.",
   );

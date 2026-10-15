@@ -298,7 +298,7 @@ test("review form state survives zooming, panning, and switching frames", async 
   await thumbnails.nth(1).click();
   await heroPanel.getByRole("button", { name: "Reset view", exact: true }).isVisible().catch(() => undefined);
 
-  await expect(form.locator("input").first()).toHaveValue("unknown_animal");
+  await expect(form.locator("input").first()).toHaveValue("Unknown Animal");
   await expect(form.locator("textarea")).toHaveValue(
     "e2e: zoom/pan/focus must not disturb this note.",
   );

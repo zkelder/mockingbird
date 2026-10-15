@@ -80,17 +80,19 @@ async function mockBiodiversitySummary(page: Page, overrides: Record<string, unk
   );
 }
 
-test("a brand-new Place shows an honest empty state, not a bare zero", async ({ page }) => {
+test("a brand-new Place shows no empty Biodiversity card on Today, and an honest empty state elsewhere", async ({ page }) => {
   await completeSetup(page);
   await mockBiodiversitySummary(page, {
     warnings: ["No camera has spent time observing yet — what lives here fills in once one has been watching for a while."],
   });
 
+  // Today already says "nothing observed yet" once (Everyday Wildlife
+  // Experience & Presentation Refinement v1); a second empty card repeating it
+  // is calm-hierarchy noise, so Today omits it until something is recorded.
   await page.goto("/");
-  const card = page.locator(".biodiversity-summary-card");
-  await expect(card).toBeVisible();
-  await expect(card.getByText("Nothing recorded yet.")).toBeVisible();
-  await expect(card.getByText("No camera has spent time observing yet", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
+  await expect(page.locator(".biodiversity-summary-card")).toHaveCount(0);
+  await expect(page.getByText("Nothing recorded yet.")).toHaveCount(0);
 });
 
 test("Dashboard shows New here, Regular visitors, and Recently observed from the same summary", async ({

@@ -1646,14 +1646,22 @@ details > summary:focus-visible {
    see docs/representative-species-evidence-contract.md. `align-self` is
    set explicitly because the row itself uses `align-items: baseline` for
    its text children, which an image has no meaningful baseline for. */
-.today-report-species-thumb {
+.today-report-species-thumb-frame {
+  display: block;
   flex: 0 0 auto;
   align-self: center;
   width: 40px;
   height: 40px;
   border-radius: 6px;
-  object-fit: cover;
+  overflow: hidden;
   background: #eaf0e8;
+}
+
+.today-report-species-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .today-report-species-list li span {
@@ -10365,4 +10373,222 @@ fieldset.camera-filter {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: Visit detail
+   leads with the wildlife image and the one decision; everything else is a
+   disclosure. */
+.visit-primary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.visit-primary-evidence,
+.visit-primary-decision {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.visit-primary-decision {
+  position: sticky;
+  top: 12px;
+}
+
+.visit-decision-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.visit-decision-suggestion strong {
+  font-size: 1.15rem;
+}
+
+.visit-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.visit-decision-actions .primary-action {
+  flex: 1 1 140px;
+}
+
+.visit-suggestions-details > summary,
+.visit-advanced-details > summary,
+.visit-organization-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-weight: 800;
+}
+
+.visit-advanced-body,
+.visit-organization-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.visit-advanced-body > .panel,
+.visit-organization-body > .panel {
+  box-shadow: none;
+}
+
+.visit-suggestions-details > :not(summary) {
+  margin-top: 12px;
+}
+
+.visit-decision-footnote {
+  margin: 0;
+}
+
+@media (max-width: 1000px) {
+  .visit-primary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .visit-primary-decision {
+    position: static;
+  }
+}
+
+.visit-context-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 14px;
+}
+
+.visit-context-banner p {
+  margin: 0;
+}
+
+.visit-context-banner .detail-actions {
+  margin-left: auto;
+}
+
+.visit-decision-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.visit-decision-actions .primary-action {
+  grid-column: 1 / -1;
+}
+
+.taxonomy-quick-picks-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.correction-form.visit-decision-form {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.visit-decision-suggestion {
+  margin-top: 2px;
+}
+
+.visit-decision-panel .section-heading h2 {
+  font-size: 1.25rem;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: a small source
+   image is shown whole on a soft backdrop, never stretched to fill the card
+   (see components/subjectFraming.ts). */
+.journal-label-image img.journal-thumb-low-resolution,
+.journal-gallery-image img.journal-thumb-low-resolution,
+.today-report-species-thumb.journal-thumb-low-resolution {
+  object-fit: contain;
+  background: #e3eadf;
+}
+
+.correction-form .visit-decision-note textarea {
+  min-height: 42px;
+}
+
+.dashboard-place-details-disclosure > summary {
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.dashboard-place-details-disclosure[open] > summary {
+  margin-bottom: 12px;
+}
+
+.wildlife-insights-context-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-weight: 800;
+}
+
+.wildlife-insights-context-details[open] > summary {
+  margin-bottom: 10px;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: the secondary
+   list under the active primary destination. */
+.nav-sub-items {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 6px 14px;
+  padding-left: 10px;
+  border-left: 1px solid #5d8068;
+}
+
+.nav-item.nav-sub-item {
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #dbe8dc;
+}
+
+/* Bird Log rediscovery (Everyday Wildlife Experience & Presentation
+   Refinement v1). */
+.journal-recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.journal-recent-item {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: inherit;
+  text-align: left;
+}
+
+.journal-recent-item:hover {
+  border-color: #2e6f5e;
+}
+
+.journal-controls input[type="search"] {
+  min-height: 42px;
+  min-width: 220px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+}
+
+.fast-review-context.fast-review-context-line {
+  display: block;
+  grid-template-columns: none;
+  margin: 0;
+  font-weight: 700;
+  color: #243a2d;
 }

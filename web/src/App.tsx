@@ -116,32 +116,75 @@ const initialData: AppData = {
 // the product loop (observe -> discover/confirm/remember -> understand ->
 // manage) instead of one flat, 13-item "Product loop" list. Labels and
 // routes are unchanged; only order and grouping moved.
-type NavGroup = "home" | "observe" | "wildlife" | "place" | "manage";
-const navGroupLabels: Record<NavGroup, string | null> = {
-  home: null,
-  observe: "Observe",
-  wildlife: "Wildlife",
-  place: "Your place",
-  manage: "Settings & help",
-};
-const productNavItems: Array<{ page: Page; label: string; group: NavGroup; minRole?: UserRole }> = [
-  { page: "dashboard", label: "Today", group: "home" },
-  { page: "streams", label: "Cameras", group: "observe" },
-  { page: "import", label: "Import Media", group: "observe" },
-  { page: "review", label: "Review Queue", group: "wildlife", minRole: "reviewer" },
-  { page: "bird-log", label: "Bird Log", group: "wildlife" },
-  { page: "activity-library", label: "Activity Library", group: "wildlife" },
-  { page: "place-story", label: "Place Story", group: "place" },
-  { page: "place-activity-report", label: "Place Report", group: "place" },
-  { page: "analytics", label: "Insights", group: "place" },
-  { page: "ecological-destinations", label: "Ecological Destinations", group: "place" },
-  { page: "settings", label: "Local Data", group: "manage" },
-  { page: "users", label: "Users", group: "manage", minRole: "administrator" },
-  // Product Operations & First-Observation Completion v1: Doctor's own
-  // report includes local filesystem paths and Camera Node structural
-  // facts -- Administrator-gated server-side (see api/auth.py), mirrored
-  // here so the nav never shows an entry a Viewer/Reviewer cannot open.
-  { page: "doctor", label: "Doctor", group: "manage", minRole: "administrator" },
+// Everyday Wildlife Experience & Presentation Refinement v1: six primary
+// destinations (Today, Cameras, Review, Bird Log, Place, Settings) with the
+// remaining product pages reachable as a contextual secondary list under the
+// destination they belong to. No route, page or capability was removed or
+// renamed; only what is shown at the top level changed. `alsoPages` are pages
+// that are not themselves nav entries (detail/setup pages) but belong to a
+// destination, so it stays highlighted while the reviewer is inside them.
+interface NavMember {
+  page: Page;
+  label: string;
+  minRole?: UserRole;
+}
+interface NavDestination {
+  id: string;
+  label: string;
+  minRole?: UserRole;
+  members: NavMember[];
+  alsoPages?: Page[];
+}
+const navDestinations: NavDestination[] = [
+  { id: "today", label: "Today", members: [{ page: "dashboard", label: "Today" }] },
+  {
+    id: "cameras",
+    label: "Cameras",
+    members: [
+      { page: "streams", label: "Cameras" },
+      { page: "import", label: "Import Media" },
+    ],
+    alsoPages: ["stream-detail", "camera-setup", "camera-configuration"],
+  },
+  {
+    id: "review",
+    label: "Review Queue",
+    minRole: "reviewer",
+    members: [{ page: "review", label: "Review Queue" }],
+  },
+  {
+    id: "bird-log",
+    label: "Bird Log",
+    members: [
+      { page: "bird-log", label: "Bird Log" },
+      { page: "activity-library", label: "Activity Library" },
+    ],
+    alsoPages: ["collections", "collection-detail"],
+  },
+  {
+    id: "place",
+    label: "Place",
+    members: [
+      { page: "place-story", label: "Place Story" },
+      { page: "place-activity-report", label: "Place Report" },
+      { page: "analytics", label: "Insights" },
+      { page: "ecological-destinations", label: "Ecological Destinations" },
+    ],
+    alsoPages: ["taxon-story", "feature-story", "feature-comparison"],
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    members: [
+      { page: "settings", label: "Local Data" },
+      { page: "users", label: "Users", minRole: "administrator" },
+      // Product Operations & First-Run Completion v1: Doctor's own report
+      // includes local filesystem paths and Camera Node structural facts --
+      // Administrator-gated server-side (see api/auth.py), mirrored here so
+      // the nav never shows an entry a Viewer/Reviewer cannot open.
+      { page: "doctor", label: "Doctor", minRole: "administrator" },
+    ],
+  },
 ];
 
 const ROLE_RANK: Record<UserRole, number> = { viewer: 0, reviewer: 1, administrator: 2 };
@@ -1262,8 +1305,8 @@ export default function App() {
     return <SignInPage onSignedIn={handleSignedIn} />;
   }
 
-  const visibleProductNavItems = productNavItems.filter(
-    (item) => !item.minRole || roleAtLeast(currentUser.role, item.minRole),
+  const visibleNavDestinations = navDestinations.filter(
+    (destination) => !destination.minRole || roleAtLeast(currentUser.role, destination.minRole),
   );
 
   // Bottom-nav destinations for phone widths (below the 760px mobile nav
@@ -1272,7 +1315,7 @@ export default function App() {
   // Review-or-Bird-Log depending on role), plus a "More" button that opens
   // the same full drawer as the top bar's hamburger -- deliberately small
   // (Phase 3: "do not put twelve destinations into a bottom bar"), never a
-  // second, separate navigation model from `productNavItems` above.
+  // second, separate navigation model from `navDestinations` above.
   const mobileNavItems: Array<{ page: Page; label: string }> = [
     { page: "dashboard", label: "Today" },
     { page: "place-story", label: "Story" },
@@ -1326,20 +1369,38 @@ export default function App() {
         </div>
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
         <nav className="nav-list" aria-label="Product navigation">
-          {visibleProductNavItems.map((item, index) => {
-            const groupLabel = navGroupLabels[item.group];
-            const startsGroup = index === 0 || visibleProductNavItems[index - 1].group !== item.group;
+          {visibleNavDestinations.map((destination) => {
+            const isActive =
+              destination.members.some((member) => member.page === page) ||
+              (destination.alsoPages?.includes(page) ?? false);
+            const visibleMembers = destination.members.filter(
+              (member) => !member.minRole || roleAtLeast(currentUser.role, member.minRole),
+            );
             return (
-              <Fragment key={item.page}>
-                {startsGroup && groupLabel ? <span className="nav-section-label">{groupLabel}</span> : null}
+              <Fragment key={destination.id}>
                 <button
-                  aria-current={page === item.page ? "page" : undefined}
-                  className={page === item.page ? "nav-item active" : "nav-item"}
-                  onClick={() => setPage(item.page)}
+                  aria-current={visibleMembers.some((member) => member.page === page) ? "page" : undefined}
+                  className={isActive ? "nav-item active" : "nav-item"}
+                  onClick={() => setPage(visibleMembers[0].page)}
                   type="button"
                 >
-                  {item.label}
+                  {destination.label}
                 </button>
+                {isActive && visibleMembers.length > 1 ? (
+                  <div aria-label={`${destination.label} pages`} className="nav-sub-items" role="group">
+                    {visibleMembers.map((member) => (
+                      <button
+                        aria-current={page === member.page ? "page" : undefined}
+                        className={page === member.page ? "nav-item nav-sub-item active" : "nav-item nav-sub-item"}
+                        key={member.page}
+                        onClick={() => setPage(member.page)}
+                        type="button"
+                      >
+                        {member.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </Fragment>
             );
           })}
