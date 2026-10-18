@@ -111,7 +111,7 @@ you start it with `--host 0.0.0.0 --allow-network`. Sign-in is always required.
 | BioCLIP 2 (`imageomics/bioclip-2` 1.0.0) | Species suggestions (provisional) | **Yes**, with its runtime. | MIT (model card) |
 | ONNX Runtime GPU + NVIDIA CUDA/cuDNN | Run the detector | **Yes** | onnxruntime MIT; NVIDIA libraries under NVIDIA's own terms |
 | **BirdNET** (`birdnetlib` + GLOBAL_6K_V2.4 weights) | Optional bird-sound ID | **No. Never bundled.** | Code Apache-2.0; **model weights CC BY-NC-SA 4.0 (NonCommercial)** |
-| FFmpeg | RTSP, USB, video import | **No. Never bundled.** | Whatever your own ffmpeg distribution uses |
+| FFmpeg | RTSP, USB, video import | **No `ffmpeg` executable is bundled.** (The bundled OpenCV wheel carries its own FFmpeg libraries under its shipped `LICENSE-3RD-PARTY.txt`; MockingBird does not use them for camera or video-import decoding.) | Whatever your own ffmpeg distribution uses |
 
 Model **suggestions are always provisional**; only your own confirmation or
 correction becomes reviewed truth. A "development checkout" must supply its own

@@ -160,6 +160,17 @@ distribution, not MockingBird. `scripts/build_local_product.py`'s
 `verify_no_bundled_ffmpeg_binary` fails the release build outright if this
 were ever to change silently.
 
+**One precise exception, stated so the claim above is not read more broadly
+than it is true:** the unmodified `opencv-python-headless` wheel that the
+Windows ZIP bundles (for image and frame handling) carries its own FFmpeg
+libraries, including `cv2/opencv_videoio_ffmpeg*.dll`. That is OpenCV's
+redistribution, not an `ffmpeg` executable and not a MockingBird-chosen
+codec set; its licensing is stated in the `LICENSE-3RD-PARTY.txt` files that
+ship alongside it in the ZIP (`python/site-packages/cv2/` and the wheel's
+`.dist-info`), which say "FFmpeg is redistributed within all opencv-python
+packages." MockingBird does not rely on it for network-camera or video-import
+decoding; those paths use the separate system `ffmpeg` described above.
+
 ### BirdNET / birdnetlib (optional bird-sound identification)
 
 MockingBird's official packaging never bundles bird-sound identification
