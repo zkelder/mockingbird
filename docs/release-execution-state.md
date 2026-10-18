@@ -51,6 +51,27 @@ milestone, *Everyday UX & Accessibility Closure v1*, was then authorized,
 executed, and closed -- see §3. Current authorization is **NONE -- GLOBAL
 RECONCILIATION REQUIRED**.
 
+**Executed 2026-10-18 -- Final Release Hardening & Launch Candidate v1
+(owner-authorized; pending ChatGPT sequencing and owner acceptance):** see
+[final-release-hardening-launch-candidate-v1-report.md](final-release-hardening-launch-candidate-v1-report.md).
+Release-candidate source commit **`1410c1b`**, schema `v62` and version `0.1.0`
+both unchanged (no bump; the release version remains an owner decision). Full
+backend gate at `7f7809a`: 6420 passed / 1 failed -- the failure was a
+test-only time bomb (hard-coded 2026-08-19 `NOW` vs. a 45-day region TTL),
+fixed in `08f5644`; browser suites 252/252; frontend type-check and production
+build clean. The Windows ZIP (SHA-256 `88353648d7626ede75ea946393f87b39df87866909f75932cd4a0ed99c2c6f9e`),
+`sbom.json`, `SHA256SUMS` and Camera Node wheel (`38dfac47…`, unchanged) were
+built from the clean commit and independently verified; the exact ZIP was
+accepted on native Windows on a disposable home (onboarding, auth, Evidence ->
+Review -> Confirmation -> Bird Log, verified backup, restore, UI shutdown,
+restart, Doctor HEALTHY 16/16) with the default field home byte-identical.
+One notice inaccuracy (bundled OpenCV FFmpeg libraries) was corrected in
+`1410c1b`. Limitations: the reference Camera Node was unreachable (no live
+Node/camera path exercised), no human interactive pass, the Full gate was not
+re-run after the two small commits. **Gate G remains owner-waived, not
+passed. Authorization remains NONE**; no push, tag, release, publication or
+subsequent milestone is made or authorized by this record.
+
 **Accepted 2026-10-06 (scheduler reconciliation; accepted delta only):**
 *Public Product, Deployment & Support Closure v1* is accepted at
 classification **A** by ChatGPT global sequencing: HEAD `b7f708c`, schema
