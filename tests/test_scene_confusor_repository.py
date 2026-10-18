@@ -52,7 +52,13 @@ from mockingbird.storage.backup import LocalBackupManager
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = None
-NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=UTC)
+# Anchored to the real clock, not a fixed calendar date: the repository's
+# review-revision paths stamp `datetime.now(UTC)` and lazily purge any region
+# older than `region_ttl_days`, so a hard-coded past date silently turns this
+# whole suite into a time bomb once the real date passes the TTL (it did, on
+# 2026-10-03, for a 2026-08-19 anchor). The hour is truncated so one run never
+# straddles an arbitrary sub-hour boundary.
+NOW = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"0" * 64 + b"\xff\xd9"
 
 # A tight box, and near-identical repeats of it -- the "static confusor"

@@ -8,13 +8,18 @@ or trademark exists as of this document. See also
 
 ## Required before publishing
 
-1. **Authorize Final 1.0 Hardening** (not yet authorized) and the version bump
-   from `0.1.0` to `1.0.0` across `pyproject.toml`,
-   `mockingbird.__init__._DEV_CHECKOUT_FALLBACK_VERSION`,
+1. **Decide the release version.** Final Release Hardening & Launch Candidate
+   v1 was authorized and validated at `0.1.0` without a bump; whether to bump
+   from `0.1.0` to `1.0.0` is still an owner decision. A bump touches
+   `pyproject.toml`, `mockingbird.__init__._DEV_CHECKOUT_FALLBACK_VERSION`,
    `mockingbird_node.__version__` and `web/package.json`
-   (`tests/test_version_provenance.py` keeps them in sync).
-2. **Authorize the push** of `main` to GitHub. At the time of writing local `main` is 28
-   commits ahead of `origin/main`; nothing has been pushed.
+   (`tests/test_version_provenance.py` keeps them in sync) and requires
+   rebuilding and re-accepting the ZIP; the candidate report lists the
+   validation to repeat.
+2. **Authorize the push** of `main` to GitHub. Local `main` is ahead of
+   `origin/main` by dozens of commits (41 when Final Release Hardening & Launch
+   Candidate v1 began; run `git rev-list --count origin/main..main` for the
+   current number); nothing has been pushed.
 3. **Build and accept the final artifacts** at the final commit:
    `MockingBird-windows-x64.zip`, `SHA256SUMS`, and the Camera Node artifact,
    with native-Windows acceptance of that exact build.
