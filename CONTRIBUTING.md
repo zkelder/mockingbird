@@ -79,6 +79,23 @@ python -m mockingbird support-bundle --output path/to/bundle.zip
 For frontend-only iteration, run the API and Vite dev server separately
 (see "Developer split mode" in [docs/developer-setup.md](docs/developer-setup.md)).
 
+## Your first test run
+
+No cameras, GPU, model weights, or network access are needed for the tiered
+gates; hardware- and model-dependent tests are opt-in or skip with a stated
+reason.
+
+```sh
+python -m pip install -e ".[test]"
+python scripts/verify_fast.py     # quick change gate
+python scripts/verify_core.py     # normal pre-PR gate; long (about half an hour on a WSL2 dev machine)
+```
+
+Clone outside your system temp directory (for example under your home
+directory). `tests/test_repository_isolation.py` treats anything under the
+temp directory as safe scratch space, so a checkout there makes two of its
+guard tests fail even though nothing is wrong.
+
 ## Run focused tests
 
 Prefer the smallest test surface that covers what you changed; do not run
@@ -100,13 +117,13 @@ for what each guarantees and exactly how long it takes on the reference
 development machine):
 
 ```sh
-python scripts/verify_fast.py   # Tier A: a couple of minutes
+python scripts/verify_fast.py   # Tier A: the quick change gate
 python scripts/verify_core.py   # Tier B: the normal milestone gate
 python scripts/verify_full.py   # Tier C: full release regression, reserve for RC/release-hardening checkpoints
 ```
 
 **Backend, the whole suite** (only when a change crosses many runtime
-boundaries -- it is large: 3,100+ tests; `scripts/verify_full.py` above is
+boundaries -- it is large: about 6,400 tests; `scripts/verify_full.py` above is
 the same thing with a name that states what it guarantees):
 
 ```sh

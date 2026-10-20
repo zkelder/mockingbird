@@ -283,11 +283,18 @@ The production build is served by the single MockingBird application process.
 Backend suite (see
 [docs/test-suite-validation-tiers-contract.md](test-suite-validation-tiers-contract.md)
 for the tiered `scripts/verify_fast.py`/`verify_core.py`/`verify_full.py`
-gates and what each guarantees):
+gates and what each guarantees). Start with the gates; plain `python -m pytest`
+is the whole suite, including the slow packaging/subprocess tests:
 
 ```sh
-python -m pytest
+python scripts/verify_fast.py     # quick change gate
+python scripts/verify_core.py     # normal pre-PR gate (long)
+python -m pytest                  # everything (same as verify_full.py)
 ```
+
+Clone outside your system temp directory: two guard tests in
+`tests/test_repository_isolation.py` treat paths under it as safe scratch space
+and will fail inside it.
 
 Frontend type-check and production build:
 

@@ -117,6 +117,13 @@ Design detail: [Architecture](docs/architecture.md), [Runtime map](docs/runtime-
 | Camera Node | small Python service on a Raspberry Pi, systemd-supervised | replaceable capture/transport edge; not the system of record |
 | Verification | pytest (backend), Playwright (browser), a perception replay harness | see [Engineering quality](#engineering-quality) |
 
+**Model weights are not in this repository.** It contains no model weights,
+datasets, or recordings. MegaDetector v5a and BioCLIP 2 are supplied separately:
+the official Windows release ZIP is built with them copied in (see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), while a source checkout needs
+you to provide them yourself -- the application never downloads a model. See
+[Developer setup](docs/developer-setup.md). BirdNET weights are never bundled.
+
 ## What 1.0 supports
 
 The first public release is **1.0**. Its supported scope is stated in one place:
@@ -165,11 +172,15 @@ Stated plainly, because a trustworthy record starts with honest boundaries:
 
 ## Engineering quality
 
-- **Tests:** about 350 backend test modules and 50 Playwright browser specs. The
-  last recorded full runs (in [release-execution-state.md](docs/release-execution-state.md))
-  are 6,278 backend tests passing and 203 browser tests passing, at schema 62.
-  They were not re-run in full for the portfolio pass; the changes made here
-  were verified with focused runs (see the walkthrough).
+- **Tests:** about 6,400 backend tests in 354 modules and 51 Playwright browser
+  specs. They need no cameras, GPU, models, network, or other private
+  infrastructure to run (hardware- and model-dependent checks are opt-in or skip
+  honestly). Hosted CI (GitHub Actions, Linux) runs the Core backend gate, the
+  frontend typecheck and build, and a packaging smoke test. Recorded full-suite
+  and browser results, and what was *not* re-run, are in the
+  [Final Release Hardening report](docs/final-release-hardening-launch-candidate-v1-report.md).
+  CI does not substitute for native-Windows or camera-hardware acceptance; see
+  [Status](#status).
 - **Validation tiers and a test-isolation contract** keep an automated test from
   ever touching a real database
   ([development-workflow.md](docs/development-workflow.md),
@@ -193,6 +204,22 @@ Stated plainly, because a trustworthy record starts with honest boundaries:
 - **Run from source / contribute:** [Developer setup](docs/developer-setup.md)
   and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+First-time contributor test commands (Python 3.11+; Node 20+ for the frontend):
+
+```sh
+python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install -e ".[test]"
+python scripts/verify_fast.py                        # quick change gate
+python scripts/verify_core.py                        # normal pre-PR gate (long: tens of minutes)
+cd web && npm ci && npm run typecheck && npm run build
+```
+
+Prefer running the one or two test files closest to your change while working
+(`python -m pytest tests/test_<area>.py`); plain `python -m pytest` runs the
+entire suite including slow packaging and subprocess tests. Do not clone into
+your system temp directory: two test-isolation tests treat anything under it as
+safe scratch space and will fail there.
+
 ## Backup, recovery, and updates
 
 MockingBird keeps your data in its own local data folder (normally
@@ -211,6 +238,7 @@ Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
 
 ## Documentation map
 
+- [docs/README.md](docs/README.md): **start here** -- an index of the 300+ documents by purpose
 - [docs/using-mockingbird.md](docs/using-mockingbird.md): normal-user guide
 - [docs/portfolio-demo-walkthrough.md](docs/portfolio-demo-walkthrough.md): the reproducible demo
 - [docs/portfolio/case-study.md](docs/portfolio/case-study.md): engineering case study (source for a portfolio page)
@@ -230,21 +258,39 @@ Focused feature contracts remain under `docs/`.
 
 ## Status
 
-The repository is a **pre-release** of the first public release (**1.0**),
-pending final release hardening. The source tree currently reports version
-`0.1.0`; the 1.0 version bump, final artifacts, and release tag are performed
-during release hardening and are not yet done. The demo and screenshots show
-the current source tree, not a published release.
+**Pre-release, version `0.1.0`.** This is the source for the first public release
+(planned as 1.0), which is not published: there is no release tag, no published
+Windows ZIP, and no 1.0 version bump yet. The demo and screenshots show the
+current source tree, not a released build.
+
+What has been validated, and what has not (details and dates in the
+[Final Release Hardening report](docs/final-release-hardening-launch-candidate-v1-report.md)
+and the [support matrix](docs/support-matrix.md)):
+
+- **Validated:** the backend and browser suites; a native Windows 10 build of
+  the Windows ZIP (first run, import, review, confirmation, backup/restore,
+  shutdown/restart, Doctor); and, in earlier field sessions, one Raspberry Pi 4
+  Camera Node and one desktop RTX 4060 Ti.
+- **Outstanding hardware acceptance:** the Camera Node live path was *not*
+  re-exercised on the final release candidate (the reference Pi was unreachable
+  that session), and no live-camera observation was run on it. Windows 11, other
+  NVIDIA GPUs and drivers, and any other Camera Node hardware are unvalidated. No
+  human interactive pass of the final build was performed (automated browsers
+  only). External pre-release acceptance (Gate G) was waived by the owner, not
+  passed. The Windows build is unsigned.
+- **Not planned for 1.0:** packaged Linux or macOS Host, cloud relay, multi-site,
+  and native mobile (see the support matrix).
 
 ## License
 
 MockingBird's own source code is licensed under the [MIT License](LICENSE).
 
 This covers MockingBird's own code only. Third-party components MockingBird
-redistributes or depends on -- including the bundled MDv5a and BioCLIP-2
-model weights, and the optional BirdNET bird-sound identification feature
-MockingBird deliberately does **not** bundle -- are licensed under their own
-separate terms, not necessarily MIT, and remain governed by those terms.
+redistributes or depends on -- including the MDv5a and BioCLIP-2 model weights
+that official Windows release builds bundle (this repository contains none),
+and the optional BirdNET bird-sound identification feature MockingBird
+deliberately does **not** bundle -- are licensed under their own separate
+terms, not necessarily MIT, and remain governed by those terms.
 The demo clips are CC0 recordings fetched on request, never committed or
 bundled. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete
 account of what is bundled, what is not, and under what license.
