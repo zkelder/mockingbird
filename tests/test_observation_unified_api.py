@@ -74,7 +74,7 @@ async def configure_local_usb(client: httpx.AsyncClient, *, device: str | None =
     assert response.status_code == 200
 
 
-async def configure_snapshot_url(client: httpx.AsyncClient, *, url: str | None = "http://192.168.1.50/camera/still.jpg") -> None:
+async def configure_snapshot_url(client: httpx.AsyncClient, *, url: str | None = "http://192.168.1.23/camera/still.jpg") -> None:
     config = {"url": url} if url else {}
     response = await client.patch(
         f"/api/sources/{SOURCE_ID}/provider-configuration",

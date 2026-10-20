@@ -646,7 +646,7 @@ this milestone leaves unchanged).
 ## Real-hardware smoke
 
 **Judged unnecessary; not run.** Reachability was verified as a bounded,
-read-only step (`curl` to `192.168.1.112:8787` -> `404`, a real HTTP
+read-only step (`curl` to `<node-ip>:8787` -> `404`, a real HTTP
 response, confirming the reference Camera Node is currently network
 -reachable) before this decision was made -- this is a judgment that a
 smoke session would not be worth running, not that hardware was

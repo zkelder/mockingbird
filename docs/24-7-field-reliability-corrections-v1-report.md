@@ -329,7 +329,7 @@ identical gathered result both times).
   real throwaway `MOCKINGBIRD_HOME`, real unrelated working directory --
   see above.
 - **Camera Node recovery (item 5):** the reference Camera Node
-  (`192.168.1.112:8787`, prior sessions' documented reachable address) was
+  (`<node-ip>:8787`, prior sessions' documented reachable address) was
   checked for reachability this session (both an unauthenticated HTTP
   health probe and the documented `ssh mockingbird-pi` alias) and found
   **genuinely unreachable** ("No route to host" on both, a real

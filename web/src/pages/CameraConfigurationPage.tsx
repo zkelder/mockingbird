@@ -362,7 +362,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
                 <strong>Pairing needs to be renewed</strong>
                 <span>MockingBird found an earlier repair pairing for this Camera Node, but it is no longer accepted. Pair again below with a new one-time code.</span>
               </div> : null}
-              <label>Node address<input onChange={(event) => { setNodeAddress(event.target.value); setPreview(null); }} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
+              <label>Node address<input onChange={(event) => { setNodeAddress(event.target.value); setPreview(null); }} placeholder="http://192.168.1.100:8787" value={nodeAddress} /></label>
               <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
               <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNodeForRepair()} type="button">{isPairingNode ? "Pairing…" : "Pair or repair Node"}</button>
               <button className="secondary-action" disabled={isRevokingNode} onClick={() => void revokeNodePairing()} type="button">{isRevokingNode ? "Revoking…" : "Revoke current pairing"}</button>

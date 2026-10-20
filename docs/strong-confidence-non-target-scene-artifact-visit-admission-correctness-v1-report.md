@@ -8,7 +8,7 @@ A real Gate-A correctness investigation and fix, reopened by Representative Dayl
 
 Verified before any change:
 
-- Repository/branch: `/home/zkelder/projects/mockingbird-active`, `main`.
+- Repository/branch: `/home/<user>/projects/mockingbird-active`, `main`.
 - Accepted HEAD at session start: `fbfac71` (the reconciliation commit recording Representative Daylight Gate A Field Acceptance v11) -- exact match to the milestone brief's expected state.
 - Schema: v58, unchanged throughout this milestone (no migration; both fixes are additive logic changes over already-existing tables/facts).
 - Latest accepted milestone: Representative Daylight Gate A Field Acceptance v11 (classification B).

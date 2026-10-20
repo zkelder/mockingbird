@@ -38,7 +38,7 @@ from tests.conftest import LegacyAuthenticatedTestClient
 
 NEVER_ECHO_OLD_CREDENTIAL = "never-echo-old-hardware-credential"
 NEVER_ECHO_NEW_CREDENTIAL = "never-echo-new-hardware-credential"
-BASE_ADDRESS = "http://192.168.1.112:8787"
+BASE_ADDRESS = "http://192.168.1.24:8787"
 
 
 class _StatefulNodeRequester:

@@ -31,7 +31,7 @@ Decision: MORE EVIDENCE REQUIRED. Lane R remains OPEN.**
 Verified directly, in the order the governing directive required, before any
 other action:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`; branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`; branch `main`.
 - Starting HEAD: `fcf236f` — matches the directive's expected baseline
   exactly.
 - Schema: `CURRENT_DATABASE_SCHEMA_VERSION = 59`
@@ -96,7 +96,7 @@ confirmed this was a genuinely bird-active scene, not merely a clock check.
 ## 3. Preflight
 
 - Storage: `field_acceptance_instance_lifecycle.py preflight --no-scan-siblings`
-  — `sufficient: true`, 27.1GB free ≥ 6.0GB required (`/mnt/c/Users/zachk/AppData/Local`).
+  — `sufficient: true`, 27.1GB free ≥ 6.0GB required (`/mnt/c/Users/<user>/AppData/Local`).
   `storage_health_tier: "getting_low"` (accumulated archived dev-roots from
   prior cohorts) — disclosed, not actioned, matching this project's own
   repeated non-blocking judgment; a full sibling-reclaim scan was skipped
@@ -131,7 +131,7 @@ script needed for this session
 `field_acceptance_session_driver.py`, `field_acceptance_ledger_snapshot.py
 collect`) is confirmed stdlib-only (`urllib`/`argparse`/`json`/`runpy` —
 no third-party import), so each was run **unmodified** via the real, native
-Windows `python.exe` (`C:\Users\zachk\AppData\Local\Programs\Python\Python312\python.exe`,
+Windows `python.exe` (`C:\Users\<user>\AppData\Local\Programs\Python\Python312\python.exe`,
 confirmed independently installed, not the product's own bundled
 interpreter) against the exact same script files over the
 `\\wsl.localhost\Ubuntu\...` UNC path, with credentials passed via
@@ -156,7 +156,7 @@ alias):
 - Located the active pairing state at `/var/lib/mockingbird-camera-node/pairing.json`
   (confirmed via the systemd unit's own `StateDirectory=`/`WorkingDirectory=`,
   distinguishing it from a much older, unrelated leftover file at
-  `/home/zkelder/.local/state/mockingbird-camera-node/pairing.json`, ~28.5
+  `/home/<user>/.local/state/mockingbird-camera-node/pairing.json`, ~28.5
   days stale by `mtime` and not read by the running service).
 - Backed up → `pairing.json.pre-latency-convergence-v4-reset.bak`.
 - Stopped `mockingbird-camera-node.service`, removed `pairing.json`,
@@ -176,7 +176,7 @@ same device, no personal credentials, no unrelated hardware state touched).
 ## 5. Build identity, credential, camera setup
 
 Deployed via `deploy_windows_dev.py --dev-root
-C:\Users\zachk\AppData\Local\MockingBirdLatencyConvergenceV4 --commit
+C:\Users\<user>\AppData\Local\MockingBirdLatencyConvergenceV4 --commit
 fcf236f` (full GPU + BioCLIP closure, no skip flags).
 
 **Operator-sequencing correction, disclosed**: the first deploy attempt did
@@ -185,7 +185,7 @@ own part, not a tool defect), so the acceptance recorder would not have been
 enabled — caught by re-checking the plan **before** starting Observation,
 not after. The running instance was stopped
 (`deploy_windows_dev.py --stop`, verified) and redeployed a second time,
-this time with `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR=/mnt/c/Users/zachk/AppData/Local/MockingBirdLatencyConvergenceV4/acceptance-recording`
+this time with `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR=/mnt/c/Users/<user>/AppData/Local/MockingBirdLatencyConvergenceV4/acceptance-recording`
 set in the deploying shell. This second deploy re-ran the full build (not a
 cheap relaunch — the "reuse" path in `deploy_windows_dev.py` reuses the
 populated GPU/BioCLIP wheel *caches*, not a pre-built release bundle for the
@@ -670,7 +670,7 @@ convergent band the way the medians already have.
 `mark-archived --evidence-archive 'C:\Users\...\field-acceptance-evidence'`
 (a Windows-style path, identical in shape to the `--dev-root` value the same
 command accepts on the same line) failed:
-`ERROR: /home/zkelder/projects/mockingbird-active/C:\Users\...
+`ERROR: /home/<user>/projects/mockingbird-active/C:\Users\...
 does not look like a complete evidence archive` — the Windows-style string
 was silently treated as a relative path and CWD-anchored, exactly
 `field_acceptance_instance_lifecycle.py init`'s own pre-Tooling-Correctness

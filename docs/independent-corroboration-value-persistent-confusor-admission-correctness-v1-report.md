@@ -12,7 +12,7 @@ times, producing a 36.4% confirmed-false-Visit rate.
 
 Verified before any change, per this milestone's own instruction:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`, branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`, branch `main`.
 - Accepted HEAD: `89b87f1` (`git rev-parse HEAD`, confirmed) -- the reconciliation
   commit accepting Representative Daylight Gate A Field Acceptance v10, sitting on
   `e6d662f` (v10's own report commit). `docs/release-execution-state.md`'s own §1

@@ -40,7 +40,7 @@ published or distributed; no Gate G activity occurred.
 
 | Item | Result |
 |---|---|
-| Repository | `/home/zkelder/projects/mockingbird-active` (native WSL, not `/mnt/c`), branch `main` |
+| Repository | `/home/<user>/projects/mockingbird-active` (native WSL, not `/mnt/c`), branch `main` |
 | HEAD | `661d0540ad6b832db47539232ec7b1cc6d2594e2` = frozen source SHA; worktree clean apart from the 8 protected untracked files; nothing staged |
 | Protected files | all 7 detector files + `uv.lock` present, untracked, SHA-256 recorded at start and re-verified identical at end (§8) |
 | Windows ZIP | `dist/internal-rc-rebuild-v1-661d054/MockingBird-windows-x64.zip`, SHA-256 `c63fea5a62eda5397651c3d492a392768ced6e2be921fa3f802ba18645c65645` -- matches the expected value, `SHA256SUMS`, `manifest.json.zip_sha256`, and a second, native `Get-FileHash` on the copy staged to Windows |

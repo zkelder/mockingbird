@@ -33,7 +33,7 @@ Not a product-development milestone. **Gate G is not started.**
 
 | Fact | Verified |
 |---|---|
-| Root / branch | `/home/zkelder/projects/mockingbird-active` (native WSL, not `/mnt/c`), `main` |
+| Root / branch | `/home/<user>/projects/mockingbird-active` (native WSL, not `/mnt/c`), `main` |
 | HEAD | `1f63b62ee97243187570208cf9851c568d19fdb9` |
 | `2272126..1f63b62` | Docs only: the correction report and the `release-execution-state.md` delta |
 | Staged / worktree | Nothing staged; only the 7 protected files and `uv.lock` untracked |

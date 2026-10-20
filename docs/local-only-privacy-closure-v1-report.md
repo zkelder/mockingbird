@@ -31,7 +31,7 @@ the full brief; this report follows its required structure.
   §6 makes Lane N depend on Lane R or vice versa). Proceeded per the
   governing instruction's own premise.
 - **Worktree safety:** confirmed this session was the only writer in
-  `/home/zkelder/projects/mockingbird-active` (`ps`/`lsof` showed only this
+  `/home/<user>/projects/mockingbird-active` (`ps`/`lsof` showed only this
   session's own process tree; the six sibling worktrees listed by `git
   worktree list` are separate directories, not this one). The seven
   preserved untracked files were hashed at the start of this session and
@@ -245,7 +245,7 @@ Classified by real OS-level exit code, not code inspection alone:
 |---|---|---|
 | `api.open-meteo.com`, `huggingface.co`, `pypi.org`, `api.inaturalist.org` | `curl` exit 6 (name resolution / no route) at every check point | Genuinely unreachable -- proves no internet route existed, not merely that these hosts happened to be down |
 | `127.0.0.1:<app port>` | Real HTTP responses throughout | Loopback -- the product's own bound port |
-| `192.168.1.112:8787` (the project's real reference Camera Node) | `TCP connect succeeded` (checked live, separately, *outside* the denied namespace, immediately after the acceptance runs) | LAN -- confirms this same sandbox that just proved zero internet dependency can still reach real LAN hardware when not deliberately isolated, directly evidencing the offline-vs-LAN-local distinction §7 requires, rather than only asserting it |
+| `<node-ip>:8787` (the project's real reference Camera Node) | `TCP connect succeeded` (checked live, separately, *outside* the denied namespace, immediately after the acceptance runs) | LAN -- confirms this same sandbox that just proved zero internet dependency can still reach real LAN hardware when not deliberately isolated, directly evidencing the offline-vs-LAN-local distinction §7 requires, rather than only asserting it |
 
 > With optional integrations unconfigured, ordinary MockingBird runtime
 > produced no required internet connection -- and, separately, with

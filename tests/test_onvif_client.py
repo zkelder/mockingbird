@@ -82,25 +82,25 @@ def test_password_digest_is_deterministic_and_sensitive_to_every_input() -> None
 
 def test_embed_credentials_adds_userinfo_to_a_bare_stream_uri() -> None:
     result = onvif.embed_credentials_in_uri(
-        "rtsp://192.168.1.50:554/onvif1", username="admin", password="hunter2"
+        "rtsp://192.168.1.23:554/onvif1", username="admin", password="hunter2"
     )
-    assert result == "rtsp://admin:hunter2@192.168.1.50:554/onvif1"
+    assert result == "rtsp://admin:hunter2@192.168.1.23:554/onvif1"
 
 
 def test_embed_credentials_url_encodes_special_characters() -> None:
     result = onvif.embed_credentials_in_uri(
-        "rtsp://192.168.1.50:554/onvif1", username="ad min", password="p@ss:word"
+        "rtsp://192.168.1.23:554/onvif1", username="ad min", password="p@ss:word"
     )
-    assert result == "rtsp://ad%20min:p%40ss%3Aword@192.168.1.50:554/onvif1"
+    assert result == "rtsp://ad%20min:p%40ss%3Aword@192.168.1.23:554/onvif1"
 
 
 def test_embed_credentials_never_double_embeds_an_already_credentialed_uri() -> None:
-    already = "rtsp://token123@192.168.1.50:554/onvif1"
+    already = "rtsp://token123@192.168.1.23:554/onvif1"
     assert onvif.embed_credentials_in_uri(already, username="admin", password="pw") == already
 
 
 def test_embed_credentials_leaves_uri_unchanged_when_no_credentials_given() -> None:
-    bare = "rtsp://192.168.1.50:554/onvif1"
+    bare = "rtsp://192.168.1.23:554/onvif1"
     assert onvif.embed_credentials_in_uri(bare, username="", password="") == bare
 
 
@@ -110,7 +110,7 @@ def test_embed_credentials_leaves_uri_unchanged_when_no_credentials_given() -> N
 @pytest.mark.parametrize(
     "host,expected",
     [
-        ("192.168.1.50", True),
+        ("192.168.1.23", True),
         ("10.0.0.5", True),
         ("127.0.0.1", True),
         ("169.254.1.2", True),
@@ -136,8 +136,8 @@ _CAPABILITIES_XML = b"""<?xml version="1.0"?>
   <soap:Body>
     <tds:GetCapabilitiesResponse>
       <tds:Capabilities>
-        <tds:Device><tds:XAddr>http://192.168.1.50/onvif/device_service</tds:XAddr></tds:Device>
-        <tds:Media><tds:XAddr>http://192.168.1.50/onvif/media_service</tds:XAddr></tds:Media>
+        <tds:Device><tds:XAddr>http://192.168.1.23/onvif/device_service</tds:XAddr></tds:Device>
+        <tds:Media><tds:XAddr>http://192.168.1.23/onvif/media_service</tds:XAddr></tds:Media>
       </tds:Capabilities>
     </tds:GetCapabilitiesResponse>
   </soap:Body>
@@ -186,7 +186,7 @@ _STREAM_URI_XML = b"""<?xml version="1.0"?>
     xmlns:tt="http://www.onvif.org/ver10/schema">
   <soap:Body>
     <trt:GetStreamUriResponse>
-      <trt:MediaUri><tt:Uri>rtsp://192.168.1.50:554/onvif1</tt:Uri></trt:MediaUri>
+      <trt:MediaUri><tt:Uri>rtsp://192.168.1.23:554/onvif1</tt:Uri></trt:MediaUri>
     </trt:GetStreamUriResponse>
   </soap:Body>
 </soap:Envelope>"""
@@ -210,7 +210,7 @@ _PROBE_MATCHES_XML = b"""<?xml version="1.0"?>
       <wsdd:ProbeMatch>
         <wsa:EndpointReference><wsa:Address>urn:uuid:1234-5678</wsa:Address></wsa:EndpointReference>
         <wsdd:Scopes>onvif://www.onvif.org/type/NetworkVideoTransmitter</wsdd:Scopes>
-        <wsdd:XAddrs>http://192.168.1.50/onvif/device_service</wsdd:XAddrs>
+        <wsdd:XAddrs>http://192.168.1.23/onvif/device_service</wsdd:XAddrs>
       </wsdd:ProbeMatch>
     </wsdd:ProbeMatches>
   </soap:Body>
@@ -219,8 +219,8 @@ _PROBE_MATCHES_XML = b"""<?xml version="1.0"?>
 
 def test_parse_capabilities_response_extracts_device_and_media_xaddrs() -> None:
     capabilities = onvif.parse_capabilities_response(_CAPABILITIES_XML)
-    assert capabilities.device_xaddr == "http://192.168.1.50/onvif/device_service"
-    assert capabilities.media_xaddr == "http://192.168.1.50/onvif/media_service"
+    assert capabilities.device_xaddr == "http://192.168.1.23/onvif/device_service"
+    assert capabilities.media_xaddr == "http://192.168.1.23/onvif/media_service"
 
 
 def test_parse_device_information_response() -> None:
@@ -242,7 +242,7 @@ def test_parse_profiles_response_returns_every_profile_with_advertised_resolutio
 
 
 def test_parse_stream_uri_response() -> None:
-    assert onvif.parse_stream_uri_response(_STREAM_URI_XML) == "rtsp://192.168.1.50:554/onvif1"
+    assert onvif.parse_stream_uri_response(_STREAM_URI_XML) == "rtsp://192.168.1.23:554/onvif1"
 
 
 def test_parse_stream_uri_response_raises_on_missing_uri() -> None:
@@ -267,7 +267,7 @@ def test_parse_probe_matches() -> None:
     matches = onvif.parse_probe_matches(_PROBE_MATCHES_XML)
     assert len(matches) == 1
     assert matches[0].device_uuid == "urn:uuid:1234-5678"
-    assert matches[0].xaddrs == ("http://192.168.1.50/onvif/device_service",)
+    assert matches[0].xaddrs == ("http://192.168.1.23/onvif/device_service",)
     assert "NetworkVideoTransmitter" in matches[0].scopes[0]
 
 
@@ -304,15 +304,15 @@ class _FakeOnvifRequester:
         return self.responses[url]
 
 
-_DEVICE_URL = "http://192.168.1.50:80/onvif/device_service"
-_MEDIA_URL = "http://192.168.1.50/onvif/media_service"
+_DEVICE_URL = "http://192.168.1.23:80/onvif/device_service"
+_MEDIA_URL = "http://192.168.1.23/onvif/media_service"
 
 
 def _golden_path_requester() -> _FakeOnvifRequester:
     return _FakeOnvifRequester(
         {
             _DEVICE_URL: _CAPABILITIES_XML,
-            "http://192.168.1.50/onvif/device_service": _DEVICE_INFO_XML,
+            "http://192.168.1.23/onvif/device_service": _DEVICE_INFO_XML,
             _MEDIA_URL: _PROFILES_XML,
         }
     )
@@ -336,19 +336,19 @@ def test_onvif_client_full_golden_path_resolves_every_profiles_stream_uri() -> N
 
     multi = _MultiResponseRequester(dict(requester.responses))
     client = onvif.OnvifClient(
-        host="192.168.1.50", port=80, username="admin", password="hunter2", requester=multi
+        host="192.168.1.23", port=80, username="admin", password="hunter2", requester=multi
     )
 
     result = client.discover()
 
     assert result.device_information.manufacturer == "Acme"
     assert [dp.profile.token for dp in result.device_profiles] == ["profile-main", "profile-sub"]
-    assert all(dp.stream_uri == "rtsp://192.168.1.50:554/onvif1" for dp in result.device_profiles)
+    assert all(dp.stream_uri == "rtsp://192.168.1.23:554/onvif1" for dp in result.device_profiles)
 
 
 def test_onvif_client_surfaces_authentication_rejection_as_a_safe_code() -> None:
     requester = _FakeOnvifRequester({_DEVICE_URL: _SOAP_FAULT_AUTH_XML})
-    client = onvif.OnvifClient(host="192.168.1.50", username="admin", password="wrong", requester=requester)
+    client = onvif.OnvifClient(host="192.168.1.23", username="admin", password="wrong", requester=requester)
 
     with pytest.raises(onvif.OnvifClientError) as excinfo:
         client.discover()
@@ -361,10 +361,10 @@ def test_onvif_client_raises_no_media_service_when_capabilities_omit_it() -> Non
     no_media = b"""<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
         xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><soap:Body>
         <tds:GetCapabilitiesResponse><tds:Capabilities>
-        <tds:Device><tds:XAddr>http://192.168.1.50/onvif/device_service</tds:XAddr></tds:Device>
+        <tds:Device><tds:XAddr>http://192.168.1.23/onvif/device_service</tds:XAddr></tds:Device>
         </tds:Capabilities></tds:GetCapabilitiesResponse></soap:Body></soap:Envelope>"""
     requester = _FakeOnvifRequester({_DEVICE_URL: no_media})
-    client = onvif.OnvifClient(host="192.168.1.50", username="admin", password="pw", requester=requester)
+    client = onvif.OnvifClient(host="192.168.1.23", username="admin", password="pw", requester=requester)
 
     with pytest.raises(onvif.OnvifClientError) as excinfo:
         client.discover()
@@ -378,11 +378,11 @@ def test_onvif_client_raises_no_profiles_when_camera_reports_none() -> None:
     requester = _FakeOnvifRequester(
         {
             _DEVICE_URL: _CAPABILITIES_XML,
-            "http://192.168.1.50/onvif/device_service": _DEVICE_INFO_XML,
+            "http://192.168.1.23/onvif/device_service": _DEVICE_INFO_XML,
             _MEDIA_URL: empty_profiles,
         }
     )
-    client = onvif.OnvifClient(host="192.168.1.50", username="admin", password="pw", requester=requester)
+    client = onvif.OnvifClient(host="192.168.1.23", username="admin", password="pw", requester=requester)
 
     with pytest.raises(onvif.OnvifClientError) as excinfo:
         client.discover()
@@ -402,7 +402,7 @@ def test_urllib_requester_refuses_a_public_host_before_any_network_call() -> Non
 def test_urllib_requester_refuses_a_non_http_scheme() -> None:
     requester = onvif.UrlLibOnvifRequester()
     with pytest.raises(onvif.OnvifClientError) as excinfo:
-        requester.post_soap(url="https://192.168.1.50/onvif/device_service", body=b"<soap/>")
+        requester.post_soap(url="https://192.168.1.23/onvif/device_service", body=b"<soap/>")
     assert str(excinfo.value) == "onvif_host_invalid"
 
 
@@ -448,7 +448,7 @@ class _RespondingDiscoverySocket(_FakeDiscoverySocket):
 
     def recvfrom(self, _size: int):  # noqa: ANN202
         if self._responses:
-            return self._responses.pop(0), ("192.168.1.50", onvif.ONVIF_DISCOVERY_MULTICAST_PORT)
+            return self._responses.pop(0), ("192.168.1.23", onvif.ONVIF_DISCOVERY_MULTICAST_PORT)
         raise TimeoutError
 
 

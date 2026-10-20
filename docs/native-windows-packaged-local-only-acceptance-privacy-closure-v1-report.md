@@ -167,7 +167,7 @@ tuned to only the destinations this milestone expected.
 **Localhost/LAN preservation.** Proven live, not merely configured:
 `Invoke-WebRequest` to `http://127.0.0.1:8000/api/product/health` through
 the proxy returned `200` throughout; `CONNECT`/absolute-URI requests to the
-project's real reference Camera Node (`192.168.1.112:8787`) were classified
+project's real reference Camera Node (`<node-ip>:8787`) were classified
 `ALLOW` by the proxy and returned a real, live `200` JSON health payload
 (`status: "available"`, `camera_count: 8`, self-test `passed`) -- LAN
 reachability through the denial mechanism, not just before/after it.
@@ -294,7 +294,7 @@ brief's own categories:
 | Destination | Classification | Evidence |
 |---|---|---|
 | `127.0.0.1:8000`, `127.0.0.1:<ephemeral>` (BioCLIP worker IPC) | Localhost | Real `200` responses throughout; final `Get-NetTCPConnection` snapshot shows only these, owned by the MockingBird PID |
-| `192.168.1.112:8787` (real reference Camera Node) | LAN | Real `200` JSON health response, proxied |
+| `<node-ip>:8787` (real reference Camera Node) | LAN | Real `200` JSON health response, proxied |
 | `api.open-meteo.com` (188.40.99.226), `api.inaturalist.org` (13.66.155.195) | Optional external provider | 6 real `CONNECT` attempts total across the drills below, **every one refused** by the proxy before connecting; DNS resolution itself still worked (proving these are genuine live call sites, not stubs) |
 | `edge.microsoft.com`, `clients2.google.com`, `www.bing.com`, `config.edge.skype.com` | Unexpected, but **not MockingBird** | Edge browser's own background/update/telemetry traffic during the render check, correctly excluded from the MockingBird accounting per the brief's own instruction not to attribute OS/app background traffic to the product under test |
 | Anything else | None observed | Final process-scoped `Get-NetTCPConnection` snapshot (after the full workflow sweep) shows nothing else |

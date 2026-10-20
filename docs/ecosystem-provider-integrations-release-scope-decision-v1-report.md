@@ -11,7 +11,7 @@ it, and the concrete bar for reopening it later.
 
 Verified before any edit:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`, branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`, branch `main`.
 - Starting HEAD: `8764a05` (the reconciliation commit accepting Camera /
   Source Release Hardware Validation Closure v1). `docs/
   release-execution-state.md`'s own established convention names the

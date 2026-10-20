@@ -49,7 +49,7 @@ from tests.conftest import LegacyAuthenticatedTestClient
 
 NEVER_ECHO_CREDENTIAL_1 = "never-echo-first-run-credential"
 NEVER_ECHO_CREDENTIAL_2 = "never-echo-repaired-credential"
-BASE_ADDRESS = "http://192.168.1.112:8787"
+BASE_ADDRESS = "http://192.168.1.24:8787"
 
 
 class _StatefulNodeRequester:

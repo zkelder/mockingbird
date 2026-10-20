@@ -435,7 +435,7 @@ the application and data folders, before and after each step).
 
 ## 6. Real Pi evidence, and what was deliberately not attempted
 
-The real reference Raspberry Pi 4 Camera Node (`192.168.1.112:8787`) was
+The real reference Raspberry Pi 4 Camera Node (`<node-ip>:8787`) was
 checked read-only over the LAN: healthy, paired, `self_test: passed`,
 `camera_available: true`, `available_camera_count: 1`. Deliberately **not**
 touched further -- `pairing_required: false` means it is already

@@ -1,4 +1,5 @@
 import { devices, expect, test, type Locator, type Page } from "@playwright/test";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Mobile Viewport Audit v1 (draft). A lightweight, cross-cutting layout
@@ -42,15 +43,10 @@ const STREAM_ID = "stream-backyard-feeder";
 const TINY_JPEG_BASE64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDyuiiivxM/ns//2Q==";
 
-// Session-scratch output directory for this draft's screenshots (per the
-// task that produced this file -- not a repo convention). Playwright
-// creates missing parent directories automatically when writing a
-// screenshot. Worth repointing at something durable (e.g. `testInfo.
-// outputDir`, which already resolves under this suite's own per-run
-// `runtimeRoot/artifacts` -- see playwright.config.ts's `outputDir`) once
-// this file graduates from a one-off draft.
+// Screenshots go to a throwaway directory outside the repository; override
+// with MOCKINGBIRD_AUDIT_SCREENSHOT_DIR to keep them somewhere specific.
 const SCREENSHOT_DIR =
-  "/tmp/claude-1000/-home-zkelder-projects-mockingbird-active/4f16a706-388f-4bca-9944-5ba6107e202e/scratchpad/mobile-audit-screenshots";
+  process.env.MOCKINGBIRD_AUDIT_SCREENSHOT_DIR ?? join(tmpdir(), "mockingbird-mobile-audit-screenshots");
 
 function screenshotPath(name: string): string {
   return join(SCREENSHOT_DIR, `${name}.png`);

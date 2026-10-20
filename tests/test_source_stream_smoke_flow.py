@@ -19,7 +19,7 @@ pytestmark = pytest.mark.anyio
 SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
-PRIVATE_PREVIEW_URL = "http://192.168.1.50/camera/path/still.jpg"
+PRIVATE_PREVIEW_URL = "http://192.168.1.23/camera/path/still.jpg"
 
 MODEL_ARTIFACT_EXTENSIONS = {
     ".onnx",

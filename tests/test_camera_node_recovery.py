@@ -38,7 +38,7 @@ def _config(**overrides: object) -> StreamLivePlaybackConfig:
     values: dict[str, object] = dict(
         stream_id=STREAM_ID, source_id=SOURCE_ID, provider_key="camera_node",
         live_stream_url=None, live_stream_type="camera_node",
-        camera_node_base_address="http://192.168.1.50:8787", camera_node_credential="fixture-credential",
+        camera_node_base_address="http://192.168.1.23:8787", camera_node_credential="fixture-credential",
         camera_node_camera_id="cam-1", camera_node_id="node-1",
         camera_node_monitoring_profile_id="monitoring-profile", camera_node_evidence_profile_id="evidence-profile",
     )
@@ -561,7 +561,7 @@ def _seed_real_camera_node_stream(repository: ProductRepository) -> None:
                 source_id=REAL_SOURCE_ID, provider_key="camera_node",
                 config_json=json.dumps(
                     {
-                        "node_base_address": "http://192.168.1.50:8787",
+                        "node_base_address": "http://192.168.1.23:8787",
                         "node_credential": "fixture-credential",
                         "node_camera_id": "cam-1",
                         "node_id": "node-1",
@@ -605,7 +605,7 @@ def test_real_repository_wiring_resolves_the_same_candidate_a_fake_would(
     resumed_stream_id, resumed_config = manager.start_calls[0]
     assert resumed_stream_id == REAL_STREAM_ID
     assert resumed_config.provider_key == "camera_node"
-    assert resumed_config.camera_node_base_address == "http://192.168.1.50:8787"
+    assert resumed_config.camera_node_base_address == "http://192.168.1.23:8787"
     assert manager.status(REAL_STREAM_ID).state == "observing"
 
 
@@ -726,7 +726,7 @@ def test_host_restart_with_an_unavailable_node_resumes_once_it_returns() -> None
 
     supervisor.reconcile_once()
     assert manager.start_calls == []
-    assert health.calls == ["http://192.168.1.50:8787"]
+    assert health.calls == ["http://192.168.1.23:8787"]
 
     # Still down, and still inside the first backoff step: not re-probed.
     moment[0] = moment[0] + timedelta(seconds=5)
@@ -811,7 +811,7 @@ def test_a_users_stop_during_the_health_probe_wins_over_a_host_restart_resume() 
 
     supervisor.reconcile_once()
 
-    assert health.calls == ["http://192.168.1.50:8787"]
+    assert health.calls == ["http://192.168.1.23:8787"]
     assert manager.start_calls == []
 
 

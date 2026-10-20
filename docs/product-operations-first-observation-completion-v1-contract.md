@@ -17,7 +17,7 @@ on the same fact.
 
 ## 1. Verified baseline
 
-- Repository: `/home/zkelder/projects/mockingbird-active`, branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`, branch `main`.
 - HEAD at start: `7b7e282` (matches the authorization's expected commit --
   "Reconcile release-execution-state.md: record Release Reliability &
   First-Run Recovery v1").

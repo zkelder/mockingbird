@@ -149,7 +149,7 @@ def _camera_node_request(*, key: str, enable_monitoring: bool) -> CameraSetupCom
         stream_name="Camera Node feeder view",
         provider_key="camera_node",
         config={
-            "node_base_address": "http://192.168.1.50:8787",
+            "node_base_address": "http://192.168.1.23:8787",
             "node_credential": "test-credential",
             "node_camera_id": "opaque-camera-1",
             "node_id": "opaque-node-1",
@@ -229,7 +229,7 @@ async def test_camera_setup_api_rejects_enable_monitoring_for_camera_node(
             "stream_name": "Camera Node feeder view",
             "provider_key": "camera_node",
             "config": {
-                "node_base_address": "http://192.168.1.50:8787",
+                "node_base_address": "http://192.168.1.23:8787",
                 "node_credential": "test-credential",
                 "node_camera_id": "opaque-camera-1",
                 "node_id": "opaque-node-1",

@@ -575,7 +575,7 @@ def test_old_node_health_response_shape_still_parses_via_the_host_client() -> No
 
     old_response = json.dumps(
         {
-            "node_id": "node-76ec8e53ae586dd0",
+            "node_id": "node-0123456789abcdef",
             "display_name": "Pi Camera Node",
             "api_version": "v1",
             "status": "available",
@@ -585,7 +585,7 @@ def test_old_node_health_response_shape_still_parses_via_the_host_client() -> No
         }
     ).encode("utf-8")
     parsed = _safe_json(old_response)
-    assert parsed["node_id"] == "node-76ec8e53ae586dd0"
+    assert parsed["node_id"] == "node-0123456789abcdef"
     # New, additive fields are simply absent -- `.get(...)` on the host side
     # (never a required-field access) is how every caller must read them.
     assert parsed.get("boot_id") is None

@@ -71,9 +71,9 @@ def test_explicit_transport_spool_dir_still_overrides_the_pairing_anchored_defau
 
 def test_configured_host_address_enables_transport(monkeypatch) -> None:
     _clear_transport_env(monkeypatch)
-    monkeypatch.setenv("MOCKINGBIRD_NODE_HOST_BASE_ADDRESS", "http://192.168.1.50:8000")
+    monkeypatch.setenv("MOCKINGBIRD_NODE_HOST_BASE_ADDRESS", "http://192.168.1.23:8000")
     config = CameraNodeConfig.from_environment()
-    assert config.host_base_address == "http://192.168.1.50:8000"
+    assert config.host_base_address == "http://192.168.1.23:8000"
     assert config.transport_enabled is True
 
 

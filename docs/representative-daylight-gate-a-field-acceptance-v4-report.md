@@ -14,7 +14,7 @@ root-caused, no measurement-invalidating problem. See "Decision," below, for the
   `model_runtime_metadata`), `build_id` `415c77e7153480da`, `app_version` `0.1.0`.
 - Schema: `58` (unchanged).
 - Deployment: a genuinely fresh, disposable dev-root
-  (`C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV4`), **not** the operator's long-lived
+  (`C:\Users\<user>\AppData\Local\MockingBirdFieldAcceptanceV4`), **not** the operator's long-lived
   `MockingBirdDev` identity -- disposable local Administrator
   (`field-acceptance-v4@mockingbird.local`, created via `POST /api/setup/administrator`), a
   disposable Field Acceptance Operator bearer credential (`field-acceptance-56f947f3f37242d1`,
@@ -26,7 +26,7 @@ root-caused, no measurement-invalidating problem. See "Decision," below, for the
   ~85min), not merely assumed from a forecast. A visible breeze was present throughout (branch/vine
   motion between spot-checked frames).
 - Camera/Stream count: **1 real Stream** (`stream-87d3dd6fcdab`, "Field Acceptance V4"), backed by
-  the real reference Camera Node (`node-76ec8e53ae586dd0`, `192.168.1.112:8787`), camera
+  the real reference Camera Node (`node-<id>`, `<node-ip>:8787`), camera
   `picamera2-camera-0` ("Pi camera 1") of 8 the Node advertised. One full-frame Zone (`yard` type,
   polygon 0.02-0.98 both axes). A second real camera (the EMEET SmartCam S600 USB webcam) was
   checked and found not currently enumerable on the Windows host (PnP status "Unknown," i.e. not
@@ -77,7 +77,7 @@ against the WSL-side working directory rather than a Windows-local path, produci
 (junctions cannot target a `\\wsl.localhost\...` UNC path). Root-caused by direct code reading
 (`args.dev_root.resolve()` vs. `windows_host.local_appdata()`'s own drvfs-mapped default in
 `scripts/deploy_windows_dev.py`) -- not a bug in the tool itself. Fixed by passing an absolute
-drvfs path (`/mnt/c/Users/zachk/AppData/Local/MockingBirdFieldAcceptanceV4`) on retry. Cleaned up
+drvfs path (`/mnt/c/Users/<user>/AppData/Local/MockingBirdFieldAcceptanceV4`) on retry. Cleaned up
 the resulting 4.7GB stray WSL-side directory (`git status` confirmed back to the exact expected
 baseline afterward; the seven preserved untracked detector files were reconfirmed byte-identical,
 same size/mtime as session start, throughout).

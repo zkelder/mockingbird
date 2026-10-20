@@ -75,8 +75,8 @@ for this item.
 
 | Candidate source | Reachable tonight? | Notes |
 |---|---|---|
-| Reference Camera Node (Pi, `192.168.1.112:8787`, `node-76ec8e53ae586dd0`) | **Yes** | Real Raspberry Pi, real `ov64a40` (64MP Arducam-family) CSI sensor, confirmed physically detected via `rpicam-hello --list-cameras` on the device. `ssh mockingbird-pi` / passwordless `sudo` both working. |
-| RTSP endpoint | No | No device on the LAN answers port 554 (`192.168.1.1` gateway and `192.168.1.112` both refuse it); no other RTSP source known to this environment. |
+| Reference Camera Node (Pi, `<node-ip>:8787`, `node-<id>`) | **Yes** | Real Raspberry Pi, real `ov64a40` (64MP Arducam-family) CSI sensor, confirmed physically detected via `rpicam-hello --list-cameras` on the device. `ssh mockingbird-pi` / passwordless `sudo` both working. |
+| RTSP endpoint | No | No device on the LAN answers port 554 (`192.168.1.1` gateway and `<node-ip>` both refuse it); no other RTSP source known to this environment. |
 | Local USB/V4L2 (Host-side `local_usb` provider) | No | `/dev/video*` does not exist in this WSL sandbox; `lsusb` (WSL) enumerates nothing. |
 | Windows DirectShow | **Partially** | Native Windows host reachable via `powershell.exe` interop (Windows 10.0.19045). A real, previously-used USB webcam (`EMEET SmartCam S600`) is known to Windows (`Get-PnpDevice -Class Camera,Image` lists it, `Status: Unknown`) but is **not currently connected** -- `ffmpeg.exe -f dshow -list_devices true` enumerates 0 video devices (2 audio-only devices). |
 | ONVIF device | No | No ONVIF-capable device on the LAN; no discovery library installed to probe further even if one existed. |
@@ -303,7 +303,7 @@ Fixed in [providers.py](../src/mockingbird_node/providers.py),
 
 **UNAVAILABLE FOR ACCEPTANCE**, confirmed rather than assumed: a live
 probe (`bash /dev/tcp` to port 554) against both the LAN gateway
-(`192.168.1.1`) and the reference Pi (`192.168.1.112`) found nothing
+(`192.168.1.1`) and the reference Pi (`<node-ip>`) found nothing
 listening; no other RTSP source is known to this environment. Consistent
 with every prior camera-source milestone's own disclosed gap. No RTSP
 setup/preview/monitoring/failure/reconnect exercise was possible tonight;

@@ -130,7 +130,7 @@ def test_bundle_never_includes_credential_shaped_text_anywhere(tmp_path: Path) -
     log_dir.mkdir(parents=True)
     (log_dir / LOG_FILENAME).write_text(
         "INFO ordinary startup line\n"
-        "WARNING pairing failed: credential rejected for node 192.168.1.50\n"
+        "WARNING pairing failed: credential rejected for node 192.168.1.23\n"
         "INFO another ordinary line\n",
         encoding="utf-8",
     )

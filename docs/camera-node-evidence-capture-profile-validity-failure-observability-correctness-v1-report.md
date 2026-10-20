@@ -58,7 +58,7 @@ direct code tracing (no new claims invented beyond what that report already
 established):
 
 - Configured Stream/source identity: a real Camera Node Source against the
-  reference Pi (`node-76ec8e53ae586dd0`), evidence profile persisted at
+  reference Pi (`node-<id>`), evidence profile persisted at
   camera-setup time (e.g. `picamera2-evidence-3840x2160`).
 - First known `no_persistable_evidence_bytes` occurrence: effectively
   session-wide, from the first proposal onward -- v13's own numbers show
@@ -169,7 +169,7 @@ Answers to the milestone's lifecycle questions:
 ## Timeout / reconfiguration investigation
 
 Independently measured, live, on the real reference Camera Node (Pi,
-`node-76ec8e53ae586dd0`), using the real, unmodified `CameraNodeHttpTransport.
+`node-<id>`), using the real, unmodified `CameraNodeHttpTransport.
 request_evidence_burst`:
 
 | Condition | Real measured elapsed | Host budget |
@@ -199,7 +199,7 @@ Node-side pairing reset, matching the precedent used by prior milestones --
 credential never logged, backed up before each reset following the
 established `pairing.json.pre-<milestone>-reset.bak` convention):
 
-**Node pairing/health at start**: `node_id=node-76ec8e53ae586dd0`,
+**Node pairing/health at start**: `node_id=node-<id>`,
 `boot_id=4239527b-...` (stable throughout), `service_version=0.1.0`,
 `self_test.status=passed`, `camera_available=true`, providers
 `picamera2,v4l2`.

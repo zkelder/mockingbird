@@ -1707,7 +1707,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 required=True,
                 secret=False,
                 description="LAN IP address or .local hostname of the ONVIF device.",
-                placeholder="192.168.1.50",
+                placeholder="192.168.1.100",
             ),
             SourceProviderField(
                 key="onvif_port",

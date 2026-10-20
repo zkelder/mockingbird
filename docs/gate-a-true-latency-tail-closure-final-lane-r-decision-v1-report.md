@@ -78,8 +78,8 @@ Checked directly against real hardware before starting the live tranche:
 
 | Condition | Status |
 |---|---|
-| Reference Camera Node reachable | Yes -- LAN TCP to `192.168.1.112:8787`, SSH (`mockingbird-pi` alias), and `/node/v1/health` all confirmed. `node_id=node-76ec8e53ae586dd0`, `boot_id=4239527b-5622-425c-bed1-ae3074e191dd`, `self_test: passed`, `camera_available: true`. |
-| Native Windows Host | Yes -- `DESKTOP-VENHFGI`, reachable via `powershell.exe`. |
+| Reference Camera Node reachable | Yes -- LAN TCP to `<node-ip>:8787`, SSH (`mockingbird-pi` alias), and `/node/v1/health` all confirmed. `node_id=node-<id>`, `boot_id=4239527b-5622-425c-bed1-ae3074e191dd`, `self_test: passed`, `camera_available: true`. |
+| Native Windows Host | Yes -- `<windows-host>`, reachable via `powershell.exe`. |
 | Accepted build identity | Yes -- see "Build identity," below. |
 | GPU/detector healthy | Yes -- NVIDIA GeForce RTX 4060 Ti; no MockingBird/Python process was already using it (only ordinary desktop apps); post-deploy Observation status confirmed `CUDAExecutionProvider` active, MDv5a loaded, `score_threshold: 0.1` (unchanged). |
 | Sufficient storage | Yes, with a disclosed caveat -- see "Storage" below. |
@@ -129,7 +129,7 @@ on the Node.
 ## Build identity
 
 Deployed via `scripts/deploy_windows_dev.py --dev-root
-C:\Users\zachk\AppData\Local\MockingBirdGateALatencyTailV1 --commit bf7ee89`
+C:\Users\<user>\AppData\Local\MockingBirdGateALatencyTailV1 --commit bf7ee89`
 (full GPU + BioCLIP closure, no skip flags), with the built-in acceptance
 recorder enabled via `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR`/
 `_INTERVAL_MS=1000`/`_MAX_FRAMES=7200`/`_MAX_BYTES=4500000000` (matching
@@ -169,13 +169,13 @@ fragility):** WSL cannot reach the Windows-hosted instance's
 `127.0.0.1:8000` directly (`curl` from WSL: connection refused). Every call
 against the product's own HTTP API in this session therefore ran through
 `powershell.exe` invoking the native Windows Python
-(`C:\Users\zachk\AppData\Local\Programs\Python\Python312\python.exe`,
+(`C:\Users\<user>\AppData\Local\Programs\Python\Python312\python.exe`,
 stdlib-`urllib`-only, matching `field_acceptance_client.py`'s own zero-
 third-party-dependency design) against copies of the accepted tooling
 placed directly on `C:`, with `WSLENV` used to propagate secrets
 (admin password, bearer token) across the WSL/Windows process boundary
 without writing them to a file Windows would read. Calls to the Camera
-Node's own API (`192.168.1.112:8787`) ran directly from WSL without this
+Node's own API (`<node-ip>:8787`) ran directly from WSL without this
 workaround, since the Node is a separate LAN device reachable normally.
 
 ## RTT preflight

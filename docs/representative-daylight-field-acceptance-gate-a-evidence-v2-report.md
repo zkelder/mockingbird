@@ -154,7 +154,7 @@ the real one. Production authentication was not touched.
 
 Unchanged since the 2026-08-26 attempt (re-confirmed via the same
 unauthenticated health path): **one real Stream** -- the reference Camera
-Node (`192.168.1.112:8787`) -- is configured in this dev instance. A second
+Node (`<node-ip>:8787`) -- is configured in this dev instance. A second
 real, already-supported Source (an EMEET SmartCam S600 USB webcam+mic,
 hardware-validated during the 2026-08-24 acoustic milestone) remains
 identified but not wired as a Stream. Per the governing brief's §5, wiring up

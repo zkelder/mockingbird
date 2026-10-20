@@ -37,7 +37,7 @@ distributed, and no Gate G activity occurred.
 
 ## 2. Starting state
 
-- Repository `/home/zkelder/projects/mockingbird-active` (native WSL, not
+- Repository `/home/<user>/projects/mockingbird-active` (native WSL, not
   `/mnt/c`), branch `main`, HEAD
   `673ccf1ddd079265ee90552d49ce218214c1cb93`, nothing staged, worktree clean
   apart from the 8 protected untracked files.

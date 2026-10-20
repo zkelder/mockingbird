@@ -11,7 +11,7 @@ correction contract"), stated before implementation and honored exactly.
 
 | | Start (verified 2026-09-26) | End |
 | --- | --- | --- |
-| Authoritative checkout | `/home/zkelder/projects/mockingbird-active`, `main` | same |
+| Authoritative checkout | `/home/<user>/projects/mockingbird-active`, `main` | same |
 | HEAD | `312bc7d1920aa95011eadddd6619ab841340b9a7` | the documentation-closure commit on top of `e2c543e` (its hash is in `git log`; a commit cannot record its own hash -- §7) |
 | Schema / version | `v61` / `0.1.0` | unchanged |
 | GitHub | private `zkelder/mockingbird`, `main` synchronized | synchronized by normal fast-forward pushes (§7); no force-push, tag, release, visibility or deployment change |

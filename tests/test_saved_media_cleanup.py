@@ -60,7 +60,7 @@ def saved_preview_notes(
             "fetched_at=2026-01-02T03:04:00+00:00",
             f"content_type={content_type}",
             f"bytes_written={bytes_written}",
-            "url_host=192.168.1.50",
+            "url_host=192.168.1.23",
         ]
     )
 
@@ -76,7 +76,7 @@ def create_saved_preview_media(
         content=content,
         content_type="image/jpeg",
         fetched_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
-        url_host="192.168.1.50",
+        url_host="192.168.1.23",
     )
     return media_asset.id
 

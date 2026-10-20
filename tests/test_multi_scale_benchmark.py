@@ -235,7 +235,7 @@ def test_absolute_paths_remain_non_semantic_in_comparison_report() -> None:
     manifest = _small_bird_manifest()
     baseline = _run_strategy(manifest, FULL_FRAME)
     candidate = _run_strategy(manifest, FULL_FRAME_PLUS_UNIFORM_TILES)
-    poisoned = "/home/zkelder/projects/mockingbird-active/data/models/some-bundle.json"
+    poisoned = "/home/user/projects/mockingbird-active/data/models/some-bundle.json"
     baseline["some_future_unread_field"] = poisoned
     candidate["execution"] = {"max_windows_per_frame": FULL_FRAME_PLUS_UNIFORM_TILES.max_windows_per_frame, "model_bundle_path": poisoned}
     baseline["execution"] = {"max_windows_per_frame": FULL_FRAME.max_windows_per_frame}

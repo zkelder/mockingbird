@@ -17,7 +17,7 @@ corrections and their real-hardware evidence so that decision can be made.
 
 | | |
 | --- | --- |
-| Repository | `/home/zkelder/projects/mockingbird-active`, branch `main` |
+| Repository | `/home/<user>/projects/mockingbird-active`, branch `main` |
 | HEAD at entry | `8a45d1a` (as expected by the brief) |
 | Schema at entry | `v60` (`CURRENT_DATABASE_SCHEMA_VERSION = 60`) |
 | Last accepted implementation baseline | `d5dd1d9` |
@@ -359,7 +359,7 @@ have forced a disruptive Camera Node re-pair).
 | Host | Microsoft Windows 10 Pro (10.0.19045), packaged local product, embedded CPython 3.12.7 |
 | Build under test | `15691d9`, confirmed via the product's own `GET /api/product/instance` (`git_commit 15691d9ce5262c6439092c1251df056c0d1e0406`, `build_id 15122a26d0a2a526`), **not** via any deploy helper's claim |
 | Detector | MDv5a ONNX, `onnx-cuda` provider active on the real GPU |
-| Camera Node | Raspberry Pi 4 (`node-76ec8e53ae586dd0`, `192.168.1.112:8787`), real `ov64a40` CSI camera, pairing pre-existing (`pairing_required: false`) |
+| Camera Node | Raspberry Pi 4 (`node-<id>`, `<node-ip>:8787`), real `ov64a40` CSI camera, pairing pre-existing (`pairing_required: false`) |
 | Data home | the disposable dev instance carrying real prior field data |
 | Schema | migrated **v60 -> v61** on this real field database during deployment |
 

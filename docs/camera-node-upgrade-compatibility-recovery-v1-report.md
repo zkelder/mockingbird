@@ -415,7 +415,7 @@ installation was actually found in, making it a materially representative
 upgrade target rather than a synthetic one.
 
 **Pre-upgrade state captured** (read-only, before touching anything):
-`node_id=node-76ec8e53ae586dd0`, installed `build_id=5c78ff19a3bbc05...`
+`node_id=node-<id>`, installed `build_id=5c78ff19a3bbc05...`
 (`git_commit=8c24dd65...`, built 2026-08-18), pairing
 `credential_sha256=e42f316be292d...` (`pairing_required: false`),
 `camera_count`/`available_camera_count=8/8`, service active 6+ days
@@ -484,14 +484,14 @@ candidate from the fixed HEAD was transferred and installed for real:
 - package: installed build 6519d5ef3b60cc0c8d16c666f0b943df
 - systemd unit: unchanged
 - service: restarted
-- health check: healthy: node_id=node-76ec8e53ae586dd0 pairing_required=False
+- health check: healthy: node_id=node-<id> pairing_required=False
 - post-update facts: service_version=0.1.0, self_test=passed, pairing_required=False, available_camera_count=8
 Camera Node install/update complete and healthy.
 ```
 
 Post-upgrade verification, all real:
 
-- **Same node identity**: `node_id=node-76ec8e53ae586dd0`, unchanged.
+- **Same node identity**: `node_id=node-<id>`, unchanged.
 - **Pairing preserved**: `credential_sha256=e42f316be292d...`, byte
   -identical to the value captured before any of this session's work
   began.

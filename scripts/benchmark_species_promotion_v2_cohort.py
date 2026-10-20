@@ -79,7 +79,7 @@ from mockingbird.species.speciesnet_candidate import parse_speciesnet_label  # n
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_IMPORTS_DIR = Path(
-    "/mnt/c/Users/zachk/AppData/Local/MockingBirdDev/userdata/data/media/imports"
+    "/mnt/c/Users/<user>/AppData/Local/MockingBirdDev/userdata/data/media/imports"
 )
 BIOCLIP2_MODEL_DIR = REPO_ROOT / "data/models/bioclip-2"
 BIOCLIP25_MODEL_DIR = REPO_ROOT / "data/models/bioclip-2.5-vith14"

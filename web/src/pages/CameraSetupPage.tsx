@@ -783,7 +783,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedd
               ) : (
                 <span>Enter the Camera Node’s address on your network and its one-time pairing code. Both are printed in the Camera Node’s own setup output — see the Camera Node install guide if you haven’t set one up yet. MockingBird never scans your network for it.</span>
               )}
-              <label>Node address<input autoCapitalize="off" autoCorrect="off" inputMode="url" onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
+              <label>Node address<input autoCapitalize="off" autoCorrect="off" inputMode="url" onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.100:8787" value={nodeAddress} /></label>
               <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
               <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNode()} type="button">{isPairingNode ? "Pairing…" : nodeSetup?.status === "needs_renewal" ? "Renew pairing" : "Pair Camera Node"}</button>
             </>}

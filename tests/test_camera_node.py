@@ -1169,7 +1169,7 @@ def test_pending_setup_refreshes_only_transient_advertised_camera_metadata(tmp_p
     repository = _repository(tmp_path)
     try:
         pairing = CameraNodePairing(
-            base_address="http://192.168.1.112:8787",
+            base_address="http://192.168.1.24:8787",
             node_id="node-test",
             display_name="Test node",
             api_version="v1",

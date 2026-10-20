@@ -72,7 +72,7 @@ Checked before allocating a field instance, all confirmed real:
 
 - **Daylight**: session start 15:25 EDT (2026-09-04); early-September Eastern
   sunset is comfortably after 19:00 EDT — hours of margin, no time pressure.
-- **Reference Camera Node reachable**: `192.168.1.112:8787` healthy,
+- **Reference Camera Node reachable**: `<node-ip>:8787` healthy,
   `available_camera_count: 1` of `camera_count: 2`, `self_test.status:
   passed`, watchdog `consecutive_probe_failures: 0`.
 - **Physical camera available**: `picamera2-camera-0`, `status: available`,
@@ -662,13 +662,13 @@ even offered a species suggestion).
 
 ## Storage
 
-- Requested root: `C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV13`
+- Requested root: `C:\Users\<user>\AppData\Local\MockingBirdFieldAcceptanceV13`
   (native Windows form, passed as-is per the corrected storage-preflight
   contract).
 - Resolved/probed root (via the corrected `resolve_dev_root_path`/
   `resolve_storage_probe_target`, which now correctly detects and
   translates a Windows-style path from WSL rather than silently
-  CWD-anchoring it): `/mnt/c/Users/zachk/AppData/Local/
+  CWD-anchoring it): `/mnt/c/Users/<user>/AppData/Local/
   MockingBirdFieldAcceptanceV13` — **the report explicitly proves which
   filesystem was measured**: `resolution_method: "direct"`,
   `filesystem_device_id: 71`, `platform: "posix"` (WSL-side probe of the

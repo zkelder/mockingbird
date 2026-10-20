@@ -1031,7 +1031,7 @@ supersede that checkpoint state.
 
 ## 1. Current accepted state
 
-- **Repository:** `/home/zkelder/projects/mockingbird-active`
+- **Repository:** `/home/<user>/projects/mockingbird-active`
 - **Branch:** `main`
 
 **Current accepted state, 2026-10-06 (supersedes the dated notes below where
@@ -1865,7 +1865,7 @@ record through its own last-updated point.
   report commit, never the reconciliation commit that records it) is
   established and consistent, not stale; no bookkeeping correction made.
   Proves, live, against the real reference Camera Node (Pi,
-  `node-76ec8e53ae586dd0`): health, both compatibility-preflight profiles
+  `node-<id>`): health, both compatibility-preflight profiles
   (including a real 5/5-valid bounded RTT clock-calibration batch), an
   honest pairing-conflict rejection, and a clean bounded
   service-restart-recovery cycle (`node_id`/`boot_id`/pairing all
@@ -5603,7 +5603,7 @@ The correction milestone's remaining acceptance work is complete.
 | Schema | **v61** (`v60 -> v61`, one additive table); version `0.1.0` unchanged |
 | **Final Core result** | **`11 failed, 6205 passed, 4 skipped, 35 deselected, 11 xfailed` (0:41:00) -- ZERO failures attributable to this milestone** |
 | Core attribution method | all eleven reproduce deterministically in isolation, and all eleven fail **identically at the pre-correction baseline `8a45d1a`**. Four are the established recorded pre-existing set; seven were bisected to `3d78f8a` (Review Queue Scale Closure v1, 2026-09-23) -- `73dbcd4` PASS -> `3d78f8a` FAIL, direct parent, so the attribution is exact |
-| Real-hardware evidence | real Windows 10 Pro Host + real Raspberry Pi 4 Camera Node (`node-76ec8e53ae586dd0`, real `ov64a40` CSI camera); build confirmed via the product's own `GET /api/product/instance`; four Host restarts; v60 -> v61 migration of a real 169-Visit / 343-asset field database with all counts intact and **0 intent rows** |
+| Real-hardware evidence | real Windows 10 Pro Host + real Raspberry Pi 4 Camera Node (`node-<id>`, real `ov64a40` CSI camera); build confirmed via the product's own `GET /api/product/instance`; four Host restarts; v60 -> v61 migration of a real 169-Visit / 343-asset field database with all counts intact and **0 intent rows** |
 | Protected files | all seven re-verified byte-identical to their hashes of record and still untracked; `uv.lock` untouched. Working tree carries those eight untracked files and nothing else |
 | Push | **not pushed.** No tag, no publish, no remote operation |
 
@@ -8752,7 +8752,7 @@ reconciliation:** determined the brief's suspected staleness (§1's
 commit that records it) is this document's own established, consistent
 convention across at least two full verified cycles, not a defect --
 verified, not corrected. **Camera Node golden path:** real, live evidence
-against the reachable reference Pi (`node-76ec8e53ae586dd0`) -- health,
+against the reachable reference Pi (`node-<id>`) -- health,
 both compatibility-preflight profiles (`ordinary_monitoring` and
 `field_acceptance`, the latter including a real 5/5-valid bounded RTT
 clock-calibration batch), an honest `409 pairing_code_used` rejection on a
@@ -9413,7 +9413,7 @@ branch, pointing at a new standalone script
 mirrors the `clock` check's own established "not measurable from a
 standalone Doctor check" precedent rather than adding a live probe to
 Doctor itself. Exercised live against the real, already-upgraded
-reference Camera Node (`192.168.1.112:8787`) from two independent
+reference Camera Node (`<node-ip>:8787`) from two independent
 network paths -- this sandbox and a real native-Windows Host (the actual
 Gate A Host platform) -- both profiles `compatible` on both paths, each
 with a real 5/5 valid RTT-bounded calibration batch (22.65ms RTT from
@@ -9710,7 +9710,7 @@ dependency the v8 reconciliation immediately below named as Gate A's own
 sharpest remaining item. See
 [reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
 for the complete record. Classification **A**. The real reference Camera
-Node (`node-76ec8e53ae586dd0`, Pi 4, `192.168.1.112`) was upgraded, using
+Node (`node-<id>`, Pi 4, `<node-ip>`) was upgraded, using
 the accepted `scripts/install_camera_node.py` mechanism end to end (build
 against accepted HEAD `1a39479` -> preflight -> install), from
 `git_commit baf9fdb` (71 commits behind, built 2026-08-27, predating the
@@ -12286,7 +12286,7 @@ declined to share real admin credentials, create a temporary account, or
 participate live right now. Nothing about the frozen perception/admission/
 Visit/evidence/classification stack was exercised or judged. Real,
 positive, non-live evidence preserved from this attempt: the reference
-Camera Node (`192.168.1.112:8787`) is reachable at the network level; the
+Camera Node (`<node-ip>:8787`) is reachable at the network level; the
 native-Windows Host dev deployment is healthy at the accepted commit
 (schema v53); the full accepted acceptance-tooling chain (recorder,
 motion-screen/contact-sheet review, independent encounter table,
@@ -13418,7 +13418,7 @@ read-only, no-`ProductRepository`-construction design invariant. No new
 check, no existing check's status/recoverability changed.
 
 Exercised live against the real, already-upgraded reference Camera Node
-(`192.168.1.112:8787`, confirmed LAN-reachable) from two independent
+(`<node-ip>:8787`, confirmed LAN-reachable) from two independent
 network paths: this sandbox (WSL2) and, more representatively, a real
 native-Windows Host (the actual Gate A Host platform) via the existing,
 accepted `scripts/deploy_windows_dev.py`, with the deployed instance's

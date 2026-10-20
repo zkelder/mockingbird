@@ -22,7 +22,7 @@ driver.py`, `scripts/field_acceptance_recorder_readiness.py`,
 Verified directly, in the order the governing directive required, before
 any other action:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`; branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`; branch `main`.
 - Starting HEAD: `2e7e8e0` -- matches the directive's expected baseline
   exactly.
 - Schema: `CURRENT_DATABASE_SCHEMA_VERSION = 59`

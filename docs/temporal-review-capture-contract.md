@@ -274,7 +274,7 @@ activity and must never be reported as one. Daylight collection is a
 separate, not-yet-run, human-supervised step using the identical commands:
 
 ```sh
-cd /home/zkelder/projects/mockingbird-active
+cd /home/<user>/projects/mockingbird-active
 source data/runtime/venvs/observation-onnx-cuda/bin/activate
 export PYTHONPATH="$PWD/src"
 NVIDIA_PY_LIBS="$PWD/.venv/lib/python3.12/site-packages/nvidia"

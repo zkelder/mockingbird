@@ -713,7 +713,7 @@ and `release-execution-state.md` §3/§8.
   reference device (the next action the diagnosis above recommended) found
   the concrete failure case that diagnosis had only inferred from logs: a
   solid red power LED, no green ACT activity, and the device completely
-  absent from the LAN -- `192.168.1.112` failed ICMP, TCP 8787, and
+  absent from the LAN -- `<node-ip>` failed ICMP, TCP 8787, and
   `/node/v1/health` alike -- while the Windows host and MockingBird product
   stayed healthy throughout, and six bounded reconnect attempts correctly,
   honestly classified the failure as `timeout` (among the bounded
@@ -4571,7 +4571,7 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 ## WSL activation checkpoint
 
 The active development checkout is WSL-native at
-`/home/zkelder/projects/mockingbird-active`. A locally configured Windows
+`/home/<user>/projects/mockingbird-active`. A locally configured Windows
 `ffmpeg.exe`, native DirectShow controls, fresh live frames, and a daylight
 3840 x 2160 capture have been verified from WSL, and the packaged
 Windows/CUDA product has been run and debugged against real passed-through

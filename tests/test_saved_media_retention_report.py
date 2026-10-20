@@ -55,7 +55,7 @@ def create_saved_preview_media(
         content=content,
         content_type="image/jpeg",
         fetched_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
-        url_host="192.168.1.50",
+        url_host="192.168.1.23",
         note=note,
     )
     return media_asset.id
@@ -146,7 +146,7 @@ async def test_retention_report_lists_unlinked_saved_preview_and_default_dry_run
     assert item["size_bytes"] == len(b"image-bytes")
     assert item["linked_motion_evidence_count"] == 0
     assert item["reviewed_truth_count"] == 0
-    assert "url_host=192.168.1.50" in item["provenance"]
+    assert "url_host=192.168.1.23" in item["provenance"]
     assert "password-secret" not in str(body)
 
     dry_run_response = await client.post(
@@ -267,7 +267,7 @@ async def test_retention_report_handles_stale_saved_preview_reference_safely(
             "fetched_at=2026-01-02T03:04:00+00:00",
             "content_type=image/jpeg",
             "bytes_written=19",
-            "url_host=192.168.1.50",
+            "url_host=192.168.1.23",
             "note=password-secret should not be exposed as provenance",
         ]
     )

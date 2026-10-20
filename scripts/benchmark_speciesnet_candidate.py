@@ -22,7 +22,7 @@ no network call made here) live outside the repository, at
 given via ``--model-dir``). Real source images live either in this repo's own
 gitignored ``data/`` tree or, for the archived 2026-08-11 field session, on the
 real Windows dev userdata volume mounted at
-``/mnt/c/Users/zachk/AppData/Local/MockingBirdDev/userdata`` (per
+``/mnt/c/Users/<user>/AppData/Local/MockingBirdDev/userdata`` (per
 ``docs/windows-dev-deployment-design.md``'s established dev-machine layout);
 run with ``--skip-missing`` to degrade gracefully to whichever subset is
 actually reachable on the current host rather than failing the whole run.
@@ -52,7 +52,7 @@ from mockingbird.species.speciesnet_candidate import (  # noqa: E402
 
 DEFAULT_MODEL_DIR = Path.home() / ".cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.3a/1"
 WINDOWS_IMPORTS_DIR = Path(
-    "/mnt/c/Users/zachk/AppData/Local/MockingBirdDev/userdata/data/media/imports"
+    "/mnt/c/Users/<user>/AppData/Local/MockingBirdDev/userdata/data/media/imports"
 )
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

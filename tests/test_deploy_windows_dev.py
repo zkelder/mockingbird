@@ -1276,7 +1276,7 @@ def test_launch_release_accepts_a_windows_style_acceptance_recording_dir_verbati
     `to_windows_path` that would visibly corrupt the value if it were
     (wrongly) called on this input at all."""
 
-    monkeypatch.setenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", r"C:\Users\zachk\AppData\Local\acceptance-recording")
+    monkeypatch.setenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", r"C:\Users\exampleuser\AppData\Local\acceptance-recording")
     bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
     release_dir = tmp_path / "releases" / "aaaaaaa"
     shutil.copytree(bundle, release_dir)
@@ -1297,7 +1297,7 @@ def test_launch_release_accepts_a_windows_style_acceptance_recording_dir_verbati
     calls = host.launch_release.calls  # type: ignore[attr-defined]
     assert (
         calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"]
-        == r"C:\Users\zachk\AppData\Local\acceptance-recording"
+        == r"C:\Users\exampleuser\AppData\Local\acceptance-recording"
     )
 
 
@@ -2291,10 +2291,10 @@ def test_resolve_storage_probe_target_windows_drive_path_on_posix_translates_via
     which then resolves exactly like any other absolute POSIX path --
     never the invoking shell's own CWD."""
 
-    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"
+    windows_style = r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceV12"
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
     fake_mount_root.mkdir(parents=True)
-    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
+    translated = str(fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
 
     def fake_translate(raw: str) -> str | None:
         assert raw == windows_style
@@ -2321,7 +2321,7 @@ def test_resolve_storage_probe_target_windows_drive_path_on_posix_fails_closed_w
 
     with pytest.raises(DeploymentError, match="wslpath"):
         resolve_storage_probe_target(
-            Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceV12"),
             is_native_windows=False, wsl_translate_fn=lambda _raw: None,
         )
 
@@ -2393,7 +2393,7 @@ def test_check_storage_headroom_fails_closed_for_windows_drive_path_under_posix_
 
     with pytest.raises(DeploymentError):
         check_storage_headroom(
-            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            dev_root=Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceV12"),
             acceptance_recorder_max_bytes=1_000_000_000,
             disk_usage_fn=_disk_usage_must_not_be_called,
             is_native_windows=False, wsl_translate_fn=lambda _raw: None,
@@ -2410,7 +2410,7 @@ def test_check_storage_headroom_windows_drive_path_translates_and_measures_the_r
 
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
     fake_mount_root.mkdir(parents=True)
-    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdX")
+    translated = str(fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdX")
     probed_paths: list[str] = []
 
     def fake_disk_usage(path: str) -> object:
@@ -2418,7 +2418,7 @@ def test_check_storage_headroom_windows_drive_path_translates_and_measures_the_r
         return _FakeUsage(total=100_000_000_000, free=50_000_000_000)
 
     check_storage_headroom(
-        dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdX"),
+        dev_root=Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdX"),
         acceptance_recorder_max_bytes=1_000_000_000,
         disk_usage_fn=fake_disk_usage,
         is_native_windows=False, wsl_translate_fn=lambda _raw: translated,
@@ -2446,10 +2446,10 @@ def test_main_resolves_a_windows_drive_dev_root_before_any_other_use(
     storage_probe_target` itself uses -- this test exercises `main()`
     itself via the cheap, side-effect-free `--status` branch."""
 
-    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdSomething"
+    windows_style = r"C:\Users\exampleuser\AppData\Local\MockingBirdSomething"
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
     fake_mount_root.mkdir(parents=True)
-    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdSomething")
+    translated = str(fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdSomething")
     captured: dict[str, object] = {}
 
     def fake_status_report(*, dev_root: Path, host: str, port: int, windows_host: object) -> str:
@@ -2484,7 +2484,7 @@ def test_main_fails_closed_for_a_windows_drive_dev_root_with_no_translation(
     monkeypatch.setitem(main.__globals__, "_wsl_translate_windows_path", lambda _raw: None)
 
     with pytest.raises(DeploymentError, match="wslpath"):
-        main(["--dev-root", r"C:\Users\zachk\AppData\Local\MockingBirdSomething", "--status"])
+        main(["--dev-root", r"C:\Users\exampleuser\AppData\Local\MockingBirdSomething", "--status"])
 
 
 # ---------------------------------------------------------------------------
