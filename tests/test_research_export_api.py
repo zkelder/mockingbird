@@ -134,7 +134,7 @@ async def test_darwin_core_export_dry_run_round_trips(client: httpx.AsyncClient)
 async def test_darwin_core_export_writes_real_files(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/research/export-darwin-core",
-        json={"site_name": "Example Yard", "latitude": 40.015, "longitude": -105.2705},
+        json={"site_name": "Example Yard", "latitude": 12.015, "longitude": -45.2705},
     )
     assert response.status_code == 201
     body = response.json()

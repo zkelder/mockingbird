@@ -357,7 +357,7 @@ Camtrap DP export with an explicit site override:
 
 ```bash
 python -m mockingbird export-camtrap-dp --site-name "Example Yard" \
-    --latitude 40.0150 --longitude -105.2705
+    --latitude 12.0150 --longitude -45.2705
 ```
 
 Conservation report for the last week:

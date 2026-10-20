@@ -32,7 +32,7 @@ packaging build, or version change. Acceptance: **ACCEPTED, classification A** (
 | `CONTRIBUTING.md` | Pointed to README sections that moved. | Repointed. |
 | Camera Node guide | Reviewed; consistent with the matrix (Pi 4 reference). | Unchanged. |
 | `README-FIRST.txt` (build script) | Reviewed; accurate (local data, network use, FFmpeg/BirdNET exclusions, uninstall). | Unchanged; no package rebuild needed. |
-| LICENSE / `THIRD_PARTY_NOTICES.md` | MIT holder "MockingBird contributors"; tests lock the MDv5a/BioCLIP/ffmpeg/BirdNET facts. | Held. |
+| LICENSE / `THIRD_PARTY_NOTICES.md` | MIT holder "Zac Kelder"; tests lock the MDv5a/BioCLIP/ffmpeg/BirdNET facts. | Held. |
 | Screenshots/assets | None committed besides PWA icons; no public site exists. | No action; none invented. |
 | Public-site/GitHub metadata | Only CI workflow existed. | Issue templates added; no site created. |
 | `src/mockingbird/api/main.py:750`, `docs/model-adapter-guardrails.md:9` | Still describe the product as "outdoor video intelligence". | Left: application code is out of scope; the guardrails doc is internal. Logged as a minor follow-up. |

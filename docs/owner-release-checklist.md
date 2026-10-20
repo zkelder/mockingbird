@@ -39,7 +39,7 @@ or trademark exists as of this document. See also
    or publish unsigned. Docs currently say unsigned (SmartScreen warning,
    checksum verification); change them if you sign.
 9. **Confirm the MIT licence holder line** in `LICENSE`
-   ("MockingBird contributors") is what you want published.
+   ("Zac Kelder") is what you want published.
 10. **Decide the BirdNET stance for the release** (never bundled; no supported
     route on the Windows ZIP) and take legal advice before any paid support,
     paid appliance or hosted offering touches the acoustic feature

@@ -248,12 +248,12 @@ def test_phase_37_product_shaped_scenario(repository: ProductRepository) -> None
     records = repository.prepare_ecological_submissions(
         PrepareEcologicalSubmissionsRequest(
             visit_ids=eligible_visit_ids, destination="inaturalist",
-            location=EcologicalLocationInput(choice="exact", latitude=40.015, longitude=-105.2705, place_name="Example Yard"),
+            location=EcologicalLocationInput(choice="exact", latitude=12.015, longitude=-45.2705, place_name="Example Yard"),
         )
     )
     assert len(records) == 7
     assert all(record.status == "prepared" for record in records)
-    assert all(record.location_choice == "exact" and record.location_latitude == 40.015 for record in records)
+    assert all(record.location_choice == "exact" and record.location_latitude == 12.015 for record in records)
 
     # --- Generate a real destination artifact/payload -----------------------
     export_result = repository.export_ecological_submissions(

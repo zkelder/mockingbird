@@ -2473,7 +2473,7 @@ def test_license_file_exists_with_correct_mit_text_and_copyright() -> None:
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
 
     assert text.startswith("MIT License")
-    assert "Copyright (c) 2026 MockingBird contributors" in text
+    assert "Copyright (c) 2026 Zac Kelder" in text
     # The canonical, unaltered MIT permission/warranty boilerplate -- the
     # identical text already reproduced (for MDv5a) in THIRD_PARTY_NOTICES.md,
     # confirming this repository treats this as its one standard MIT text.
