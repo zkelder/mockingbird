@@ -24,7 +24,7 @@ produce them.
 
 | | |
 |---|---|
-| Repository | `/home/zkelder/projects/mockingbird-active` |
+| Repository | `/home/<user>/projects/mockingbird-active` |
 | Branch | `main` |
 | HEAD at session start | `73dbcd4` ("Publish the Performance / Scale / Stability Closure v1 report and record it in release-execution-state.md") |
 | Schema at session start | **`v60`** |

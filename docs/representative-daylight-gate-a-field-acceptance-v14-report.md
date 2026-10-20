@@ -24,13 +24,13 @@ Verified directly (git, HTTP, filesystem) before any deployment:
 ## Conditions
 
 - Genuine representative daylight: session start 2026-09-05 13:51:55 EDT (Saturday), clear sky, full sun — confirmed both by system clock cross-check (WSL/Windows-host times agreed) and by direct visual inspection of an early independent-recorder frame (bright daylight feeder/yard scene, consistent with every prior accepted cohort's view).
-- Reference Camera Node reachable: LAN ping + SSH + HTTP health all confirmed (`node-76ec8e53ae586dd0`, `boot_id 4239527b-5622-425c-bed1-ae3074e191dd`, `self_test: passed`, `camera_available: true`, `pairing_required: true` i.e. no stale pairing owner).
+- Reference Camera Node reachable: LAN ping + SSH + HTTP health all confirmed (`node-<id>`, `boot_id 4239527b-5622-425c-bed1-ae3074e191dd`, `self_test: passed`, `camera_available: true`, `pairing_required: true` i.e. no stale pairing owner).
 - Physical camera available: real `picamera2` `ov64a40` sensor detected (`rpicam-hello --list-cameras`), 47.2°C, `throttled=0x0` (no thermal issue), 107GB free on the Pi.
 - Accepted Node build installed: manifest `git_commit 4c1be355386c4a38c130f2f9d0204a5447a5166b` confirmed an ancestor of accepted HEAD with **zero** `src/mockingbird_node/` commits landed since — current, accepted build.
 - Native-Windows Host available: `powershell.exe` interop smoke-tested working; Windows build 10.0.19045.
 - GPU/detector available: RTX 4060 Ti, 8188MiB total, CUDA driver 610.62, confirmed live in Observation's own `advanced` payload (`cuda_available: true`, `CUDAExecutionProvider` selected).
 - Windows storage headroom: C: drive 29.9GB free at preflight time (`getting_low` tier, `sufficient: true` against a 6.0GB recorder+reserve budget).
-- Correct Windows filesystem identity measured: storage preflight resolved to the real `C:\Users\zachk\AppData\Local` root (the corrected, WSL-path-based invocation convention — not the historical v12 wrong-filesystem defect).
+- Correct Windows filesystem identity measured: storage preflight resolved to the real `C:\Users\<user>\AppData\Local` root (the corrected, WSL-path-based invocation convention — not the historical v12 wrong-filesystem defect).
 - Lifecycle tooling ready: `field_acceptance_instance_lifecycle.py` fully exercised (`preflight`, `init`); one prior instance (`MockingBirdFieldAcceptanceV13`) freshly re-verified `SAFE_TO_RECLAIM` but its destructive `cleanup --destroy` was blocked by the session's own permission classifier — left alone (not required; storage was already sufficient).
 - Independent recorder ready: confirmed writing real JPEG frames within 8 seconds of Observation start (see "Independent recorder").
 - No conflicting Observation: fresh disposable instance, zero pre-existing Streams beyond the seeded demo (ignored per established precedent).
@@ -39,7 +39,7 @@ Verified directly (git, HTTP, filesystem) before any deployment:
 
 ## Build / compatibility / RTT
 
-- Deploy: `scripts/deploy_windows_dev.py --dev-root /mnt/c/Users/zachk/AppData/Local/MockingBirdFieldAcceptanceV14` (no skip flags — full GPU+BioCLIP closure), with `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR`/`_INTERVAL_MS=1000`/`_MAX_FRAMES=7200`/`_MAX_BYTES=4500000000` set from the first attempt (matching v13's own established recorder cadence exactly, for direct cross-cohort comparability). Deploy log: `DEPLOYED 1904421`.
+- Deploy: `scripts/deploy_windows_dev.py --dev-root /mnt/c/Users/<user>/AppData/Local/MockingBirdFieldAcceptanceV14` (no skip flags — full GPU+BioCLIP closure), with `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR`/`_INTERVAL_MS=1000`/`_MAX_FRAMES=7200`/`_MAX_BYTES=4500000000` set from the first attempt (matching v13's own established recorder cadence exactly, for direct cross-cohort comparability). Deploy log: `DEPLOYED 1904421`.
 - `field_acceptance_instance_lifecycle.py init`: `created_by_commit: 190442112556853ddd1295aab23f1844dc3f71f5`, `created_by_build_id: 0aab7627e3a0bb2a`.
 - `GET /api/product/instance`: `git_commit: 190442112556853ddd1295aab23f1844dc3f71f5` — **exact accepted-HEAD match**, the authoritative identity check per standing project convention. `GET /api/product/health`: `database_schema_version: 58`, `ready: true`.
 - `check_camera_node_compatibility.py --profile ordinary_monitoring`: `state: compatible`, `camera_available: true`.
@@ -314,8 +314,8 @@ The session's one confirmed false Visit (visit-009) received **no species claim 
 
 ## Storage
 
-- Requested root: `/mnt/c/Users/zachk/AppData/Local/MockingBirdFieldAcceptanceV14` (WSL-visible form of `C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV14`).
-- Resolved/probed root: `/mnt/c/Users/zachk/AppData/Local` (the real Windows C: drive — correct filesystem identity, using the corrected post-storage-preflight-fix convention).
+- Requested root: `/mnt/c/Users/<user>/AppData/Local/MockingBirdFieldAcceptanceV14` (WSL-visible form of `C:\Users\<user>\AppData\Local\MockingBirdFieldAcceptanceV14`).
+- Resolved/probed root: `/mnt/c/Users/<user>/AppData/Local` (the real Windows C: drive — correct filesystem identity, using the corrected post-storage-preflight-fix convention).
 - Filesystem identity: `filesystem_device_id: 71`, `platform: posix`, `resolution_method: direct`.
 - Starting free space: 29.9GB (`storage_health_tier: getting_low`, `sufficient: true` against a 6.0GB recorder+reserve budget).
 - Minimum free space during session: not separately sampled mid-session (no low-storage warning surfaced in any of the 22 checkpoints or 10 health-check polls).

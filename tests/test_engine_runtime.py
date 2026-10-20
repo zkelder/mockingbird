@@ -76,7 +76,7 @@ def _camera_node_config(**overrides: object) -> StreamLivePlaybackConfig:
     values: dict[str, object] = dict(
         stream_id=STREAM_ID, source_id="source-backyard-feeder", provider_key="camera_node",
         live_stream_url=None, live_stream_type="camera_node",
-        camera_node_base_address="http://192.168.1.50:8787", camera_node_credential="fixture-credential",
+        camera_node_base_address="http://192.168.1.23:8787", camera_node_credential="fixture-credential",
         camera_node_camera_id="cam-1", camera_node_id="node-1",
         camera_node_monitoring_profile_id="monitoring-profile", camera_node_evidence_profile_id="evidence-profile",
     )

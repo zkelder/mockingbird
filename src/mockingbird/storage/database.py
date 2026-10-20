@@ -43,7 +43,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 61
+CURRENT_DATABASE_SCHEMA_VERSION = 62
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1834,6 +1834,85 @@ def _migrate_to_durable_observation_intent(connection: Connection) -> None:
     )
 
 
+def _migrate_to_per_user_alert_acknowledgement(connection: Connection) -> None:
+    """Attention Integrity & Health Reliability v1 (schema 62): add
+    `product_alert_acknowledgements`, making alert read/dismiss per-user
+    while the alert condition, resolution, evidence and deduplication stay
+    on the shared, observatory-global `product_alerts` row.
+
+    Explicit treatment of the pre-v62 *global* acknowledgement (the
+    `product_alerts.read_at`/`dismissed_at` columns), chosen so an upgrade
+    neither silently resets anyone's inbox nor keeps sharing state:
+
+    * Every user that exists at migration time inherits the legacy state as
+      their own row. Before v62 each of them was shown exactly that global
+      state, so this preserves what every existing user already saw.
+    * The legacy columns are then cleared, so from v62 on nothing is shared:
+      a user created later starts with every current alert unread, like any
+      new account.
+    * When no user exists yet (an upgrade from a pre-identity database that
+      has not finished first-run setup), there is nobody to attribute the
+      state to. It is left in the legacy columns and adopted exactly once
+      by the bootstrap Administrator -- the pre-identity operator -- in
+      `ProductRepository.create_first_administrator`, which clears it.
+
+    `IF NOT EXISTS` plus table-existence guards for the same reasons the
+    schema-61 migration documents: a fresh database already has this table
+    from `create_all`, and a historical partial fixture can reach this step
+    before `product_alerts`/`users` exist, in which case `create_all`
+    creates the table moments later and there is no legacy state to move.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Per-user alert acknowledgement migration requires local SQLite storage."
+        )
+    existing_tables = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if "product_alerts" not in existing_tables or "users" not in existing_tables:
+        return
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS product_alert_acknowledgements (
+            alert_id VARCHAR NOT NULL REFERENCES product_alerts (id) ON DELETE CASCADE,
+            user_id VARCHAR NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            read_at DATETIME,
+            dismissed_at DATETIME,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (alert_id, user_id)
+        )
+        """
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_product_alert_acknowledgements_user "
+        "ON product_alert_acknowledgements (user_id, alert_id)"
+    )
+    user_count = connection.exec_driver_sql("SELECT COUNT(*) FROM users").scalar() or 0
+    if not user_count:
+        return
+    # `updated_at` takes the later of the two legacy timestamps: the moment
+    # the (then shared) acknowledgement last changed, not the upgrade time.
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO product_alert_acknowledgements
+            (alert_id, user_id, read_at, dismissed_at, updated_at)
+        SELECT product_alerts.id, users.id, product_alerts.read_at, product_alerts.dismissed_at,
+               COALESCE(MAX(product_alerts.read_at, product_alerts.dismissed_at),
+                        product_alerts.read_at, product_alerts.dismissed_at)
+        FROM product_alerts CROSS JOIN users
+        WHERE product_alerts.read_at IS NOT NULL OR product_alerts.dismissed_at IS NOT NULL
+        """
+    )
+    connection.exec_driver_sql(
+        "UPDATE product_alerts SET read_at = NULL, dismissed_at = NULL "
+        "WHERE read_at IS NOT NULL OR dismissed_at IS NOT NULL"
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1895,6 +1974,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     59: _migrate_to_place_feature_observation_links,
     60: _migrate_to_observation_history_indexes,
     61: _migrate_to_durable_observation_intent,
+    62: _migrate_to_per_user_alert_acknowledgement,
 }
 
 

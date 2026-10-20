@@ -15,7 +15,8 @@ import { MetricCard } from "../components/MetricCard";
 import { NotificationPreferences } from "../components/NotificationPreferences";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatBytes, formatLabel } from "../utils";
+import { StorageIntegrityPanel } from "../components/StorageIntegrityPanel";
+import { formatBytes, formatLabel, isPlaceholderInstant, userFacingErrorMessage } from "../utils";
 
 interface LocalDataPageProps {
   onOpenDashboard: () => void;
@@ -29,7 +30,12 @@ interface LocalDataPageProps {
 
 function formatBackupTime(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  // Imported recordings with no capture-time fact are anchored at 1970
+  // internally; never show that anchor as the "oldest" media date.
+  return isPlaceholderInstant(value) ? "Time not recorded" : date.toLocaleString();
 }
 
 function storageRequestKey(prefix: string) {
@@ -88,7 +94,7 @@ export function LocalDataPage({
   // storage-retention operation below, whose failures are the ones this
   // milestone's structured-error taxonomy actually touched.
   function applyError(caught: unknown, fallback: string): void {
-    setError(caught instanceof Error ? caught.message : fallback);
+    setError(userFacingErrorMessage(caught, fallback));
     setErrorDetail(caught instanceof ApiError ? caught.structuredError : undefined);
   }
 
@@ -102,7 +108,7 @@ export function LocalDataPage({
     try {
       setStatus(await apiClient.getLocalDataStatus());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load local data status.");
+      setError(userFacingErrorMessage(caught, "Could not load local data status."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -388,7 +394,7 @@ export function LocalDataPage({
       setIsConfirmingReset(false);
       setMessage("Sample walkthrough restored. Your real cameras and product data were preserved.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not reset demo data.");
+      setError(userFacingErrorMessage(caught, "Could not reset demo data."));
     } finally {
       setIsResetting(false);
     }
@@ -512,6 +518,14 @@ export function LocalDataPage({
                   </strong>
                 </div>
               )}
+              {connectionCopyFeedback ? <p role="status">{connectionCopyFeedback}</p> : null}
+              <p>Signing in is always required, on any device.</p>
+              {/* Everyday UX & Accessibility Closure v1: the launch command and
+                  network-posture explanation are reference material for the
+                  moment someone wants phone/remote access; the live status
+                  and URL above stay visible. */}
+              <details className="advanced-details">
+                <summary>How phone and remote access works</summary>
               {connectionInfo.is_loopback_only ? (
                 // UI/UX & First-Run Adoption v1: this said "Not enabled" and
                 // stopped there, with no way to act on it.
@@ -523,9 +537,8 @@ export function LocalDataPage({
                   This address then appears here. Signing in is still required.
                 </p>
               ) : null}
-              {connectionCopyFeedback ? <p role="status">{connectionCopyFeedback}</p> : null}
               <p>
-                Signing in is always required, on any device — enabling network access never weakens that. This
+                Enabling network access never weakens sign-in. This
                 device serves plain HTTP unless you add a reverse proxy for TLS, so only allow network access on a
                 WiFi you trust.
               </p>
@@ -534,6 +547,7 @@ export function LocalDataPage({
                 example Tailscale) — MockingBird does not require, and does not provide, a cloud relay. Publicly
                 forwarding this device's port on your router is not supported.
               </p>
+              </details>
             </section>
           ) : null}
 
@@ -834,6 +848,8 @@ export function LocalDataPage({
                 </div>
               </details>
             ) : null}
+
+            <StorageIntegrityPanel />
           </section>
 
           <section className="panel local-data-card">
@@ -1120,9 +1136,16 @@ export function LocalDataPage({
             </section>
           </details>
 
-          <section className="panel local-data-card">
-            <div className="section-heading">
+          {/* Everyday UX & Accessibility Closure v1: restoring the sample
+              walkthrough is occasional housekeeping, not an everyday setting,
+              so it is collapsed (still one click away, with its own confirm
+              step) rather than sitting open above Shut Down. */}
+          <details className="panel local-data-card advanced-details local-data-secondary">
+            <summary>
               <h2>Reset Demo Data</h2>
+              <span>Restore the sample walkthrough. Your real cameras and observations are kept.</span>
+            </summary>
+            <div className="section-heading">
               <StatusPill label="Local metadata only" tone="quiet" />
             </div>
             <p>
@@ -1163,7 +1186,7 @@ export function LocalDataPage({
                 </button>
               ) : null}
             </div>
-          </section>
+          </details>
 
           <section className="panel local-data-card">
             <div className="section-heading">

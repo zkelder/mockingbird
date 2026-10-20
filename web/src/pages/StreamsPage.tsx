@@ -53,7 +53,7 @@ import { EmptyState } from "../components/EmptyState";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface StreamsPageProps {
   streams: Stream[];
@@ -2018,7 +2018,7 @@ export function StreamsPage({
       } catch (caught) {
         if (isMounted) {
           setConnectionError(
-            caught instanceof Error ? caught.message : "Could not load source setup status.",
+            userFacingErrorMessage(caught, "Could not load source setup status."),
           );
         }
       }
@@ -2115,7 +2115,7 @@ export function StreamsPage({
       setSetupMessage("Camera renamed. Its Stream, Zones, and observations were preserved.");
     } catch (caught) {
       setCameraUpdateError(
-        caught instanceof Error ? caught.message : "Could not rename the camera.",
+        userFacingErrorMessage(caught, "Could not rename the camera."),
       );
     } finally {
       setIsUpdatingCamera(false);
@@ -2147,7 +2147,7 @@ export function StreamsPage({
       );
     } catch (caught) {
       setCameraUpdateError(
-        caught instanceof Error ? caught.message : "Could not update the camera.",
+        userFacingErrorMessage(caught, "Could not update the camera."),
       );
     } finally {
       setIsUpdatingCamera(false);
@@ -2173,7 +2173,7 @@ export function StreamsPage({
       setSetupMessage(result.message);
     } catch (caught) {
       setCameraUpdateError(
-        caught instanceof Error ? caught.message : "Could not remove sample data.",
+        userFacingErrorMessage(caught, "Could not remove sample data."),
       );
     } finally {
       setIsUpdatingCamera(false);
@@ -2197,7 +2197,7 @@ export function StreamsPage({
     } catch (caught) {
       setStreamPlaybackErrors((current) => ({
         ...current,
-        [streamId]: caught instanceof Error ? caught.message : "Could not load live view status.",
+        [streamId]: userFacingErrorMessage(caught, "Could not load live view status."),
       }));
       return null;
     }
@@ -2221,7 +2221,7 @@ export function StreamsPage({
           } catch (caught) {
             errors.push([
               stream.id,
-              caught instanceof Error ? caught.message : "Could not load live view status.",
+              userFacingErrorMessage(caught, "Could not load live view status."),
             ] as const);
           }
         }),
@@ -2254,7 +2254,7 @@ export function StreamsPage({
     } catch (caught) {
       setStreamMonitorErrors((current) => ({
         ...current,
-        [streamId]: caught instanceof Error ? caught.message : "Could not load monitoring status.",
+        [streamId]: userFacingErrorMessage(caught, "Could not load monitoring status."),
       }));
       return null;
     }
@@ -2278,7 +2278,7 @@ export function StreamsPage({
           } catch (caught) {
             errors.push([
               stream.id,
-              caught instanceof Error ? caught.message : "Could not load monitoring status.",
+              userFacingErrorMessage(caught, "Could not load monitoring status."),
             ] as const);
           }
         }),
@@ -2415,7 +2415,7 @@ export function StreamsPage({
       setWindowsCameraDiscovery({
         status: "failed",
         devices: [],
-        message: caught instanceof Error ? caught.message : "Could not detect Windows cameras.",
+        message: userFacingErrorMessage(caught, "Could not detect Windows cameras."),
         creates_truth: false,
       });
     } finally {
@@ -2473,7 +2473,7 @@ export function StreamsPage({
       }));
       setSetupMessage("Source setup metadata saved.");
     } catch (caught) {
-      setSetupError(caught instanceof Error ? caught.message : "Could not save source setup.");
+      setSetupError(userFacingErrorMessage(caught, "Could not save source setup."));
     } finally {
       setIsSavingSetup(false);
     }
@@ -2491,7 +2491,7 @@ export function StreamsPage({
       setMediaImageCountByStream(loaded.imageCountByStream);
     } catch (caught) {
       setMediaAssetsError(
-        caught instanceof Error ? caught.message : "Could not load saved Stream media.",
+        userFacingErrorMessage(caught, "Could not load saved Stream media."),
       );
     } finally {
       if (showLoading) {
@@ -2510,9 +2510,7 @@ export function StreamsPage({
       setSavedMediaRetentionReport(await apiClient.getSavedMediaRetentionReport());
     } catch (caught) {
       setSavedMediaRetentionError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not load storage guardrails.",
+        userFacingErrorMessage(caught, "Could not load storage guardrails."),
       );
     } finally {
       if (showLoading) {
@@ -2546,7 +2544,7 @@ export function StreamsPage({
       };
     } catch (caught) {
       const message =
-        caught instanceof Error ? caught.message : "Could not refresh saved images.";
+        userFacingErrorMessage(caught, "Could not refresh saved images.");
       setMediaAssetsError(message);
       setSavedMediaRetentionError(message);
       return {
@@ -2592,7 +2590,7 @@ export function StreamsPage({
       setTimelineReviewLabels(labels);
     } catch (caught) {
       setTimelineLifecycleError(
-        caught instanceof Error ? caught.message : "Could not load saved image status.",
+        userFacingErrorMessage(caught, "Could not load saved image status."),
       );
     } finally {
       if (showLoading) {
@@ -2621,9 +2619,7 @@ export function StreamsPage({
     } catch (caught) {
       setLocalDetectorAdapter(null);
       setLocalDetectorAdapterError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not load local detector readiness.",
+        userFacingErrorMessage(caught, "Could not load local detector readiness."),
       );
     } finally {
       if (showLoading) {
@@ -2652,7 +2648,7 @@ export function StreamsPage({
       setSetupReviews(Object.fromEntries(reviewEntries));
     } catch (caught) {
       setConnectionError(
-        caught instanceof Error ? caught.message : "Could not load source setup status.",
+        userFacingErrorMessage(caught, "Could not load source setup status."),
       );
     }
   }
@@ -2731,7 +2727,7 @@ export function StreamsPage({
         },
       });
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : "Could not test snapshot.";
+      const error = userFacingErrorMessage(caught, "Could not test snapshot.");
       setPreviewError(error);
       updateSourceHealthAction(sourceId, {
         lastSnapshotTest: {
@@ -2767,7 +2763,7 @@ export function StreamsPage({
       await saveStillImagePreviewForStream(sourceId, streamId);
       await refreshMediaAndStorage();
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : "Could not capture snapshot.";
+      const error = userFacingErrorMessage(caught, "Could not capture snapshot.");
       setPreviewSaveError(error);
       if (streamId) {
         updateSourceHealthAction(sourceId, {
@@ -2825,7 +2821,7 @@ export function StreamsPage({
       await refreshLifecycleAndStorage();
     } catch (caught) {
       setSnapshotProposalError(
-        caught instanceof Error ? caught.message : "Image analysis could not be created.",
+        userFacingErrorMessage(caught, "Image analysis could not be created."),
       );
     } finally {
       setIsCreatingSnapshotProposal(false);
@@ -2859,9 +2855,7 @@ export function StreamsPage({
       await refreshLifecycleAndStorage();
     } catch (caught) {
       setSnapshotProposalError(
-        caught instanceof Error
-          ? caught.message
-          : "Suggestion could not be sent to Review.",
+        userFacingErrorMessage(caught, "Suggestion could not be sent to Review."),
       );
     } finally {
       setIsConvertingSnapshotProposal(false);
@@ -2897,7 +2891,7 @@ export function StreamsPage({
       await refreshLifecycleAndStorage();
     } catch (caught) {
       setPreviewEvidenceError(
-        caught instanceof Error ? caught.message : "Could not create pending evidence.",
+        userFacingErrorMessage(caught, "Could not create pending evidence."),
       );
     } finally {
       setIsCreatingPreviewEvidence(false);
@@ -2936,9 +2930,7 @@ export function StreamsPage({
       await refreshLifecycleAndStorage();
     } catch (caught) {
       setPreviewPromotionError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not promote pending evidence to reviewable Event/Visit.",
+        userFacingErrorMessage(caught, "Could not promote pending evidence to reviewable Event/Visit."),
       );
     } finally {
       setIsPromotingPreviewEvidence(false);
@@ -3047,7 +3039,7 @@ export function StreamsPage({
     } catch (caught) {
       updateActivityAreaZoneDraft(key, {
         isSaving: false,
-        error: caught instanceof Error ? caught.message : "Could not mark this area.",
+        error: userFacingErrorMessage(caught, "Could not mark this area."),
       });
     }
   }
@@ -3223,7 +3215,7 @@ export function StreamsPage({
       return result;
     } catch (caught) {
       updateStreamMotionCheckState(stream.id, {
-        error: caught instanceof Error ? caught.message : "Could not check motion.",
+        error: userFacingErrorMessage(caught, "Could not check motion."),
         lastCheckedAt: new Date().toISOString(),
       });
       return null;
@@ -3401,7 +3393,7 @@ export function StreamsPage({
 
       scheduleSnapshotWatchTick(context, context.intervalSeconds * 1000);
     } catch (caught) {
-      const error = caught instanceof Error ? caught.message : "Snapshot watch failed.";
+      const error = userFacingErrorMessage(caught, "Snapshot watch failed.");
       stopSnapshotWatch("source_error", "error", "Snapshot watch stopped.", error);
     }
   }
@@ -3495,7 +3487,7 @@ export function StreamsPage({
     } catch (caught) {
       setStreamMonitorErrors((current) => ({
         ...current,
-        [stream.id]: caught instanceof Error ? caught.message : "Could not start monitoring.",
+        [stream.id]: userFacingErrorMessage(caught, "Could not start monitoring."),
       }));
     } finally {
       setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
@@ -3515,7 +3507,7 @@ export function StreamsPage({
     } catch (caught) {
       setStreamMonitorErrors((current) => ({
         ...current,
-        [stream.id]: caught instanceof Error ? caught.message : "Could not stop monitoring.",
+        [stream.id]: userFacingErrorMessage(caught, "Could not stop monitoring."),
       }));
     } finally {
       setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
@@ -3543,7 +3535,7 @@ export function StreamsPage({
       setStreamMonitorErrors((current) => ({
         ...current,
         [stream.id]:
-          caught instanceof Error ? caught.message : "Could not create review activity.",
+          userFacingErrorMessage(caught, "Could not create review activity."),
       }));
     } finally {
       setStreamMonitorReviewLoading((current) => ({ ...current, [stream.id]: false }));
@@ -3595,7 +3587,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
-          caught instanceof Error ? caught.message : "Image analysis could not be created.",
+          userFacingErrorMessage(caught, "Image analysis could not be created."),
       });
     } finally {
       updateTimelineActionState(asset.id, { isCreatingProposal: false });
@@ -3633,7 +3625,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
-          caught instanceof Error ? caught.message : "Suggestion could not be sent to Review.",
+          userFacingErrorMessage(caught, "Suggestion could not be sent to Review."),
       });
     } finally {
       updateTimelineActionState(asset.id, { isConvertingProposal: false });
@@ -3681,7 +3673,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         localDetectorError:
-          caught instanceof Error ? caught.message : "Local detector run failed.",
+          userFacingErrorMessage(caught, "Local detector run failed."),
       });
     } finally {
       updateTimelineActionState(asset.id, { isRunningLocalDetector: false });
@@ -3722,7 +3714,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         evidenceError:
-          caught instanceof Error ? caught.message : "Review context could not be created.",
+          userFacingErrorMessage(caught, "Review context could not be created."),
       });
     } finally {
       updateTimelineActionState(asset.id, { isCreatingEvidence: false });
@@ -3763,7 +3755,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         promotionError:
-          caught instanceof Error ? caught.message : "Review item could not be created.",
+          userFacingErrorMessage(caught, "Review item could not be created."),
       });
     } finally {
       updateTimelineActionState(asset.id, { isPromotingEvidence: false });
@@ -3789,7 +3781,7 @@ export function StreamsPage({
       requestPayload = buildFolderPreviewRequest();
     } catch (caught) {
       setFolderPreviewError(
-        caught instanceof Error ? caught.message : "Folder import preview settings are invalid.",
+        userFacingErrorMessage(caught, "Folder import preview settings are invalid."),
       );
       return;
     }
@@ -3813,7 +3805,7 @@ export function StreamsPage({
       setFolderPreviewResult(result);
     } catch (caught) {
       setFolderPreviewError(
-        caught instanceof Error ? caught.message : "Could not preview folder import.",
+        userFacingErrorMessage(caught, "Could not preview folder import."),
       );
     } finally {
       setIsPreviewingFolderImport(false);
@@ -3838,7 +3830,7 @@ export function StreamsPage({
       previewOptions = buildFolderPreviewRequest();
     } catch (caught) {
       setFolderImportError(
-        caught instanceof Error ? caught.message : "Folder import settings are invalid.",
+        userFacingErrorMessage(caught, "Folder import settings are invalid."),
       );
       return;
     }
@@ -3869,7 +3861,7 @@ export function StreamsPage({
       await loadMediaAssets({ showLoading: false });
     } catch (caught) {
       setFolderImportError(
-        caught instanceof Error ? caught.message : "Could not import previewed folder files.",
+        userFacingErrorMessage(caught, "Could not import previewed folder files."),
       );
     } finally {
       setIsImportingFolderMedia(false);
@@ -3900,7 +3892,7 @@ export function StreamsPage({
     } catch (caught) {
       setFolderEvidenceDryRunRequest(null);
       setFolderEvidenceDryRunError(
-        caught instanceof Error ? caught.message : "Could not dry-run evidence handoff.",
+        userFacingErrorMessage(caught, "Could not dry-run evidence handoff."),
       );
     } finally {
       setIsDryRunningFolderEvidence(false);
@@ -3942,7 +3934,7 @@ export function StreamsPage({
       await refreshLifecycleAndStorage();
     } catch (caught) {
       setFolderEvidenceBatchCreateError(
-        caught instanceof Error ? caught.message : "Could not create pending evidence batch.",
+        userFacingErrorMessage(caught, "Could not create pending evidence batch."),
       );
     } finally {
       setIsCreatingFolderEvidenceBatch(false);
@@ -3980,7 +3972,7 @@ export function StreamsPage({
       setFolderEvidenceErrors((current) => ({
         ...current,
         [item.media_asset_id]:
-          caught instanceof Error ? caught.message : "Could not create pending evidence.",
+          userFacingErrorMessage(caught, "Could not create pending evidence."),
       }));
     } finally {
       setFolderEvidenceLoadingId(null);
@@ -4012,7 +4004,7 @@ export function StreamsPage({
       setRecordedMediaAnalysisErrors((current) => ({
         ...current,
         [item.media_asset_id]:
-          caught instanceof Error ? caught.message : "Could not analyze this recorded video.",
+          userFacingErrorMessage(caught, "Could not analyze this recorded video."),
       }));
     } finally {
       setRecordedMediaAnalysisLoadingId(null);
@@ -4041,7 +4033,7 @@ export function StreamsPage({
       setRecordedAudioAnalysisErrors((current) => ({
         ...current,
         [item.media_asset_id]:
-          caught instanceof Error ? caught.message : "Could not analyze this recorded audio.",
+          userFacingErrorMessage(caught, "Could not analyze this recorded audio."),
       }));
     } finally {
       setRecordedAudioAnalysisLoadingId(null);
@@ -4102,7 +4094,7 @@ export function StreamsPage({
           } catch (caught) {
             errorEntries.push([
               stream.id,
-              caught instanceof Error ? caught.message : "Could not load Stream Zones.",
+              userFacingErrorMessage(caught, "Could not load Stream Zones."),
             ] as const);
           }
         }),
@@ -4159,7 +4151,7 @@ export function StreamsPage({
       } catch (caught) {
         if (isMounted) {
           setPreviewZonesError(
-            caught instanceof Error ? caught.message : "Could not load Stream Zones.",
+            userFacingErrorMessage(caught, "Could not load Stream Zones."),
           );
         }
       }

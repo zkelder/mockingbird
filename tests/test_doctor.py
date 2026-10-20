@@ -21,7 +21,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
 
 from mockingbird import runtime_state
 from mockingbird.diagnostics import doctor
@@ -396,36 +395,36 @@ def test_interpret_storage_missing_root_before_first_launch_is_informational() -
 
 
 def test_interpret_storage_missing_root_on_established_install_is_blocking() -> None:
-    """A genuinely established install: the database exists *and* at least
-    one Source has been configured, so something has actually had a reason
-    to write to the media root by now."""
+    """A genuinely established install: the database exists *and* media has
+    actually been recorded into the media root, so its absence is lost
+    evidence storage."""
 
     result = doctor._interpret_storage(
-        {"media_root_exists": False, "has_any_source_configured": True}, database_exists=True
+        {"media_root_exists": False, "has_any_media_recorded": True}, database_exists=True
     )
     assert result.status == DoctorStatus.FAIL
     assert result.recoverability == DoctorRecoverability.BLOCKING
 
 
-def test_interpret_storage_missing_root_before_any_camera_added_is_informational() -> None:
-    """Release Reliability & First-Run Recovery v1: the exact disclosed
-    defect this milestone closes. `database_exists=True` alone (the
-    database file is created at server-process startup, before the
-    first-run wizard's Storage step is ever reached -- see
-    `runtime_state.prepare_runtime_state`) must not, by itself, make a
-    perfectly normal pre-wizard-completion instance report a `FAIL`/
-    `BLOCKING` "genuine problem." Nothing has had a reason to write to the
-    media root yet, since no Source/camera has been configured."""
+def test_interpret_storage_missing_root_before_first_media_write_is_informational() -> None:
+    """Release Reliability & First-Run Recovery v1, then Native-Windows
+    Runtime Shutdown & Listener Resilience Correction v1 (F-3):
+    `database_exists=True` alone (the database file is created at
+    server-process startup, before the first-run wizard's Storage step is
+    ever reached -- see `runtime_state.prepare_runtime_state`) must not
+    make a normal new install report a `FAIL`/`BLOCKING` "genuine problem."
+    Nothing has written to the media root yet, whether or not a Source is
+    configured."""
 
     result = doctor._interpret_storage(
-        {"media_root_exists": False, "has_any_source_configured": False}, database_exists=True
+        {"media_root_exists": False, "has_any_media_recorded": False}, database_exists=True
     )
     assert result.status == DoctorStatus.PASS
     assert result.recoverability == DoctorRecoverability.INFORMATIONAL
 
 
-def test_interpret_storage_missing_root_with_unconfirmed_source_state_is_informational() -> None:
-    """`has_any_source_configured is None` (the database was unreachable
+def test_interpret_storage_missing_root_with_unconfirmed_media_state_is_informational() -> None:
+    """`has_any_media_recorded is None` (the database was unreachable
     when this fact was gathered, e.g. no `Engine` at all) must never be
     treated as "yes, established" -- that would risk escalating to
     BLOCKING on a fact this check could not actually confirm. Absent
@@ -437,37 +436,84 @@ def test_interpret_storage_missing_root_with_unconfirmed_source_state_is_informa
     assert result.recoverability == DoctorRecoverability.INFORMATIONAL
 
 
-def test_gather_has_any_source_configured_reflects_real_database_state(tmp_path: Path) -> None:
-    """`_gather_has_any_source_configured` against a real SQLite database
-    (not a hand-built dict) -- `False` right after a bare `ProductRepository`
-    construction (confirmed directly: this already seeds one walkthrough
-    demo Source, `source-backyard-demo`, which must not itself count as "a
-    real camera is configured"), `True` the moment a real one is added, and
-    `None` with no engine at all."""
+def _storage_check(report: DoctorReport):
+    return next(check for check in report.checks if check.code == DoctorCheckCode.STORAGE)
 
+
+def _runtime_home_with_configured_source_and_no_media_root(tmp_path: Path, monkeypatch) -> tuple[Path, ProductRepository]:
+    """The exact state default first-run onboarding leaves behind: a real
+    database with the user's own Source configured, but nothing has ever
+    written media yet, so the lazily created media root does not exist."""
+
+    for name in (DB_URL_ENV_VAR, "MOCKINGBIRD_MEDIA_ROOT", "MOCKINGBIRD_HOME"):
+        monkeypatch.delenv(name, raising=False)
     db_path = tmp_path / "data" / "mockingbird.sqlite3"
-    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    media_root = tmp_path / "data" / "media" / "imports"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
+    assert not media_root.exists()
+    return media_root, repository
+
+
+def test_doctor_storage_after_onboarding_before_first_media_write_is_informational(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Native-Windows Runtime Shutdown & Listener Resilience Correction v1,
+    F-3: a configured Source with no media written yet is a healthy new
+    install, not a missing-storage failure."""
+
+    _media_root, repository = _runtime_home_with_configured_source_and_no_media_root(tmp_path, monkeypatch)
     try:
-        engine = create_database_engine(f"sqlite:///{db_path}")
-        try:
-            with engine.connect() as connection:
-                assert connection.execute(
-                    select(CameraSourceModel.id)
-                ).first() is not None, "expected the seeded demo Source to be present"
-            assert doctor._gather_has_any_source_configured(engine) is False
-            repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
-            assert doctor._gather_has_any_source_configured(engine) is True
-        finally:
-            engine.dispose()
-        assert doctor._gather_has_any_source_configured(None) is None
+        report = run_doctor(runtime_home=tmp_path)
     finally:
         repository.close()
 
+    storage = _storage_check(report)
+    assert storage.status == DoctorStatus.PASS
+    assert storage.recoverability == DoctorRecoverability.INFORMATIONAL
+    assert report.overall_status != DoctorOverallStatus.UNHEALTHY
 
-def test_gather_storage_reports_has_any_source_configured(tmp_path: Path) -> None:
-    """`_gather_storage` itself surfaces the new fact end to end (not only
-    the helper in isolation), reusing the exact `engine` the Database check
-    already opened -- never a second connection."""
+
+def test_doctor_storage_missing_media_root_with_recorded_media_is_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """F-3's other half: once media has actually been recorded, a missing
+    media root is lost evidence storage and must stay a real failure."""
+
+    from mockingbird.storage.models import MediaAssetModel
+
+    media_root, repository = _runtime_home_with_configured_source_and_no_media_root(tmp_path, monkeypatch)
+    try:
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-recorded", source_id=None, stream_id="stream-for-storage-check",
+                        filename="bird.jpg", content_type="image/jpeg", media_type="image",
+                        local_path=str(media_root / "bird.jpg"), original_filename="bird.jpg",
+                        file_size_bytes=20, created_at=datetime.now(UTC),
+                    )
+                )
+        report = run_doctor(runtime_home=tmp_path)
+    finally:
+        repository.close()
+
+    storage = _storage_check(report)
+    assert storage.status == DoctorStatus.FAIL
+    assert storage.recoverability == DoctorRecoverability.BLOCKING
+    assert report.overall_status == DoctorOverallStatus.UNHEALTHY
+
+
+def test_gather_has_any_media_recorded_reflects_real_database_state(tmp_path: Path) -> None:
+    """`_gather_has_any_media_recorded` against a real SQLite database (not a
+    hand-built dict) -- `False` right after a bare `ProductRepository`
+    construction (whose seeded walkthrough demo data records no MediaAsset)
+    and after a real Source is configured, `True` once a MediaAsset is
+    recorded, and `None` with no engine at all -- surfaced end to end
+    through `_gather_storage`, reusing the exact `engine` the Database check
+    already opened."""
+
+    from mockingbird.storage.models import MediaAssetModel
 
     db_path = tmp_path / "data" / "mockingbird.sqlite3"
     media_root = tmp_path / "media"
@@ -475,17 +521,29 @@ def test_gather_storage_reports_has_any_source_configured(tmp_path: Path) -> Non
     try:
         engine = create_database_engine(f"sqlite:///{db_path}")
         try:
-            gathered = doctor._gather_storage(
-                media_root=media_root, database_directory=db_path.parent, engine=engine
-            )
-            assert gathered["has_any_source_configured"] is False
+            assert doctor._gather_has_any_media_recorded(engine) is False
             repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
             gathered = doctor._gather_storage(
                 media_root=media_root, database_directory=db_path.parent, engine=engine
             )
-            assert gathered["has_any_source_configured"] is True
+            assert gathered["has_any_media_recorded"] is False
+            with repository.session_factory() as session:
+                with session.begin():
+                    session.add(
+                        MediaAssetModel(
+                            id="media-asset-one", source_id=None, stream_id="stream-for-storage-check",
+                            filename="bird.jpg", content_type="image/jpeg", media_type="image",
+                            local_path=str(media_root / "bird.jpg"), original_filename="bird.jpg",
+                            file_size_bytes=20, created_at=datetime.now(UTC),
+                        )
+                    )
+            gathered = doctor._gather_storage(
+                media_root=media_root, database_directory=db_path.parent, engine=engine
+            )
+            assert gathered["has_any_media_recorded"] is True
         finally:
             engine.dispose()
+        assert doctor._gather_has_any_media_recorded(None) is None
     finally:
         repository.close()
 
@@ -519,27 +577,6 @@ def test_run_doctor_storage_check_is_informational_for_a_real_pre_wizard_instanc
     storage_check = next(check for check in report.checks if check.code == DoctorCheckCode.STORAGE)
     assert storage_check.status == DoctorStatus.PASS
     assert storage_check.recoverability == DoctorRecoverability.INFORMATIONAL
-
-
-def test_run_doctor_storage_check_is_blocking_once_a_source_exists_and_root_is_missing(
-    tmp_path: Path,
-) -> None:
-    """The genuine-problem case this milestone must continue to catch:
-    once a Source is configured, a still-missing media root is a real,
-    actionable defect, not first-run noise."""
-
-    data_dir = tmp_path / "data"
-    db_path = data_dir / "mockingbird.sqlite3"
-    media_root = data_dir / "media" / "imports"
-    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
-    repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
-    repository.close()
-    assert not media_root.exists()
-
-    report = run_doctor(runtime_home=tmp_path)
-    storage_check = next(check for check in report.checks if check.code == DoctorCheckCode.STORAGE)
-    assert storage_check.status == DoctorStatus.FAIL
-    assert storage_check.recoverability == DoctorRecoverability.BLOCKING
 
 
 def test_interpret_storage_not_writable_is_blocking() -> None:

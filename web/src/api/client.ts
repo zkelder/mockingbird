@@ -128,6 +128,10 @@ import type {
   SetupStateUpdate,
   SoundscapeSummaryRequest,
   SoundscapeSummaryResponse,
+  OrphanMediaScanResponse,
+  OrphanQuarantineHistoryResponse,
+  OrphanQuarantineResponse,
+  OrphanRestoreResponse,
   StorageCleanupHistoryResponse,
   StorageCleanupPreviewResponse,
   StorageCleanupResult,
@@ -290,8 +294,12 @@ import type {
   ZoneMutationResult,
   ZoneUpdate,
   CurrentUser,
+  CamtrapDpExportRequest,
+  CamtrapDpExportResponse,
   DarwinCoreExportRequest,
   DarwinCoreExportResponse,
+  ResearchExportRequest,
+  ResearchExportResponse,
   EcologicalDestinationInfo,
   EcologicalEligibilityPreviewRequest,
   EcologicalEligibilityPreviewResponse,
@@ -437,7 +445,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    // A successful status whose body is not JSON (a proxy/error page, or a
+    // truncated response) used to surface as the raw "Unexpected token '<'".
+    throw new ApiError(
+      "MockingBird sent a response this page could not read. Refresh the page and try again.",
+      response.status,
+    );
+  }
 }
 
 async function requestImage(path: string, payload: unknown): Promise<Blob> {
@@ -1509,7 +1526,13 @@ export const apiClient = {
   },
   getReviewQueueSummary: () =>
     request<ReviewQueueSummary>("/api/review-queue/summary"),
-  getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
+  // `realSourcesOnly` drops labels on the seeded demo Source's activity: use
+  // it wherever labels read as the user's own reviewed history. The raw
+  // (demo-inclusive) read stays the default for diagnostic surfaces.
+  getReviewLabels: (options: { realSourcesOnly?: boolean } = {}) =>
+    request<ReviewLabel[]>(
+      `/api/review-labels${options.realSourcesOnly ? "?real_sources_only=true" : ""}`,
+    ),
   searchActivityLibrary: (payload: ActivityLibrarySearchRequest) =>
     request<ActivityLibrarySearchResponse>("/api/activity-library/search", {
       method: "POST",
@@ -1810,6 +1833,24 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  scanOrphanMedia: () =>
+    request<OrphanMediaScanResponse>("/api/settings/storage-retention/orphan-media/scan", {
+      method: "POST",
+    }),
+  quarantineOrphanMedia: (relativePaths: string[]) =>
+    request<OrphanQuarantineResponse>("/api/settings/storage-retention/orphan-media/quarantine", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, relative_paths: relativePaths }),
+    }),
+  getOrphanMediaQuarantineHistory: () =>
+    request<OrphanQuarantineHistoryResponse>(
+      "/api/settings/storage-retention/orphan-media/quarantine-history",
+    ),
+  restoreOrphanMediaQuarantine: (batchId: string) =>
+    request<OrphanRestoreResponse>(
+      `/api/settings/storage-retention/orphan-media/quarantine-history/${encodeURIComponent(batchId)}/restore`,
+      { method: "POST" },
+    ),
   getStorageRetentionCleanupHistory: () =>
     request<StorageCleanupHistoryResponse>("/api/settings/storage-retention/cleanup-history"),
   restoreStorageRetentionCleanup: (batchId: string, idempotencyKey: string) =>
@@ -1986,6 +2027,34 @@ export const apiClient = {
       `/api/ecological/submissions/${encodeURIComponent(submissionId)}/record-result`,
       { method: "POST", body: JSON.stringify(payload) },
     ),
+  exportResearchDataset: (payload: ResearchExportRequest) =>
+    request<ResearchExportResponse>("/api/research/export", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  exportCamtrapDp: (payload: CamtrapDpExportRequest) =>
+    request<CamtrapDpExportResponse>("/api/research/export-camtrap-dp", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  // Authenticated, id-only retrieval of an already-generated export as a ZIP.
+  downloadResearchExport: async (exportId: string): Promise<Blob> => {
+    const response = await friendlyFetch(
+      `${API_BASE_URL}/api/research/exports/${encodeURIComponent(exportId)}/download`,
+      { credentials: "same-origin" },
+    );
+    if (response.status === 401) {
+      sessionExpiredListeners.forEach((listener) => listener());
+    }
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+      } catch {
+        // The status text is a safe fallback for a non-JSON response.
+      }
+      throw new ApiError(detail, response.status);
+    }
+    return response.blob();
+  },
   exportDarwinCore: (payload: DarwinCoreExportRequest) =>
     request<DarwinCoreExportResponse>("/api/research/export-darwin-core", {
       method: "POST", body: JSON.stringify(payload),

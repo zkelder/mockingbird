@@ -43,6 +43,7 @@ def _add_filter_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--taxon", action="append", dest="taxon_labels", default=None)
     parser.add_argument("--acquisition-scope", choices=["live", "offline", "both"], default="both")
     parser.add_argument("--collection-id", default=None)
+    parser.add_argument("--visit-id", action="append", dest="visit_ids", default=None)
 
 
 def _filters_from_args(args: argparse.Namespace) -> ResearchExportFilters:
@@ -54,6 +55,7 @@ def _filters_from_args(args: argparse.Namespace) -> ResearchExportFilters:
         taxon_labels=args.taxon_labels,
         acquisition_scope=args.acquisition_scope,
         collection_id=args.collection_id,
+        visit_ids=args.visit_ids,
     )
 
 
@@ -67,7 +69,7 @@ def run_export_research(argv: list[str] | None = None) -> int:
         ),
     )
     _add_filter_arguments(parser)
-    parser.add_argument("--include-media", action="store_true", help="Include media metadata rows (bytes are never duplicated).")
+    parser.add_argument("--include-media", action="store_true", help="Copy the eligible evidence media bytes into the bundle (media/ + media-bundle.csv).")
     parser.add_argument("--dry-run", action="store_true", help="Report what would be written without writing files.")
     parser.add_argument("--output-name", default=None)
     parser.add_argument("--json", action="store_true", help="Print the result as machine-readable JSON.")
@@ -94,6 +96,11 @@ def run_export_research(argv: list[str] | None = None) -> int:
         print(f"observations: {result.observation_count}")
         print(f"media: {result.media_count}")
         print(f"excluded: {result.excluded_count} {dict(result.excluded_reasons)}")
+        if result.media_bundle is not None:
+            bundle = result.media_bundle
+            print(f"media_bundled: {bundle.bundled}/{bundle.requested}  bytes: {bundle.total_bytes}")
+            for warning in bundle.warnings:
+                print(f"  warning: {warning}")
         print(f"dry_run: {result.dry_run}")
     return 0
 
@@ -107,7 +114,10 @@ def run_export_camtrap_dp(argv: list[str] | None = None) -> int:
         ),
     )
     _add_filter_arguments(parser)
-    parser.add_argument("--include-media", action="store_true")
+    parser.add_argument(
+        "--include-media", action="store_true",
+        help="Copy the eligible evidence media bytes into the package (media/ + media-bundle.csv).",
+    )
     parser.add_argument("--site-name", default=None, help="Explicit site/location name (never inferred).")
     parser.add_argument("--latitude", type=float, default=None, help="Explicit site latitude (never inferred).")
     parser.add_argument("--longitude", type=float, default=None, help="Explicit site longitude (never inferred).")

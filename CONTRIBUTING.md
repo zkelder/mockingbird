@@ -8,7 +8,8 @@ assumes that context rather than repeating it.
 
 ## Read this much before your first change
 
-1. [README.md](README.md) -- what MockingBird is and the current checkpoint.
+1. [README.md](README.md) -- what MockingBird is and what 1.0 supports, plus the
+   [support matrix](docs/support-matrix.md) and [developer setup](docs/developer-setup.md).
 2. [docs/product-doctrine.md](docs/product-doctrine.md) -- the non-negotiable
    truth model: detection/tracking are infrastructure; only explicit human
    correction creates reviewed truth.
@@ -37,8 +38,8 @@ cd web && npm ci && cd ..
 
 Optional extras (`classifier-bioclip`, `detector-megadetector`,
 `observation-onnx-cuda`) are for specific local model/GPU work only -- the
-core product and its test suite need none of them. See README.md's
-"Start the local app" section if you land here without that context.
+core product and its test suite need none of them. See
+[docs/developer-setup.md](docs/developer-setup.md) if you land here without that context.
 
 ## Run the app
 
@@ -76,7 +77,24 @@ python -m mockingbird support-bundle --output path/to/bundle.zip
 ```
 
 For frontend-only iteration, run the API and Vite dev server separately
-(see README.md's "Developer split mode").
+(see "Developer split mode" in [docs/developer-setup.md](docs/developer-setup.md)).
+
+## Your first test run
+
+No cameras, GPU, model weights, or network access are needed for the tiered
+gates; hardware- and model-dependent tests are opt-in or skip with a stated
+reason.
+
+```sh
+python -m pip install -e ".[test]"
+python scripts/verify_fast.py     # quick change gate
+python scripts/verify_core.py     # normal pre-PR gate; long (about half an hour on a WSL2 dev machine)
+```
+
+Clone outside your system temp directory (for example under your home
+directory). `tests/test_repository_isolation.py` treats anything under the
+temp directory as safe scratch space, so a checkout there makes two of its
+guard tests fail even though nothing is wrong.
 
 ## Run focused tests
 
@@ -99,13 +117,13 @@ for what each guarantees and exactly how long it takes on the reference
 development machine):
 
 ```sh
-python scripts/verify_fast.py   # Tier A: a couple of minutes
+python scripts/verify_fast.py   # Tier A: the quick change gate
 python scripts/verify_core.py   # Tier B: the normal milestone gate
 python scripts/verify_full.py   # Tier C: full release regression, reserve for RC/release-hardening checkpoints
 ```
 
 **Backend, the whole suite** (only when a change crosses many runtime
-boundaries -- it is large: 3,100+ tests; `scripts/verify_full.py` above is
+boundaries -- it is large: about 6,400 tests; `scripts/verify_full.py` above is
 the same thing with a name that states what it guarantees):
 
 ```sh

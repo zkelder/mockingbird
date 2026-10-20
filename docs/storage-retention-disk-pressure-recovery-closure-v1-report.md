@@ -28,7 +28,7 @@ All figures below were measured directly: `du`/`stat` on the WSL side, and a one
 | `models/` | 0.5 GB | 1% | Cached MDv5a/detector bundle sources. |
 | `dbcheck/` | 2.9 MB | ~0% | — |
 
-### WSL dev checkout (`/home/zkelder/projects/mockingbird-active`) and general dev-tool caches — informational; **not** on the `C:` drive (see "WSL / Windows boundary")
+### WSL dev checkout (`/home/<user>/projects/mockingbird-active`) and general dev-tool caches — informational; **not** on the `C:` drive (see "WSL / Windows boundary")
 
 | Consumer | Bytes | Note |
 |---|---|---|

@@ -122,7 +122,7 @@ Deliberately evaluated in the **viewer's own browser-local time**, not a stored 
 
 Confirmed and implemented exactly as the brief predicted: **delivery preferences are per-user; the underlying attention condition stays observatory-level**, unchanged from before this milestone (no `user_id` on `ProductAlertModel`). One fixed role rule is enforced server-side, not just in the UI: a Viewer never sees `review`/Needs Help attention at all (`_visible_alert_categories`), regardless of their own stored toggle — they cannot submit a correction, so there is nothing to act on, only something to be nagged by. Reviewer and Administrator see it per their own preference toggle.
 
-**Honest limitation, not fixed here:** `read_at`/`dismissed_at` remain global, shared columns — a pre-existing characteristic of `ProductAlertModel`, not something this milestone introduced. One user reading an alert does mark it read for every other user's badge too. Making read state genuinely per-user would mean a new per-`(user_id, alert_id)` table, a materially bigger schema change than this milestone's own scope; recorded as a real, bounded future opportunity.
+**Superseded 2026-09-30 by [Attention Integrity & Health Reliability v1](attention-integrity-health-reliability-v1-report.md), schema 62: read/dismiss is now per-user.** *Historical text follows.* **Honest limitation, not fixed here:** `read_at`/`dismissed_at` remain global, shared columns — a pre-existing characteristic of `ProductAlertModel`, not something this milestone introduced. One user reading an alert does mark it read for every other user's badge too. Making read state genuinely per-user would mean a new per-`(user_id, alert_id)` table, a materially bigger schema change than this milestone's own scope; recorded as a real, bounded future opportunity.
 
 ## Attention Center (Phase 19)
 
@@ -205,7 +205,7 @@ Recorded honestly as real, bounded future product opportunities — not release 
 
 - **Web Push** for a genuinely closed-browser interruption — deliberately deferred (see "PWA / browser notification decision"); would need VAPID/subscription persistence and a documented outbound-network/privacy posture change.
 - **Detector/model-unavailable Observatory Health attention** — Doctor already has the exact right three-way distinguishing logic; it has no `ProductAlert` wiring today.
-- **Per-user read/dismiss state** — today's global `read_at`/`dismissed_at` predate this milestone; a genuinely private per-viewer unread state would need a new per-`(user_id, alert_id)` table.
+- **Per-user read/dismiss state** (closed by Attention Integrity & Health Reliability v1, schema 62) — today's global `read_at`/`dismissed_at` predate this milestone; a genuinely private per-viewer unread state would need a new per-`(user_id, alert_id)` table.
 - **Precise per-taxon/per-Feature Place Story deep links** — today's `open_place_story` action scopes to a category group (wildlife/place/context); Place Story itself has no taxon/Feature filter UI to link into yet.
 - **"Off / Calm / More" preset simplification** — four explicit toggles were chosen over a three-tier preset for transparency; a future pass could offer both.
 - **A live diagnostics surface for attention-sync health** (candidate counts, last-run time, delivery failures) beyond the current structured log line.

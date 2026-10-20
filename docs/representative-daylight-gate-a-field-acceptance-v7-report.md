@@ -49,7 +49,7 @@ further work -- see "Decision" and the governing brief's own §34.
 - Weather (Open-Meteo, real current observation for the reference site's approximate
   coordinates): clear sky (cloud_cover 0%), 31.0°C, wind 3.0 km/h (calm, gusts 5.4 km/h),
   precipitation/rain 0.00mm, weather_code 0 (clear), is_day=1.
-- Reference Camera Node (`192.168.1.112:8787`): `status: available`, 8/8 cameras
+- Reference Camera Node (`<node-ip>:8787`): `status: available`, 8/8 cameras
   available, self-test passed, watchdog healthy (0 consecutive probe failures).
 - Pre-flight pairing state: Node was still paired to the leftover, never-cleanly-torn-
   down `MockingBirdFieldAcceptanceV6` disposable instance (process still running,

@@ -23,7 +23,7 @@ Verified directly, not assumed:
 
 | Fact | Expected | Observed |
 | --- | --- | --- |
-| Repository | `/home/zkelder/projects/mockingbird-active` | same |
+| Repository | `/home/<user>/projects/mockingbird-active` | same |
 | Branch | `main` | `main` |
 | HEAD | `d5dd1d9` | `d5dd1d9` |
 | Schema (source of truth) | `v60` | `CURRENT_DATABASE_SCHEMA_VERSION = 60` (`src/mockingbird/storage/database.py:46`) |
@@ -122,7 +122,7 @@ All facts below were read from the live systems, not assumed.
 | Python / service | 3.13.5, node service version `0.1.0` |
 | Camera | real `ov64a40` CSI sensor via libcamera/picamera2 (a 64 MP module), one real camera + one permanent `v4l2-no-camera` placeholder |
 | Pairing | pre-existing, `pairing_required: false` |
-| Network | ordinary LAN, Host `192.168.1.50` <-> Node `192.168.1.112:8787` |
+| Network | ordinary LAN, Host `<host-ip>` <-> Node `<node-ip>:8787` |
 
 **Date/time of the field session:** 2026-09-25, roughly 04:55Z-05:30Z
 (00:55-01:30 local, EDT).
@@ -148,7 +148,7 @@ Re-pairing would have destroyed the working credential for no new information.
 What *was* proven live on the accepted build:
 
 - the existing pairing authenticates -- the Host opened a real authenticated
-  analysis stream to the Node (`ESTAB 192.168.1.50:57833 -> 192.168.1.112:8787`);
+  analysis stream to the Node (`ESTAB <host-ip>:57833 -> <node-ip>:8787`);
 - configuration exchange works -- the Host resolved the paired camera and
   Stream and loaded the Observation Engine (`engine_load_duration_ms 9947.1`);
 - camera and Stream availability are real -- `available_camera_count: 1`,
@@ -486,7 +486,7 @@ MockingBird process:
 - listening socket bound to **`127.0.0.1:8000` only** -- loopback, not
   `0.0.0.0`;
 - internal loopback connections between its own workers;
-- **exactly one** off-box connection: `192.168.1.50 -> 192.168.1.112:8787`,
+- **exactly one** off-box connection: `<host-ip> -> <node-ip>:8787`,
   the Camera Node on the local LAN;
 - **zero connections to any non-private address.** No internet traffic.
 
@@ -746,7 +746,7 @@ Full record:
 
 **Both corrections were re-proven on this same real topology** -- the same
 native-Windows Host, the same reference Raspberry Pi Camera Node
-(`node-76ec8e53ae586dd0`), the same real `ov64a40` camera, the same real field
+(`node-<id>`), the same real `ov64a40` camera, the same real field
 database. Build under test `15691d9`, confirmed via the product's own
 `GET /api/product/instance`, not via any deploy helper's claim. The real field
 database migrated **v60 -> v61** during deployment with every count preserved

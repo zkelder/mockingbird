@@ -23,7 +23,7 @@ IGNORE_ZONE_ID = "zone-ignore-driveway-edge"
 OTHER_SOURCE_ID = "source-other-saved-preview"
 OTHER_STREAM_ID = "stream-other-saved-preview"
 OTHER_ZONE_ID = "zone-other-saved-preview"
-PRIVATE_PREVIEW_URL = "http://192.168.1.50/camera/path/still.jpg"
+PRIVATE_PREVIEW_URL = "http://192.168.1.23/camera/path/still.jpg"
 
 
 class FakeResponse:
@@ -78,7 +78,7 @@ def allow_private_lan_dns(monkeypatch: pytest.MonkeyPatch) -> None:
         try:
             return [ipaddress.ip_address(hostname)]
         except ValueError:
-            return [ipaddress.ip_address("192.168.1.50")]
+            return [ipaddress.ip_address("192.168.1.23")]
 
     monkeypatch.setattr(external_url_preview, "_resolve_host_addresses", resolve)
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
 import type { CurrentUser, LocalDataStatus, ObservationSessionStatus, SetupState, StorageSummary } from "../api/types";
 import { CameraSetupPage } from "../pages/CameraSetupPage";
+import { SignInPage } from "../pages/SignInPage";
 import { ObservationControlPanel } from "./ObservationControlPanel";
 import { formatBytes, parentDirectory } from "../utils";
 
@@ -44,6 +45,11 @@ export function OnboardingWizard({
   const [createdStreamId, setCreatedStreamId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Set when the wizard knows an Administrator already exists but this
+  // browser has no session (cleared cookie, expired session, another
+  // profile). Holds the saved step to resume at after signing in -- first-run
+  // account creation is never offered again once an Administrator exists.
+  const [signInResumeStep, setSignInResumeStep] = useState<WizardStep | null>(null);
 
   useEffect(() => {
     void apiClient
@@ -63,6 +69,9 @@ export function OnboardingWizard({
           try {
             await apiClient.getCurrentUser();
           } catch {
+            // Past "account" means an Administrator was already created, so
+            // the missing session needs sign-in, not account creation.
+            setSignInResumeStep(resumedStep);
             resumedStep = "account";
           }
         }
@@ -127,6 +136,20 @@ export function OnboardingWizard({
     return <div className="panel">Loading setup…</div>;
   }
 
+  if (signInResumeStep !== null) {
+    return (
+      <SignInPage
+        onSignedIn={(user) => {
+          onAccountCreated(user);
+          // advance() re-saves the step, so a wizard whose saved step was
+          // still "account" moves forward instead of looping on reload.
+          void advance(signInResumeStep);
+          setSignInResumeStep(null);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="onboarding-wizard page-stack">
       <section className="page-header">
@@ -142,6 +165,7 @@ export function OnboardingWizard({
       {step === "welcome" ? <WelcomeStep onContinue={() => void advance("account")} /> : null}
       {step === "account" ? (
         <AccountStep
+          onAdministratorExists={() => setSignInResumeStep("storage")}
           onCreated={(user) => {
             onAccountCreated(user);
             void advance("storage");
@@ -240,7 +264,13 @@ function WelcomeStep({ onContinue }: { onContinue: () => void }) {
   );
 }
 
-function AccountStep({ onCreated }: { onCreated: (user: CurrentUser) => void }) {
+function AccountStep({
+  onCreated,
+  onAdministratorExists,
+}: {
+  onCreated: (user: CurrentUser) => void;
+  onAdministratorExists: () => void;
+}) {
   const [displayName, setDisplayName] = useState("");
   const [loginIdentity, setLoginIdentity] = useState("");
   const [password, setPassword] = useState("");
@@ -259,6 +289,12 @@ function AccountStep({ onCreated }: { onCreated: (user: CurrentUser) => void }) 
       });
       onCreated(user);
     } catch (caught) {
+      // 409: an Administrator already exists (the account step was the
+      // saved step when the session was lost) -- offer sign-in instead.
+      if (caught instanceof ApiError && caught.status === 409) {
+        onAdministratorExists();
+        return;
+      }
       setError(
         caught instanceof ApiError ? caught.message : "Could not create your administrator account.",
       );

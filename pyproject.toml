@@ -25,7 +25,7 @@ name = "mockingbird"
 # `mockingbird.__init__._DEV_CHECKOUT_FALLBACK_VERSION`,
 # `mockingbird_node.__version__`, and `web/package.json`).
 version = "0.1.0"
-description = "Local-first outdoor video intelligence API."
+description = "Local-first wildlife observatory: cameras and recorded media become reviewed, trustworthy observations."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

@@ -105,11 +105,11 @@ def test_no_location_supplied_leaves_coordinates_and_geodetic_datum_none():
 
 
 def test_explicit_location_never_inferred_populates_coordinates_and_wgs84():
-    options = DarwinCoreMappingOptions(site_name="Example Yard", latitude=40.015, longitude=-105.2705)
+    options = DarwinCoreMappingOptions(site_name="Example Yard", latitude=12.015, longitude=-45.2705)
     archive = build_darwin_core_archive([_observation()], options=options)
     occ = archive.occurrences[0]
-    assert occ.decimal_latitude == 40.015
-    assert occ.decimal_longitude == -105.2705
+    assert occ.decimal_latitude == 12.015
+    assert occ.decimal_longitude == -45.2705
     assert occ.geodetic_datum == "WGS84"
     assert occ.locality == "Example Yard"
 

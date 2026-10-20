@@ -9,7 +9,7 @@ gaps in an existing diagnostic surface, not new capability.
 
 ## Starting state
 
-- **Repository:** `/home/zkelder/projects/mockingbird-active`, branch `main`.
+- **Repository:** `/home/<user>/projects/mockingbird-active`, branch `main`.
 - **Starting HEAD:** `d879251` (the reconciliation commit for
   Sustained-Activity Visit Admission Starvation & Stop-Finalization
   Correctness v1; its own implementation commit is `6f7bbb6`) -- matches
@@ -209,7 +209,7 @@ release, precisely, per this milestone's own explicit instruction:
 9. **Does Camera Node connectivity work?** Yes, and this is genuinely
    validated, not merely structural: this sandbox has real, working LAN
    reachability to the project's reference Camera Node
-   (`192.168.1.112:8787`) from this Linux environment, exercised repeatedly
+   (`<node-ip>:8787`) from this Linux environment, exercised repeatedly
    across many prior accepted milestones.
 
 **A real, working, Linux-only feature already exists and is not merely

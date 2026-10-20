@@ -93,11 +93,11 @@ def test_no_location_choice_leaves_lat_long_and_geoprivacy_blank():
 
 def test_exact_location_choice_maps_to_open_geoprivacy_with_the_real_coordinate():
     row = submission_candidate_to_inaturalist_row(
-        _candidate(location=LocationSelection(choice="exact", latitude=40.015, longitude=-105.2705))
+        _candidate(location=LocationSelection(choice="exact", latitude=12.015, longitude=-45.2705))
     )
     assert row["geoprivacy"] == "open"
-    assert row["latitude"] == "40.015000"
-    assert row["longitude"] == "-105.270500"
+    assert row["latitude"] == "12.015000"
+    assert row["longitude"] == "-45.270500"
 
 
 def test_coarse_location_choice_maps_to_obscured_but_still_carries_the_real_coordinate():

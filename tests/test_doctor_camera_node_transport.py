@@ -195,7 +195,7 @@ def test_run_doctor_surfaces_a_real_paired_transport_source(tmp_path: Path) -> N
             SourceProviderConfigurationUpdate(
                 provider_key="camera_node",
                 config={
-                    "node_base_address": "http://192.168.1.50:8787",
+                    "node_base_address": "http://192.168.1.23:8787",
                     "node_credential": "pairing-credential-value",
                     "node_transport_credential": "transport-credential-value",
                     "node_camera_id": "cam-1",

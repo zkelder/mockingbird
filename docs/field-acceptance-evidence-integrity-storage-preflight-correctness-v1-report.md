@@ -353,7 +353,7 @@ pre-fix code:
   it under the invoking shell's own current working directory (this repo
   checkout). That resolved (nonexistent) path's own `.parent` is exactly
   the repo checkout itself, which *does* exist -- so `probe_target`
-  silently became `/home/zkelder/projects/mockingbird-active`, and
+  silently became `/home/<user>/projects/mockingbird-active`, and
   `shutil.disk_usage` measured the WSL virtual disk (692GB/1TB free per
   v12's own report) instead of the real Windows C: drive (~7-8GB free at
   the time).
@@ -386,7 +386,7 @@ pre-fix code:
 
 Reproduced directly against the real, unfixed logic (see "Storage
 RED->GREEN evidence," below): given the exact string
-`"C:\Users\zachk\AppData\Local\MockingBirdDev"`, the pre-fix code
+`"C:\Users\<user>\AppData\Local\MockingBirdDev"`, the pre-fix code
 resolved `probe_target` to this repository's own checkout directory
 (device id 2096) -- confirmed by direct `stat`/code inspection to be a
 completely different filesystem than the real Windows C: drive (device
@@ -580,7 +580,7 @@ tested, and re-verified before proceeding to the real proofs:
    `test_main_fails_closed_for_a_windows_drive_dev_root_with_no_
    translation`) -- RED (reverted the one-line fix, reran): the captured
    `dev_root` was literally
-   `/home/zkelder/projects/mockingbird-active/C:\Users\...\X`; GREEN
+   `/home/<user>/projects/mockingbird-active/C:\Users\...\X`; GREEN
    after restoring it.
 2. **`reconcile_ledger` misreported a genuinely healthy, zero-activity
    artifact type as `PARTIAL`.** The real API honestly reports
@@ -655,11 +655,11 @@ tool under test:
     ----         ----
     482436247552 17120571392        # ~15.94 GiB free
 
-**2. Real, supported mounted path** (`/mnt/c/Users/zachk/AppData/Local/
+**2. Real, supported mounted path** (`/mnt/c/Users/<user>/AppData/Local/
 MockingBirdDev`, an existing directory):
 
     $ python scripts/field_acceptance_instance_lifecycle.py preflight \
-        --dev-root /mnt/c/Users/zachk/AppData/Local/MockingBirdDev --json
+        --dev-root /mnt/c/Users/<user>/AppData/Local/MockingBirdDev --json
     {
       "requested_root": ".../MockingBirdDev", "resolved_root": ".../MockingBirdDev",
       "probed_root": ".../MockingBirdDev", "resolution_method": "direct", "platform": "posix",
@@ -671,7 +671,7 @@ MockingBirdDev`, an existing directory):
    measurement drift on a live volume, not a different filesystem.
 
 **3. Fresh, nonexistent, nested target** under the same real mounted
-root (`/mnt/c/Users/zachk/AppData/Local/MockingBirdDev/NewFreshInstance
+root (`/mnt/c/Users/<user>/AppData/Local/MockingBirdDev/NewFreshInstance
 Probe/Deep/Nested`, three levels below the nearest existing directory):
 resolved `probed_root` to the real, existing
 `.../AppData/Local/MockingBirdDev` ancestor -- same device id 71 --
@@ -679,15 +679,15 @@ exactly the governing brief §15 contract, proven on the real filesystem,
 not just in a hermetic test.
 
 **4. The exact, previously-dangerous Windows-drive-string form**
-(`C:\Users\zachk\AppData\Local\MockingBirdDev`) -- v12's own literal
+(`C:\Users\<user>\AppData\Local\MockingBirdDev`) -- v12's own literal
 mistake, replayed for real:
 
     $ python scripts/field_acceptance_instance_lifecycle.py preflight \
-        --dev-root 'C:\Users\zachk\AppData\Local\MockingBirdDev' --json
+        --dev-root 'C:\Users\<user>\AppData\Local\MockingBirdDev' --json
     {
-      "requested_root": "C:\\Users\\zachk\\AppData\\Local\\MockingBirdDev",
-      "resolved_root": "/mnt/c/Users/zachk/AppData/Local/MockingBirdDev",
-      "probed_root": "/mnt/c/Users/zachk/AppData/Local/MockingBirdDev",
+      "requested_root": "C:\\Users\\<user>\\AppData\\Local\\MockingBirdDev",
+      "resolved_root": "/mnt/c/Users/<user>/AppData/Local/MockingBirdDev",
+      "probed_root": "/mnt/c/Users/<user>/AppData/Local/MockingBirdDev",
       "resolution_method": "translated_from_windows_drive_path", "platform": "posix",
       "filesystem_device_id": 71, "free_bytes": 17112948736, ...
     }
@@ -715,9 +715,9 @@ fabricating a path:
 **6. Confirmation the old bug's silent target and the real target are
 genuinely different filesystems** (`stat -c '%d %n'`, real values):
 
-    2096  /home/zkelder/projects/mockingbird-active   # what the old bug silently measured
+    2096  /home/<user>/projects/mockingbird-active   # what the old bug silently measured
     71    /mnt/c                                       # what it should have measured (and now does)
-    71    /mnt/c/Users/zachk/AppData/Local/MockingBirdDev
+    71    /mnt/c/Users/<user>/AppData/Local/MockingBirdDev
 
 Every real-world requirement of governing brief §17 is satisfied: values
 correspond within normal measurement drift, the previously-dangerous

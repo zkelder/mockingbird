@@ -1996,6 +1996,10 @@ export interface StreamVisitSummary {
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
   cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
+  // Owner-Only Release Polish & Acceptance v1 (O-1): false only when this
+  // Visit's times are the 1970 placeholder for a recording imported with no
+  // capture-time fact. Show "Capture time unknown" via `formatCaptureDateTime`.
+  capture_time_known?: boolean;
 }
 
 export interface DashboardVisitSummary extends StreamVisitSummary {
@@ -3379,6 +3383,8 @@ export interface ReviewQueueItem {
   evidence_count: number;
   is_demo_source: boolean;
   is_legacy_activity: boolean;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 // Review Queue Scale Closure v1. `GET /api/review-queue/page` is the
@@ -3765,7 +3771,10 @@ export type AlertActionType =
   | "open_storage_retention"
   | "open_wildlife_journal"
   | "open_place_story"
-  | "open_place_report";
+  | "open_place_report"
+  // Attention Integrity & Health Reliability v1: a model/runtime Observatory
+  // Health condition with no single affected Stream.
+  | "open_doctor";
 
 // Calm Attention & Notifications v1, Phase 2/3: the small, user-centered
 // taxonomy every `AlertCategory`/`AlertSeverity` pair presents as. Derived
@@ -3782,6 +3791,15 @@ export interface ProductAlertAction {
   taxon_label?: string | null;
   feature_id?: string | null;
   story_kind?: string | null;
+}
+
+export interface ProductAlertGroupMember {
+  alert_id: string;
+  visit_id: string;
+  stream_id?: string | null;
+  stream_name?: string | null;
+  source_id?: string | null;
+  source_name?: string | null;
 }
 
 export interface ProductAlert {
@@ -3805,6 +3823,7 @@ export interface ProductAlert {
   action: ProductAlertAction;
   attention_category: AttentionCategory;
   urgency: AttentionUrgency;
+  grouped_visits?: ProductAlertGroupMember[];
 }
 
 export interface ProductAlertListResponse {
@@ -3980,6 +3999,8 @@ export interface EventDetail {
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 // Multimodal Observation & Soundscape v1 (see docs/multimodal-observation-
@@ -4088,6 +4109,12 @@ export interface VisitDetail {
   review_state_token: string;
   dataset_ready: boolean;
   review_summary: string;
+  // Owner-Only Release Polish & Acceptance v1: see `StreamVisitSummary.
+  // capture_time_known` (O-1). `acquisition_type` says how this Visit was
+  // found -- offline analysis of an imported recording vs. live
+  // observation -- so the evidence panel can say so honestly (O-2).
+  capture_time_known?: boolean;
+  acquisition_type?: "recorded_video" | "continuous_live" | "unknown";
 }
 
 export interface VisitOrganizationState {
@@ -5041,6 +5068,8 @@ export interface WildlifeJournalRepresentative {
   display_name: string;
   observed_at: string;
   primary_evidence?: VisitEvidenceFrame | null;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 export interface WildlifeJournalRecentDay {
@@ -5054,6 +5083,9 @@ export interface WildlifeJournalLabelSummary {
   observation_count: number;
   first_observed_at: string;
   latest_observed_at: string;
+  // Owner-Only Release Polish & Acceptance v1 (O-1).
+  first_capture_time_known?: boolean;
+  latest_capture_time_known?: boolean;
   stream_count: number;
   zone_count: number;
   recent_activity: WildlifeJournalRecentDay[];
@@ -5135,6 +5167,8 @@ export interface WildlifeJournalObservation {
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
   cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
+  // Same contract as `StreamVisitSummary.capture_time_known`.
+  capture_time_known?: boolean;
 }
 
 export interface WildlifeJournalGallery {
@@ -5904,6 +5938,20 @@ export interface PlaceBiodiversitySummaryResponse {
   warnings: string[];
 }
 
+export interface ProductHealthAttentionSync {
+  status: "pending" | "healthy" | "failing";
+  running: boolean;
+  poll_interval_seconds: number;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  consecutive_failure_count: number;
+  success_count: number;
+  failure_count: number;
+}
+
 export interface ProductHealthStatus {
   app_version: string;
   ready: boolean;
@@ -5933,6 +5981,10 @@ export interface ProductHealthStatus {
     status: "not_configured" | "healthy" | "degraded" | "model_unavailable" | "microphone_unavailable";
     detail: string;
   };
+  // Attention Integrity & Health Reliability v1: whether background alert
+  // reconciliation is working, so "no alerts" can be told apart from
+  // "alert reconciliation is failing." Never a factor in `ready`.
+  attention_sync?: ProductHealthAttentionSync | null;
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;
   // Release Engineering Foundation v1: set only when this running process
@@ -6031,6 +6083,13 @@ export type PlaceStoryEventKind =
 
 export type PlaceStoryImportance = "major" | "notable";
 
+export interface PlaceStorySourceContribution {
+  source_id: string;
+  source_name: string;
+  visit_id: string;
+  source_archived: boolean;
+}
+
 export interface PlaceStoryEntry {
   id: string;
   kind: PlaceStoryEventKind;
@@ -6050,6 +6109,8 @@ export interface PlaceStoryEntry {
   zone_name?: string | null;
   source_id?: string | null;
   detail_refs: Record<string, string>;
+  source_scope?: "place_level" | "single_source" | "multiple_sources";
+  contributions?: PlaceStorySourceContribution[];
 }
 
 export interface PlaceStoryResponse {
@@ -6217,6 +6278,62 @@ export interface ResearchExportFiltersInput {
   taxon_labels?: string[] | null;
   acquisition_scope?: "live" | "offline" | "both";
   collection_id?: string | null;
+  // Narrows the in-scope Visits (never widens); a deep-linked Visit is still
+  // resolved through the ordinary eligibility boundary.
+  visit_ids?: string[] | null;
+}
+
+// Research Export & Ecological Workflow Completion v1.
+export interface ResearchMediaBundleSummary {
+  requested: number;
+  bundled: number;
+  omitted: number;
+  omitted_reasons: Record<string, number>;
+  total_bytes: number;
+  warnings: string[];
+}
+
+export interface ResearchExportRequest {
+  filters?: ResearchExportFiltersInput;
+  include_media?: boolean;
+  dry_run?: boolean;
+  output_name?: string | null;
+}
+
+export interface ResearchExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  observation_count: number;
+  media_count: number;
+  excluded_count: number;
+  excluded_reasons: Record<string, number>;
+  media_bundle?: ResearchMediaBundleSummary | null;
+  dry_run: boolean;
+}
+
+export interface CamtrapDpExportRequest {
+  filters?: ResearchExportFiltersInput;
+  include_media?: boolean;
+  site_name?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  include_machine_classifications?: boolean;
+  dry_run?: boolean;
+  output_name?: string | null;
+}
+
+export interface CamtrapDpExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  profile_version: string;
+  deployment_count: number;
+  media_count: number;
+  observation_count: number;
+  validation: { valid: boolean; errors: string[]; warnings: string[] };
+  media_bundle?: ResearchMediaBundleSummary | null;
+  dry_run: boolean;
 }
 
 export interface EcologicalEligibilityPreviewRequest {
@@ -6324,4 +6441,66 @@ export interface DarwinCoreExportResponse {
   schema_version: string;
   occurrence_count: number;
   dry_run: boolean;
+}
+
+// Orphan Media Integrity & Recovery v1: file -> database storage integrity.
+export interface OrphanMediaFinding {
+  relative_path: string;
+  size_bytes: number;
+  modified_at: string;
+  kind: "unowned" | "unsafe_entry";
+}
+
+export interface OrphanMediaScanResponse {
+  status: "clean" | "orphans_found" | "incomplete";
+  complete: boolean;
+  scanned_at: string;
+  files_examined: number;
+  owned_files: number;
+  orphan_count: number;
+  orphan_bytes: number;
+  recently_written_count: number;
+  unsafe_entry_count: number;
+  excluded_counts: Record<string, number>;
+  incomplete_reasons: string[];
+  findings: OrphanMediaFinding[];
+  findings_truncated: boolean;
+  message: string;
+  changed_anything: boolean;
+  creates_review_truth: boolean;
+}
+
+export interface OrphanQuarantineResponse {
+  status: "completed" | "partial" | "failed" | "nothing_to_move";
+  batch_id: string | null;
+  moved_count: number;
+  skipped_count: number;
+  failed_count: number;
+  moved_bytes: number;
+  items: { relative_path: string; outcome: "moved" | "skipped" | "failed"; code: string | null }[];
+  message: string;
+  creates_review_truth: boolean;
+}
+
+export interface OrphanQuarantineBatch {
+  batch_id: string;
+  created_at: string;
+  item_count: number;
+  moved_count: number;
+  restored_count: number;
+  failed_count: number;
+  moved_bytes: number;
+}
+
+export interface OrphanQuarantineHistoryResponse {
+  batches: OrphanQuarantineBatch[];
+}
+
+export interface OrphanRestoreResponse {
+  status: "completed" | "partial" | "failed";
+  batch_id: string;
+  restored_count: number;
+  conflict_count: number;
+  failed_count: number;
+  message: string;
 }

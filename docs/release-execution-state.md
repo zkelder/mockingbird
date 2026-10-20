@@ -9,7 +9,79 @@ work is presently authorized.
 Claude's "next natural milestone" suggestions are advisory only. They do
 not authorize future work.
 
-## CURRENT PHASE: FEATURE FREEZE -- EVIDENCE, RELEASE READINESS & HOUSEKEEPING
+## CURRENT PHASE: PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST
+
+**Owner strategy decision, 2026-09-29 -- Final Product Release Scope
+Reconciliation v1:** the accepted `0.1.0` artifact is **not** being
+published. The first public MockingBird product release is targeted as
+**`1.0.0`**, after all named roadmap work that can be responsibly
+implemented and meaningfully validated without real users or unavailable
+physical hardware is complete. Candidate source `d7e61c1` / ZIP
+`75d998f7…` remains an accepted internal baseline, not the final public
+release candidate. Feature freeze is reopened only for the promoted,
+software-completable queue in
+[final-product-release-scope-reconciliation-v1.md](final-product-release-scope-reconciliation-v1.md).
+Work whose requirements or acceptance depend on real users, field evidence,
+unavailable hardware, external credentials/institutions, legal action, or
+real demand remains externally gated rather than being simulated into a
+false claim. Gate G remains **waived, not passed**. This strategy record does
+not authorize a particular implementation milestone; §3 remains
+authoritative for authorization.
+
+**Audit completed and first milestone authorized, 2026-09-29 -- Pre-1.0
+Software Gap Audit & Contract Lock v1:** direct current-code inspection removed
+two stale promoted areas: Remote/Intermittent-WAN Transport Foundation v1
+already delivered resumable/idempotent chunk transport, bounded pacing/backlog,
+fault-injected outage/restart coverage, ledger, and low-level diagnostics; and
+evidence-honest stored-acoustic soundscape analytics already exist. The
+surviving queue is split into fourteen dependency-ordered milestones in
+[pre-1.0-software-gap-audit-contract-lock-v1-report.md](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
+The first bounded milestone, **Attention Integrity & Health Reliability v1**,
+was authorized by that audit and is now **ACCEPTED, classification A** (see
+§3). This documentation-only audit changed no product code, schema, version,
+package, artifact, or accepted capability.
+
+**Accepted 2026-10-01 (scheduler reconciliation, with Everyday UX &
+Accessibility Closure v1):** *Attention Integrity & Health Reliability v1* is
+accepted at classification **A**: HEAD `c146eff`, schema `v62`, version
+`0.1.0`. Its recorded validation is Tier 2 affected set 1671 passed, Core
+6278 passed / 0 failed, clean production build, complete default browser
+suite 203/203 (not re-run by this reconciliation). The second queued
+milestone, *Everyday UX & Accessibility Closure v1*, was then authorized,
+executed, and closed -- see §3. Current authorization is **NONE -- GLOBAL
+RECONCILIATION REQUIRED**.
+
+**Executed 2026-10-18 -- Final Release Hardening & Launch Candidate v1
+(owner-authorized; pending ChatGPT sequencing and owner acceptance):** see
+[final-release-hardening-launch-candidate-v1-report.md](final-release-hardening-launch-candidate-v1-report.md).
+Release-candidate source commit **`1410c1b`**, schema `v62` and version `0.1.0`
+both unchanged (no bump; the release version remains an owner decision). Full
+backend gate at `7f7809a`: 6420 passed / 1 failed -- the failure was a
+test-only time bomb (hard-coded 2026-08-19 `NOW` vs. a 45-day region TTL),
+fixed in `08f5644`; browser suites 252/252; frontend type-check and production
+build clean. The Windows ZIP (SHA-256 `88353648d7626ede75ea946393f87b39df87866909f75932cd4a0ed99c2c6f9e`),
+`sbom.json`, `SHA256SUMS` and Camera Node wheel (`38dfac47…`, unchanged) were
+built from the clean commit and independently verified; the exact ZIP was
+accepted on native Windows on a disposable home (onboarding, auth, Evidence ->
+Review -> Confirmation -> Bird Log, verified backup, restore, UI shutdown,
+restart, Doctor HEALTHY 16/16) with the default field home byte-identical.
+One notice inaccuracy (bundled OpenCV FFmpeg libraries) was corrected in
+`1410c1b`. Limitations: the reference Camera Node was unreachable (no live
+Node/camera path exercised), no human interactive pass, the Full gate was not
+re-run after the two small commits. **Gate G remains owner-waived, not
+passed. Authorization remains NONE**; no push, tag, release, publication or
+subsequent milestone is made or authorized by this record.
+
+**Accepted 2026-10-06 (scheduler reconciliation; accepted delta only):**
+*Public Product, Deployment & Support Closure v1* is accepted at
+classification **A** by ChatGPT global sequencing: HEAD `b7f708c`, schema
+`v62` (unchanged), source version `0.1.0` (unchanged). Accepted validation:
+docs tier, including the completed targeted run of **125 passed** (no Core
+or browser run -- no runtime behavior changed). This reconciliation re-ran no
+validation and changed no application code, packaging, version, or schema.
+Current authorization remains **NONE -- ChatGPT GLOBAL SEQUENCING DECISION
+PENDING**. No feature-freeze declaration, Final 1.0 Hardening authorization,
+version bump, tag, push, or release is made by this record.
 
 **Corrected 2026-09-06 by Global Remaining Product-Development &
 Release-Queue Reconciliation v1** (see
@@ -813,10 +885,214 @@ FREEZE**. See §3 for the record and
 for the full evidence. **Authorization: CI & Core Validation Closure v1**
 while it runs; **NONE** on its closure.
 
+**Update, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1:** records the owner's acceptance of *CI &
+Core Validation Closure v1* at
+`149eb707ae6f13df29fc73334462d8d6d81aa124` **with the documented local
+transport-worker timing exception** (not a claim that the final-revision
+local run was green -- the report's §13 and §3/§14 here are corrected
+accordingly), and executes the next bounded milestone the owner
+authorized: freeze an exact source SHA, build a fresh **private** Windows
+Host + Camera Node release candidate from it with the existing build
+machinery (version `0.1.0`, schema `v61`, accepted MDv5a ONNX at threshold
+0.1, BioCLIP-2 policy, no model/threshold change, no BirdNET weights),
+independently verify it, and accept it on native Windows against a
+disposable instance. No public release, tag, signing key, visibility
+change or Gate G. Phase label unchanged: **FEATURE FREEZE**. See §3 for
+the record. **Authorization: Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1** while it runs; **NONE** on its closure.
+
+**Closure, 2026-09-28:** executed, **NOT ACCEPTED**. The frozen candidate
+`661d054` verified intact and completed the bounded product loop on native
+Windows. The in-app graceful shutdown then hung after client connection
+resets (F-1, a release-blocker candidate). Two further genuine defects were
+also found: F-2, listener death, and F-3, a false Doctor `UNHEALTHY` after
+onboarding. The correction contract is proposed, not authorized. Phase label
+unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
+**Correction, 2026-09-29:** *Native-Windows Runtime Shutdown & Listener
+Resilience Correction v1*, authorized by the owner, executed and
+**complete**. The owner rejected `661d054` and classified F-1 and F-2 as
+v0.1 release blockers and F-3 as P1 before Gate G. All three are closed on
+a rebuilt, independently verified candidate at `2272126`, which was
+re-accepted on native Windows. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: NONE.** See §3.
+
+**Correction, 2026-09-29:** *Gate G -- Launch Package Refresh v1*,
+authorized by the owner, executed and **complete** (classification A). The
+participant package was reconciled against candidate `2272126` and is
+assembled, locally only and not sent, with placeholders for owner inputs.
+**Gate G is not started.** Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: NONE.** See §3.
+
+**Owner sequencing decision, 2026-09-29 (recorded by Owner-Only Release
+Polish & Acceptance v1):** the owner **waives** Gate G (External
+Pre-Release Acceptance). Gate G is **waived, not passed**; it must never be
+described as passed, completed, or as external or independent validation.
+The owner is the **sole pre-release tester** until public release. The
+downstream sequence becomes *owner-only pre-release acceptance -> Final
+Release Hardening -> the one public launch*, and the independent setup,
+hardware and user-diversity evidence Gate G was meant to supply is
+**lost, not substituted** -- see §3 for the full disclosure and §6.S for
+the lane reconciliation. The historical Gate G plan, participant package
+and reports are preserved unchanged. The owner also authorized the
+bounded milestone *Owner-Only Release Polish & Acceptance v1* (O-1/O-2
+presentation fixes, the in-box README-FIRST, the midnight-boundary Core
+fixture, and a fresh private candidate accepted on native Windows). Phase
+label unchanged: **FEATURE FREEZE**. **Authorization: Owner-Only Release
+Polish & Acceptance v1** while it runs; **NONE** on its closure.
+
+**Closure, 2026-09-29:** *Owner-Only Release Polish & Acceptance v1*
+executed, classification **A**. The new private candidate is source
+`215069b`, Windows ZIP `d1050b99…`, with the Camera Node wheel unchanged
+at `38dfac47…`. Core passed 6249 / 0 failed, and the candidate was
+accepted on native Windows. Gate G remains **waived, not passed**. Phase
+label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1* executed, classification **B**.
+- **Target specs closed.** The two target specs were stale demo-Stream
+  fixtures, not product defects. `b946932` corrects them, and they are now
+  green and repeatable.
+- **Suite still not green.** The complete browser suite is 187 passed, 7
+  failed, and all 7 are pre-existing and disclosed.
+- **Candidate unchanged.** The candidate is still `215069b` / `d1050b99…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See
+§3.
+
+**Authorized, 2026-09-29:** *Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1*, by ChatGPT global
+sequencing after it accepted Reviewed-Truth Browser Closure v1 at
+classification **B** (implementation `b946932`, record `9e0e113`). The
+candidate source stays `215069b` and the schema stays `v61`. Gate G stays
+**waived, not passed**. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: Owner-Only Final Release Hardening -- Browser Suite
+Determinism & Demo-Boundary Closure v1** while it runs. See §3.
+
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening -- Browser
+Suite Determinism & Demo-Boundary Closure v1* executed, classification
+**A**.
+- **Browser suite green:** the complete default suite is **196/196**, and
+  the three separate configurations pass.
+- **Demo leak closed:** the Reviewed-history demo leak is closed at the
+  product seam.
+- **New candidate:** source `02443ea`, Windows ZIP `785f3f37…` (build
+  `5200ec77a7221902`), accepted on native Windows. It **supersedes**
+  `215069b` / `d1050b99…`. The Camera Node wheel is unchanged at
+  `38dfac47…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
+**Authorized, 2026-09-29:** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1*, by ChatGPT global sequencing after it accepted
+Browser Suite Determinism & Demo-Boundary Closure v1 at classification
+**A** (candidate source `02443ea`, record `b11cc66`, Windows ZIP
+`785f3f37…`, build `5200ec77a7221902`). The schema stays `v61`. Gate G
+stays **waived, not passed**. Phase label unchanged: **FEATURE FREEZE**.
+**Authorization: Owner-Only Final Release Hardening -- Fast Review
+Queue-End Undo v1** while it runs. See §3.
+
+**Closure, 2026-09-29:** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1* executed, classification **A**.
+- **Defect closed:** the "Filtered queue complete" screen keeps the
+  "Saved <label>." confirmation and **Undo last correction**, and `Z`
+  works there, through the existing undo path. Frontend only.
+- **Browser gate:** complete default suite **198/198**; the three
+  separate configurations pass.
+- **New candidate:** source `d7e61c1`, Windows ZIP `75d998f7…` (build
+  `c901ac14bce22fe4`), accepted on native Windows. It **supersedes**
+  `02443ea` / `785f3f37…`. The Camera Node wheel is unchanged at
+  `38dfac47…`.
+- **Gate G** remains **waived, not passed**.
+
+Phase label unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
+**Accepted, 2026-09-29:** ChatGPT global sequencing accepts *Owner-Only
+Final Release Hardening -- Fast Review Queue-End Undo v1* at
+classification **A** (candidate source `d7e61c1`, record `3cd3e4e`,
+Windows ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`, version
+`0.1.0`). **State: READY FOR OWNER RELEASE DECISION.** No further
+product-development or hardening milestone is authorized. Phase label
+unchanged: **FEATURE FREEZE**. **Authorization: NONE.** See §3.
+
+**Superseding owner release strategy, 2026-09-29:** the accepted facts above
+remain valid, but `d7e61c1` is now an **internal product baseline**, not a
+public release candidate. No public `0.1.0` will be shipped. The first public
+release target is `1.0.0`, after the software-completable roadmap queue in
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md)
+is delivered and Final Release Hardening is rerun. State changes from `READY
+FOR OWNER RELEASE DECISION` to **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**.
+At this strategy checkpoint authorization remained **NONE** pending bounded
+implementation sequencing; the later software-gap audit record above and §3
+supersede that checkpoint state.
+
 ## 1. Current accepted state
 
-- **Repository:** `/home/zkelder/projects/mockingbird-active`
+- **Repository:** `/home/<user>/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Current accepted state, 2026-10-06 (supersedes the dated notes below where
+they conflict):** latest accepted milestone *Public Product, Deployment &
+Support Closure v1*, classification **A**; HEAD `b7f708c`; schema `v62`;
+version `0.1.0`; authorization **NONE** pending ChatGPT's global sequencing
+decision. Working tree: the seven preserved untracked detector files (§13) and
+`uv.lock`, untouched. See §3.
+
+**Current sequencing correction, 2026-09-29, by Pre-1.0 Software Gap Audit &
+Contract Lock v1:** the accepted implementation/artifact facts below remain the
+frozen internal baseline. The audit removed already-delivered remote-transport
+and soundscape-analytics work, locked the surviving dependency-ordered queue,
+and authorized **Attention Integrity & Health Reliability v1** only. Current
+phase: **PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST**. Version/schema were
+`0.1.0` / `v61` at that audit; accepted *Attention Integrity & Health
+Reliability v1* (HEAD `c146eff`) moved the schema to `v62`, version still
+`0.1.0`; see §3 and §8.
+
+**Staleness correction, 2026-09-29, by Final Product Release Scope
+Reconciliation v1:** the immediately following acceptance record remains
+the latest accepted implementation evidence, but its `READY FOR OWNER
+RELEASE DECISION` state is superseded. The owner will not publish `0.1.0`.
+Source `d7e61c1`, ZIP `75d998f7…`, build `c901ac14bce22fe4`, schema `v61`,
+and their validation remain the frozen internal baseline for renewed
+development. Public target: `1.0.0`. Current phase: **PRE-1.0 PRODUCT
+COMPLETION -- SOFTWARE-FIRST**. The authorization recorded at this earlier
+strategy checkpoint is superseded by the audit correction above and §3.
+
+**Staleness correction, 2026-09-29, by the Fast Review Queue-End Undo v1
+acceptance reconciliation (documentation only):** the notes below are
+superseded on these facts. **Latest accepted milestone:** *Owner-Only
+Final Release Hardening -- Fast Review Queue-End Undo v1*, classification
+**A**. **Accepted candidate:** source `d7e61c1`; closure record HEAD
+`3cd3e4e`; version `0.1.0`; schema `v61`; Windows ZIP SHA-256
+`75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`; build
+`c901ac14bce22fe4`; Camera Node wheel unchanged at `38dfac47…`; complete
+default browser suite 198/198; bounded Review Queue, onboarding and
+bounded-media configurations green; the exact artifact accepted on native
+Windows. **State: READY FOR OWNER RELEASE DECISION.** Gate G is
+**waived, not passed**; the owner remains the sole pre-release tester.
+Working tree: the seven preserved untracked detector files (§13) and
+`uv.lock`, untouched. That acceptance checkpoint's authorization was
+**NONE**; the current authorization is in the audit correction above and §3.
+
+**Staleness correction, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1:** the note immediately below is superseded on
+these facts. **Current facts, verified directly:** *CI & Core Validation
+Closure v1* is **accepted at `149eb707ae6f13df29fc73334462d8d6d81aa124`**
+(owner decision, with the documented local transport-worker timing
+exception). This milestone's record-correction commit -- the commit that
+carries this paragraph -- is the **frozen candidate source SHA**; it is
+docs-only on top of `149eb70`, so the candidate's product code is
+byte-identical to the accepted revision. Its hash is recorded in this
+milestone's §3 closure entry and in the built artifacts' own
+`manifest.json`/`build_info.json` (`git:<hash>`), never as a moving
+`main`. Schema `v61`, version `0.1.0`, unchanged. Working tree: the seven
+preserved untracked detector files (§13) and `uv.lock`, untracked and
+hash-verified unchanged. Current authorization: **Internal Release
+Candidate Rebuild & Native-Windows Acceptance v1** (returns to **NONE** on
+its closure).
 
 **Staleness correction, 2026-09-26, by CI & Core Validation Closure v1:**
 the note immediately below is superseded on these facts. **Current facts,
@@ -1589,7 +1865,7 @@ record through its own last-updated point.
   report commit, never the reconciliation commit that records it) is
   established and consistent, not stale; no bookkeeping correction made.
   Proves, live, against the real reference Camera Node (Pi,
-  `node-76ec8e53ae586dd0`): health, both compatibility-preflight profiles
+  `node-<id>`): health, both compatibility-preflight profiles
   (including a real 5/5-valid bounded RTT clock-calibration batch), an
   honest pairing-conflict rejection, and a clean bounded
   service-restart-recovery cycle (`node_id`/`boot_id`/pairing all
@@ -3901,6 +4177,1153 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Authorization: NONE -- AWAITING ChatGPT GLOBAL SEQUENCING DECISION.** The last
+authorized milestone, *Public Product, Deployment & Support Closure v1*, is
+executed, closed, and now **ACCEPTED, classification A** (see the acceptance
+record directly below). Final 1.0 Hardening and every other later item are not
+authorized, and no feature-freeze declaration is made by this record.
+
+**Acceptance recorded, 2026-10-15 (scheduler reconciliation; documentation
+only; no validation rerun, no application code changed):** *Everyday Wildlife
+Experience & Presentation Refinement v1* is **ACCEPTED WITH LIMITATIONS** by
+ChatGPT global sequencing. Final accepted implementation commit: **`fd8a57b`**
+(on `a69d55e`; schema **`v62`** unchanged, source version `0.1.0` unchanged).
+Acceptance is by a bounded final review of the refined UI against an isolated
+copy of the real field database and media (originals untouched), at 1440x900
+and 390 px across Today, Visit detail, Review Queue, Bird Log and Place, with
+reviewed, legacy, unreviewed and abstained states checked. That review found
+and fixed, with regression tests that fail without the fix: (1) *corrected
+unreviewed-label behavior* -- an unreviewed Visit with no species guess no
+longer arrives with the detector's generic "Unknown Bird" pre-typed beside a
+prominent Confirm; the species field starts empty, **Confirm species** is
+disabled until the reviewer enters a label, and **Not sure** is unchanged and
+still never accepts a suggestion; (2) reviewed-state action buttons no longer
+overflow the decision column (stacked, at desktop and phone width); (3) the
+empty species field's placeholder no longer shows raw taxonomy keys.
+
+*Validation, with the code revision each result belongs to (do not read the
+earlier results as covering the final commit):*
+
+| Result | Code revision | Status |
+|---|---|---|
+| Complete default browser suite **240 passed** (238 + 2 new regression specs) | final `fd8a57b` | final regression result |
+| Multi-configuration browser regression **250/250** (default 238, onboarding 6, review-queue 4, bounded-media 2) | `a69d55e` | accepted as reported evidence; **not rerun** at `fd8a57b` (only the default suite was) |
+| Fast gate **1,817 passed**; `tsc` clean; focused backend 126 passed | `a69d55e` | accepted as reported evidence; not rerun |
+| Native-Windows packaged validation (build `a69d55e` deployed with the dev-deployment tool, identity confirmed, scrubbed environment, disposable home, demo prepared on the packaged GPU build, Windows Edge at both sizes, Review -> Confirm -> Bird Log journey) | `a69d55e` | accepted as reported evidence |
+
+**Limitations carried by this acceptance.** (a) The latest commit `fd8a57b` has
+**not** been packaged and tested on native Windows; the packaged validation
+above is of `a69d55e`. The delta is a frontend-only presentation/behavior
+change (Visit detail initial-label rule, one CSS block, one placeholder). Core
+was not run for this milestone. (b) *Authentic field-image quality:* the three
+real House Finch Visits are whole 4624x3472 yard frames with no persisted
+subject geometry, so the finch is small in its thumbnail (correctly not
+cropped to a subject the data does not vouch for); the one confirmed Northern
+Cardinal frame is badly overexposed. These are properties of the captured
+evidence, not UI defects, and no capture was altered. (c) No human interactive
+pass; the first-time-user journey was exercised by automated browsers only.
+(d) Known minor items unchanged from the implementation record: on a phone the
+decision panel sits below the evidence image; Today lists "Best moments" and
+"Recent activity" separately. **Portfolio capture and publication remain
+owner-controlled next actions** (the field imagery above, not the cardinal
+Visit, is a reason to prefer the demo clips for any recording). Existing
+roadmap lanes and queues are preserved unchanged. **Authorization after this
+acceptance: NONE** -- no new implementation milestone is authorized and no
+push, tag, packaging or publication is performed or authorized by this record.
+
+**Implementation recorded, 2026-10-14, by Everyday Wildlife Experience &
+Presentation Refinement v1 (owner-authorized bounded refinement of the existing
+everyday UI; status: EXECUTED -- later ACCEPTED WITH LIMITATIONS, see the
+acceptance record directly above).** Starting HEAD `1575b3f`, schema `v62` and source version `0.1.0`
+unchanged; no model/detector change, no schema change, no review-authority
+change, no push. Commits: `bb9ca44` (A), `a753792` (C selector), `a69d55e`
+(B/C/D/E UI). Delivered, presentation only: (A) Today "Recent activity"
+thumbnails no longer overlap (preview wrapper was caught by a generic row rule),
+and Alerts / Local Data no longer render the epoch placeholder as "Dec 31" /
+"12/31/1969"; (B) Visit detail leads with the wildlife image beside one
+decision panel (Confirm species / Change / Not sure, guess labelled "not
+confirmed", species shown by display name), with suggestions, evidence trail,
+export readiness and notes/collections/tags behind disclosures and no taxonomy
+keys, ids or MIME facts in the default view; Review Queue/Fast Review cards in
+plain language; (C) `resolve_subject_region` fixes a unit mismatch in the
+canonical representative selector's input (a derived crop's parent-relative
+box was applied to the crop's own pixels), ordering and truth precedence
+unchanged, plus subject-centred / whole-crop / low-resolution-safe thumbnail
+framing; (D) empty Biodiversity and year-of-history placeholders omitted on
+Today, optional Place prompts collapsed, Insights without a grid of zeros;
+(E) six primary destinations (Today, Cameras, Review Queue, Bird Log, Place,
+Settings) with a contextual secondary list so every existing page stays
+reachable, plus Bird Log find-a-species and a recently-seen strip. Details,
+the navigation evaluation and the deliberate non-changes:
+[everyday-wildlife-experience-presentation-refinement-v1-report.md](everyday-wildlife-experience-presentation-refinement-v1-report.md).
+Validation: `tsc --noEmit` clean; complete browser regression 250/250 (default
+suite 238, onboarding 6, review-queue 4, bounded-media 2; 11 new specs here,
+10 existing specs updated for the new structure -- the thumbnail test was
+observed failing without its CSS fix); focused backend 126 passed (selector,
+place activity report, wildlife insights); Fast gate 1817 passed. **Core gate
+was not run** (the only backend change is one pure function and its call
+site). Native Windows: packaged build `a69d55e` built and deployed with the
+dev-deployment tool (identity confirmed via `GET /api/product/instance`),
+started with a scrubbed environment and a disposable data home, demo prepared
+natively on the packaged GPU build, then driven in Windows Edge at 1440x900 and
+390x844: no horizontal overflow, no fake epoch date, 62 px thumbnails, six-item
+nav, decision button inside the first desktop viewport, no raw identifiers or
+file facts, and a real Review -> Confirm -> Bird Log journey (no page errors).
+Not verified: the unpacked release-ZIP experience on a clean machine (a
+dev-deployment build, not a downloaded ZIP), Windows 11, a field (live-camera)
+dataset (demo/recorded-clip data only), and a human interactive pass. Known
+limits: on a phone the decision panel sits below the evidence image (stacked
+layout) rather than in the first viewport; Today still shows "Best moments" and
+"Recent activity" separately; the pre-existing Bird Log mobile spec depends on
+earlier specs' data when run alone (reproduced at the baseline). Evidence in
+the ignored `dist/everyday-refinement-v1-a69d55e-evidence/` (before/after
+screenshots, Windows scripts and captures). **Final acceptance review (field-data pass, isolated copy of the field database
+and media; originals untouched):** two presentation/correctness defects fixed
+with regression tests -- an unreviewed Visit with no species guess arrived with
+the detector's generic "Unknown Bird" pre-typed beside a prominent Confirm (now
+empty, Confirm disabled until a label is entered, Not sure unchanged), and the
+reviewed-state action buttons spilled past the decision column. Findings
+reported, not fixed (data, not code): the three real House Finch Visits are
+whole 4624x3472 yard frames with no persisted subject geometry, so the finch is
+small in its thumbnail (correctly not cropped); the one confirmed Northern
+Cardinal frame is badly overexposed. (Accepted with limitations 2026-10-15; see
+the acceptance record above.)
+**Subsequent authorization: NONE.**
+
+**Closure recorded, 2026-10-14, by Portfolio & Demo Release Closure v1
+(owner-requested, bounded; status: EXECUTED, PENDING ACCEPTANCE -- not accepted
+by this record).** Starting HEAD `5de219d`, schema `v62` and source version
+`0.1.0` unchanged; no packaging, version, schema, tag or push. Delivered: a
+reproducible demo ([portfolio-demo-walkthrough.md](portfolio-demo-walkthrough.md),
+`scripts/prepare_demo_instance.py`, [demo manifest](demo/demo-media-manifest.json))
+that runs three CC0 clips through the unmodified recorded-video import,
+MegaDetector Observation Engine and BioCLIP identification assistant into a
+disposable DEMO-labelled instance, never writing a review decision; a
+presentation-oriented README with authentic screenshots
+(`docs/assets/screenshots/`); a case-study source and project card
+([docs/portfolio/](portfolio/case-study.md)); a THIRD_PARTY_NOTICES entry for the
+demo media. Two bounded product fixes: the first-run wizard now offers sign-in
+(and resumes at the saved step) when the session is lost mid-onboarding instead
+of dead-ending on account creation, and the Administrator-chosen installation
+name replaces the generic sidebar tagline. Validation: Tier 2 -- onboarding
+Playwright project 6/6 (new assertions for both fixes; the sign-in assertion was
+observed failing before the fix), `tsc --noEmit` clean, 4 new script-guard tests,
+notices/README/support-matrix doc tests 14 passed, BirdNET-exclusion tests 2
+passed. Native Windows: packaged build `a3479c1` deployed and demo run end to
+end natively (details in the walkthrough); the interactive UI click-through was
+verified on a source-checkout instance, not by hand on Windows. Core and the full
+browser suite were not re-run (no backend, schema or cross-cutting change).
+Findings reported, **not fixed** (no new authorization): a reviewed species
+outside the 14-species bundled taxonomy (e.g. pileated woodpecker, American
+goldfinch) is stored as a local label but is excluded from Bird Log/reviewed
+analytics; recorded-video Visits carry an epoch-anchored Event time, so they stay
+out of time-windowed Today/Place Story; one animal can over-split into sibling
+Visits (count varies by machine). Authorization remains **NONE**; this record
+does not authorize a next milestone.
+
+**Acceptance recorded, 2026-10-06 (scheduler reconciliation; accepted delta
+only; no validation rerun):** *Public Product, Deployment & Support Closure v1*
+is accepted at classification **A**: accepted HEAD `b7f708c` (includes the
+acceptance-correction commit that reverted the unauthorized `pyproject.toml`
+delta), schema `v62` (unchanged), source version `0.1.0` (unchanged). Accepted
+validation: docs tier -- links, stale-claim greps, notices and packaging-doc
+tests -- with the completed targeted run of **125 passed**; Core and browser
+suites were not required because no application, schema, packaging or runtime
+behavior changed. Lane status: Gate F / Lane P public-presentation surface
+(README, support matrix, privacy-and-security, troubleshooting, SUPPORT/
+SECURITY/THIRD_PARTY_NOTICES, issue templates) is delivered and accepted; it
+is not re-opened. Open items recorded by the milestone and **supported by
+current evidence** (none is a new feature dependency): the `pyproject.toml`
+"v0.1 public release" comment/description and the `api/main.py:750` /
+`model-adapter-guardrails.md:9` "outdoor video intelligence" wording are
+Final 1.0 Hardening follow-ups; the owner-side checklist items in
+[owner-release-checklist.md](owner-release-checklist.md) remain undone; Windows
+11 and minimum GPU-driver support remain unvalidated by design. Local `main` is
+unpushed (30 commits ahead of `origin/main` at this reconciliation).
+
+**Closure recorded, 2026-10-03, by Public Product, Deployment & Support
+Closure v1** (see [report](public-product-deployment-support-closure-v1-report.md)).
+**Status: ACCEPTED -- classification A (recorded 2026-10-06; accepted HEAD `b7f708c`).**
+Starting HEAD `28463ea`, schema `v62` unchanged, source version `0.1.0`
+unchanged. Docs/public-surface only: no application code, schema, package build
+or version bump (`pyproject.toml` unchanged versus `28463ea`). New canonical documents: [support-matrix.md](support-matrix.md)
+(the one 1.0 support statement), [privacy-and-security.md](privacy-and-security.md),
+[troubleshooting.md](troubleshooting.md), [developer-setup.md](developer-setup.md)
+(the former README developer content), [owner-release-checklist.md](owner-release-checklist.md),
+plus `SUPPORT.md` and GitHub issue templates. README rewritten as a public
+overview; `using-mockingbird.md` gained download/checksum verification, data
+location and models sections and dropped its own support table;
+`THIRD_PARTY_NOTICES.md` and `SECURITY.md` corrected. Defects corrected from
+repository truth: BirdNET install instructions that a packaged-Windows user
+cannot follow (the packaged runtime has no package installer -- documented as
+no supported route on the ZIP); Windows 11 overstated as validated (only
+Windows 10 Pro `10.0.19045` is in the evidence); the support bundle described
+as "safe to share" although it includes local paths by default. (A
+`pyproject.toml` comment/description cleanup made by this milestone was outside
+its authorized scope and was reverted by the acceptance-correction pass; the
+stale "v0.1 public release" comment there is therefore unchanged.) Unresolved, owner-side: see the
+owner checklist (push, version bump, final artifacts, Releases page, tag,
+private-vulnerability-reporting enablement, NVIDIA notice confirmation,
+signing position, BirdNET legal stance). Push: not performed.
+
+**Scheduler reconciliation, 2026-10-03 (accepted delta only; no history
+rewritten):** *Multi-Camera Attribution & Filter Consolidation v1* is
+**ACCEPTED, classification A** at HEAD `28463ea`; schema `v62` (unchanged);
+browser 226/226; focused backend 122 passed; Core 6374 passed, with the
+scene-confusor failure proven identical on the pre-change baseline and the
+transport-worker failure isolated as load-sensitive and non-reproducing outside
+the full run. Current authorized milestone at that point: **Public Product,
+Deployment & Support Closure v1** (now closed above). The 1.0 scope lock below
+is preserved unchanged.
+
+**Closure recorded, 2026-10-03, by Multi-Camera Attribution & Filter
+Consolidation v1** (see [report](multi-camera-attribution-filter-consolidation-v1-report.md)
+and [contract](multi-camera-attribution-filter-consolidation-contract.md)).
+**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
+Starting HEAD `f886400`, schema `v62` unchanged. All three residuals reproduced
+(none stale): Place Story now carries per-camera attribution and evidence
+drill-down for encounter-anchored entries (Place-level entries stay camera-free);
+nine camera/Stream filters consolidated onto one `CameraFilter` + URL
+vocabulary (Review Queue and target-selecting forms deliberately kept);
+`associated` cross-camera review alerts present as one Attention item with
+per-user acknowledgement and global resolution intact. The legacy
+`DEFAULT_MAX_CONCURRENT_STREAMS = 2` limit was verified (legacy RTSP/USB/
+DirectShow supervisor only; Camera Node exempt; previews carry a separate
+2-slot cap) and documented in the README and runtime map. Validation: focused
+backend (Story/Attention/cross-camera/new scenario) 122+ passed; frontend
+typecheck/build clean; full browser suite 226/226; Core 6374 passed / 2 failed /
+4 skipped -- `test_scene_confusor_repository::test_revision_from_real_to_false_
+retracts_stale_real_protection` fails identically on the pre-change baseline
+(pre-existing, not attributable) and `test_transport_worker::test_retryable_
+failure_...` passes in isolation (flaky under full-suite load).
+
+**Scheduler reconciliation, 2026-10-03 (accepted delta only; no history
+rewritten):** *Research Export & Ecological Workflow Completion v1* is
+**ACCEPTED, classification A** at HEAD `f886400`; schema `v62` (unchanged);
+Core 6365 passed / 0 failed; browser 218/218. Current authorized milestone:
+**Multi-Camera Attribution & Filter Consolidation v1**.
+
+**1.0 scope lock, 2026-10-03 (owner-side scope decisions, recorded without
+expansion):**
+
+- Environmental Sensor Ingestion: **deferred post-1.0**.
+- Intervention & Habitat Outcomes: **deferred post-1.0**; dependent Ecosystem
+  UX work that exists only for those new domains is deferred with them.
+- Resource-aware replacement for the legacy 2-Stream local-camera cap:
+  **deferred**; the real supported limit is documented instead (see
+  [multi-camera-attribution-filter-consolidation-contract.md](multi-camera-attribution-filter-consolidation-contract.md)).
+- Remote LTE/data-budget operator productization, Multi-Observatory Software
+  Model, optional closed-browser/background push transport, packaged Linux Host
+  distribution: **post-1.0**.
+- Native Windows remains the first public 1.0 Host acceptance/support target.
+- BirdNET acoustics remain release-ready **optional**; official MockingBird
+  packaging is prohibited from redistributing BirdNET model weights.
+- Built-in cloud remote access is **not** part of 1.0; documented
+  overlay-network remote access remains the supported posture.
+- Gate G remains **waived, not passed**.
+- The two disclosed Camera Node rollback residuals are not a feature
+  milestone; they are release-hardening defects only if they reproduce against
+  the supported 1.0 update/recovery path.
+
+Items 5-7 and 9-12 of the §8 queue are re-scoped accordingly (annotated there).
+
+**Superseded header (kept for history):** the last authorized
+milestone before this one, *Research Export & Ecological Workflow Completion v1* (Milestone 4),
+is executed and closed below.
+
+**Closure recorded, 2026-10-02, by Research Export & Ecological Workflow
+Completion v1** (see [report](research-export-ecological-workflow-completion-v1-report.md)).
+**Status: EXECUTED -- acceptance PENDING independent review; no classification assigned.**
+Starting HEAD `6b927da`, schema `v62` unchanged. Delivered `include_media` byte
+bundling (generic + Camtrap DP), Visit -> export deep link with `visit_ids`, and
+the filter/bundle UI. Validation: Core 6342 passed / 0 failed; browser 218/218.
+
+**Acceptance recorded, 2026-10-02 (scheduler reconciliation; no validation
+rerun):** *Orphan Media Integrity & Recovery v1* is accepted at
+classification **A**: HEAD `6b927da`, schema `v62` (unchanged). Final clean
+Core 6312 passed / 0 failed (supersedes the 6311/1 order-dependent result
+below); affected storage/recovery subsystem 182 passed; browser 211/211.
+
+**Closure recorded, 2026-10-02, by Orphan Media Integrity & Recovery v1**
+(see [orphan-media-integrity-recovery-v1-report.md](orphan-media-integrity-recovery-v1-report.md)
+and [the contract](orphan-media-integrity-recovery-contract.md)). **Status:
+EXECUTED -- proposed classification A, pending acceptance review.** Starting
+HEAD `e5cbfa3`, schema `v62` unchanged. Closed the file -> database direction:
+report-only reverse scan (incomplete is never clean), explicit revalidated
+quarantine with sidecar manifest and restore (no deletion, no DB mutation),
+admin API, `storage-integrity` CLI, Local Data panel. Validation: affected
+subsystems 182 passed; Core 6311 passed / 1 failed (an order-dependent
+observation-intent test that passes alone; not attributable); full browser
+suite 211/211.
+
+**Acceptance recorded, 2026-10-02 (scheduler reconciliation; no validation
+rerun):** *Everyday UX & Accessibility Closure v1* is accepted at
+classification **A**: HEAD `e5cbfa3`, schema `v62` (unchanged), version
+`0.1.0`. Accepted validation: frontend typecheck/build clean; focused browser
+spec 6/6; full browser suite 209/209; Core not required because no
+backend/runtime/schema behavior changed. Disclosed bounded debt (not
+reopened): the Stream-page Zone interaction remains pointer-only (the
+keyboard-operable editor covers guided camera setup only).
+
+*Previously:* *Authorization was NONE -- GLOBAL RECONCILIATION REQUIRED* while
+Everyday UX & Accessibility Closure v1 awaited acceptance.
+
+**Closure recorded, 2026-10-01, by Everyday UX & Accessibility Closure v1**
+(see [everyday-ux-accessibility-closure-v1-report.md](everyday-ux-accessibility-closure-v1-report.md)).
+**Status: EXECUTED -- proposed classification A, pending ChatGPT acceptance
+review. Acceptance is not recorded here.** Starting HEAD `c146eff`, schema
+`v62` unchanged (no migration, no backend change), version `0.1.0`
+unchanged. Closed: a keyboard-operable Zone area editor on guided camera
+setup; progressive disclosure on the Visit (curation), Stream (duplicate
+technical action) and Local Data (demo reset, remote-access reference)
+pages; one central user-safe error-message seam for 207 page-level catch
+sites plus the API client's non-JSON-success path; 38 provably unreferenced
+Bird Log CSS selectors (55 entries incl. responsive rules) removed. Full browser suite 209/209. Core was not required: no backend or runtime
+behavior changed.
+
+*Previous authorization, now executed and accepted:*
+**Attention Integrity & Health Reliability v1.** The owner
+authorized the Pre-1.0 Software Gap Audit & Contract Lock on 2026-09-29; that
+audit is complete and its first bounded implementation milestone is now
+authorized. The governing task packet and acceptance contract are in
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md#first-authorized-implementation-milestone).
+
+The milestone makes product-alert read/dismiss state per-user while preserving
+observatory-global alert condition/resolution/evidence, replaces duplicate
+app-shell unread/recent fetch paths with one shared source, adds a sustained and
+resolving production-detector/model-unavailable Observatory Health alert from
+existing facts, and adds bounded attention-sync diagnostics. Expected schema:
+`v62`. Validation: Tier 2 affected subsystem plus Core. It explicitly excludes
+Web Push, cross-camera grouping, broad UX redesign, detector/model/truth-policy
+changes, hardware validation, packaging, versioning, signing, tagging, pushing,
+and release. No later milestone in the locked queue is authorized.
+
+**Closure recorded, 2026-09-30, by Attention Integrity & Health Reliability
+v1** (see
+[attention-integrity-health-reliability-v1-report.md](attention-integrity-health-reliability-v1-report.md)).
+**Status: ACCEPTED -- classification A (recorded 2026-10-01 by
+ChatGPT global sequencing; accepted HEAD `c146eff`, schema `v62`).**
+
+- **Starting point:** `6acdeb1`. One local implementation commit, not
+  pushed. Schema `v61` → `v62`. Version `0.1.0` unchanged.
+- **Delivered:**
+  - per-user read/dismiss (`product_alert_acknowledgements`), with alert
+    condition, resolution, and deduplication still observatory-global;
+  - an explicit legacy upgrade rule: existing users inherit the legacy
+    state, a pre-identity install's state is adopted once by the bootstrap
+    Administrator, and the legacy columns are cleared;
+  - one shared app-shell attention source;
+  - a sustained, deduplicated, self-resolving model/runtime Observatory
+    Health alert built from existing Doctor and engine facts;
+  - bounded attention-sync diagnostics on `GET /api/product/health`.
+- **Evidence:**
+  - the defect was reproduced red on HEAD;
+  - Tier 2 affected set 1671 passed; Core **6278 passed / 0 failed**;
+  - build clean; complete default browser suite **203/203**; other
+    configs 6/4/2; repeat-each 85/85.
+- **Disclosed:** `CameraHealthSummary.unread_alert` now means "an open
+  camera alert exists" (it is global and computed with no viewer); the
+  sustained alert appears about 30 minutes after the problem is first
+  observed at the unchanged cadence.
+
+**Authorization after Attention Integrity & Health Reliability v1:** the
+acceptance above authorized only *Everyday UX & Accessibility Closure v1*,
+now executed (see the closure record at the top of this section).
+
+The acceptance entry below remains the accepted internal baseline, not a
+release authorization.
+
+**Acceptance recorded, 2026-09-29 (documentation-only reconciliation; no
+rebuild, no validation rerun).** ChatGPT global sequencing accepts
+*Owner-Only Final Release Hardening -- Fast Review Queue-End Undo v1* at
+classification **A**.
+
+- **Accepted candidate:** implementation/candidate source `d7e61c1`;
+  closure record HEAD `3cd3e4e`; version `0.1.0`; schema `v61`; Windows
+  ZIP SHA-256
+  `75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`;
+  build `c901ac14bce22fe4`; Camera Node wheel unchanged at `38dfac47…`.
+- **Accepted evidence:** complete default browser suite **198/198**;
+  bounded Review Queue, onboarding and bounded-media configurations green;
+  the exact artifact accepted on native Windows.
+- **Gate G** remains **waived, not passed**; the owner remains the sole
+  pre-release tester.
+- **Disclosed, not blocking:** duplicate alert pollers (F-2) remain
+  post-release efficiency debt, not a v0.1 blocker.
+- **State: READY FOR OWNER RELEASE DECISION.** Phase label unchanged:
+  **FEATURE FREEZE**. No further product-development or hardening
+  milestone is authorized. Signing, publishing, tagging and pushing remain
+  explicit owner decisions; none was taken here.
+
+**Authorization after this acceptance: NONE.**
+
+---
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Fast Review Queue-End Undo v1** (see
+[owner-only-final-release-hardening-fast-review-queue-end-undo-v1-report.md](owner-only-final-release-hardening-fast-review-queue-end-undo-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Commits:** `1d325f5` (authorization record); `d7e61c1` (fix and
+  focused browser spec, frontend only). **New candidate source.**
+- **Root cause:** `FastReviewPanel` rendered the undo block only in its
+  active-item branch, and its keydown effect bailed without an active
+  item, so the final save's still-valid undo token was unreachable.
+- **Fix:** the existing undo block is shared by both branches; `Z` runs
+  the existing `undoLastCorrection()` on either screen after the
+  unchanged typing-target check; every other shortcut still requires an
+  active item. No backend, schema or truth-semantics change.
+- **Validation:** red then green on a new real-Source spec (click Undo,
+  keyboard `Z`, inert shortcuts, typing-target protection, superseded
+  token -> honest 409 error); affected specs 10/10; repeat-each=10 40/40;
+  complete default suite **198/198**; configs 4/4, 6/6, 2/2; `tsc` and
+  `vite build` clean. Full Core not run: Tier 3 justification recorded
+  (no Python, script or test change; 212 packaged `.py` byte-identical).
+- **Artifact:** ZIP
+  `75d998f7c2e28c6c4b5936a8f74e166238815d761ea5b8ad8c2f1e82c119127b`,
+  build `c901ac14bce22fe4`; checksums, verifier, SBOM (59, identical) and
+  package parity verified; accepted on native Windows (both undo paths,
+  clean shutdown x2, restart with `previous_shutdown_clean: true`, Doctor
+  HEALTHY x2, 0 page errors, 0 5xx). Supersedes `02443ea` / `785f3f37…`.
+- **Open, disclosed:** F-2 duplicate alert pollers (out of scope). Gate G
+  waived, not passed.
+
+**Authorization after Fast Review Queue-End Undo v1: NONE.**
+
+---
+
+*(The authorization entry for Fast Review Queue-End Undo v1, retained as
+recorded:)*
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening -- Fast
+Review Queue-End Undo v1*, by ChatGPT global sequencing. It accepts
+Browser Suite Determinism & Demo-Boundary Closure v1 at classification
+**A**: candidate source `02443ea`, record HEAD `b11cc66`, Windows ZIP
+`785f3f37d206cf5de1078c1ef6ad193f23b8152c406c82d3111b8fb7e0b7b462`, build
+`5200ec77a7221902`, schema `v61`, browser gate 196/196. Gate G stays
+**waived, not passed**, and the owner stays the sole pre-release tester.
+Starts from `main` at `b11cc66`.
+
+- **Mission: close the reproduced Fast Review queue-end undo defect.**
+  After the final Visit of a filtered Fast Review session is saved, the
+  UI switches to "Filtered queue complete" and drops the "Saved <label>."
+  confirmation and the "Undo last correction" control, although an undo
+  token is still available. The fix reuses the existing undo mechanism; no
+  second correction or reversal path.
+- **Required behavior:** the completion screen keeps the saved-label
+  confirmation and an operable "Undo last correction"; undo restores the
+  exact Visit to its prior review state and makes it the active Fast
+  Review item again; queue and processed counts return to their correct
+  values; focus stays accessible; the documented `Z` shortcut works from
+  the completion screen; other correction shortcuts do not run without an
+  active item; typing-target protection stays intact; an expired or
+  superseded undo token still shows the existing honest error.
+- **Scope:** frontend-only is preferred. If a backend or schema change
+  appears necessary, the milestone stops and reports why before expanding
+  scope.
+- **Validation:** a focused real-Source browser test, red before the fix;
+  clickable Undo and keyboard `Z` at queue completion; authoritative
+  correction creation and reversal, restored Visit state, queue count and
+  resumed Fast Review UI; an invalidated-token case if practical; the
+  affected Fast Review and reviewed-truth specs; the complete default
+  browser suite (196/196 or better, no retries, skips, quarantine or order
+  dependence); the bounded Review Queue and other affected configurations;
+  `tsc` and the production frontend build; a concrete Tier 3 justification
+  in place of full Core if the change is genuinely frontend-only.
+- **Artifact:** packaged frontend input changes, so `02443ea` will be
+  superseded (it stays accepted evidence). A new private Windows ZIP is
+  built from the clean implementation commit, verified for provenance,
+  checksums, package parity and SBOM, and accepted on native Windows with
+  a disposable home: one real Visit, Fast Review, final-item save, Undo
+  retained and working, a repeat with keyboard `Z`, clean shutdown,
+  restart and Doctor, and recorded browser errors.
+- **Non-goals:** the duplicate alert-poller efficiency finding; new
+  features or a Fast Review redesign; reviewed-truth semantics; detector,
+  threshold or identification policy; Pi or Camera Node work; Gate G or
+  participant work; signing, publishing, uploading, tagging or pushing;
+  touching the protected untracked files or `uv.lock`; self-authorizing
+  another milestone.
+
+**Status: EXECUTED -- classification A** (see the closure entry above).
+
+---
+
+**Authorization after Browser Suite Determinism & Demo-Boundary Closure
+v1: NONE.** The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Final Release
+Hardening -- Browser Suite Determinism & Demo-Boundary Closure v1 ran,
+this line read "Authorization: Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1". Before that it read
+"Authorization: NONE. The owner must decide the next step.", the state
+after Reviewed-Truth Browser Closure v1, whose closure entry follows
+further below.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1** (see
+[owner-only-final-release-hardening-browser-suite-determinism-demo-boundary-closure-v1-report.md](owner-only-final-release-hardening-browser-suite-determinism-demo-boundary-closure-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Commits:**
+  - `ccb6131`: product fix and tests;
+  - `02443ea`: test-only spec fixes. **New candidate source.**
+  - Authorization record `3f51e60`.
+- **Seven disclosed failures, all root-caused and closed:**
+  - `broader-wildlife-maturity-review` x2 and
+    `review-queue-bulk-correct-stale-write` imported onto the demo Stream,
+    which never reaches the Review Queue. They now use real-Source
+    fixtures.
+  - `review-queue-count-demo-exclusion`, `review-queue-fast-review-
+    keyboard` and the `today-report` empty state were shared-instance
+    accumulation. They are now scoped to data each test owns.
+  - `notification-preferences` insight alert: **stale test assumption,
+    not a product defect.** Place Story Deep Dives routes a
+    taxon-bearing alert to that taxon's Story. The fixture carried
+    `taxon_label`, and each path now has its own test.
+- **Three latent races found under stress and fixed (test-only):**
+  - notification live-delivery poll counting (two always-mounted
+    `AlertsControl` pollers plus `TodayAttentionSummary`);
+  - `dataset-export-download` clicking the preloaded seed manifest;
+  - demo controls under shared-suite demo-Source repurposing.
+- **Reviewed-history leak:**
+  - `GET /api/review-labels?real_sources_only=true` is additive and
+    opt-in, filtered through the `_real_stream_ids` seam. The raw default
+    is unchanged.
+  - `ReviewQueuePage` opts in.
+  - Seed records, truth resolution, the Reviewed-truth boundary and
+    schema `v61` are unchanged.
+- **Evidence:**
+  - Baseline 187/7.
+  - Final complete default suite **196/196**: 194 plus the new
+    Reviewed-history spec plus the split notification test.
+  - Stress 210/210 past pagination with the demo Source repurposed
+    mid-run.
+  - Notification spec 240/240 at `--repeat-each=20`.
+  - Onboarding, bounded Review Queue and bounded media: 6, 4 and 2, all
+    passed.
+  - `tsc` and `vite build` clean; 224 focused backend tests passed.
+  - Full Core: run 1 had 6252 passed and 1 failed, the load-induced
+    `test_transport_worker.py` flake of record (unrelated, byte-identical
+    code). Run 2 had **6253 passed, 0 failed**.
+- **Artifact:**
+  - ZIP `785f3f37d206cf5de1078c1ef6ad193f23b8152c406c82d3111b8fb7e0b7b462`,
+    build `5200ec77a7221902`, `source_clean`.
+  - 212/212 packaged `.py` files are byte-identical to `02443ea`, and the
+    SBOM is identical.
+  - Native Windows:
+    - Reviewed history listed the owner's human correction and **not**
+      the restored demo label ("1 reviewed"); `215069b` read "2 reviewed"
+      with the squirrel.
+    - Both deep-link paths routed correctly.
+    - Three clean in-app shutdowns, `previous_shutdown_clean: true`, and
+      Doctor HEALTHY on the stopped home.
+    - 0 page errors and 0 HTTP 5xx.
+- **Disclosed, not fixed:**
+  - F-1: Fast Review drops Undo on the "queue complete" panel.
+  - F-2: two always-mounted alert pollers (coalesced by notification
+    tag).
+  - Designed 401/404 console resource messages during first run.
+- **Unchanged:**
+  - Gate G is **waived, not passed**, and the owner is the sole
+    pre-release tester.
+  - Nothing was pushed, tagged, signed, published or uploaded.
+  - The protected files and `uv.lock` are untouched.
+  - §6 lanes are unchanged. **Authorization: NONE.**
+
+---
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening --
+Browser Suite Determinism & Demo-Boundary Closure v1*, by ChatGPT global
+sequencing. It accepts Reviewed-Truth Browser Closure v1 at classification
+**B**: implementation commit `b946932`, record HEAD `9e0e113`. Candidate
+source stays `215069b`, the schema stays `v61`, Gate G stays **waived, not
+passed**, and the owner stays the sole pre-release tester. Starts from
+`main` at `9e0e113`.
+
+- **Mission 1: a deterministic, green default browser suite (194/194).**
+  Root-cause and close the seven disclosed failures before changing them:
+  - `review-queue-count-demo-exclusion`;
+  - `review-queue-fast-review-keyboard`;
+  - `today-report` (quiet/intentional empty state);
+  - `broader-wildlife-maturity-review` (two failures);
+  - `review-queue-bulk-correct-stale-write`;
+  - `notification-preferences` (the insight alert should open Place Story
+    scoped to wildlife). This is to be treated as a possible product
+    defect, not assumed to be stale test debt.
+
+  Shared-instance accumulation failures are to be scoped to each test's
+  own data, without weakening assertions or relying on execution order.
+  A spec that uses the seeded demo Stream moves to a real Source/Stream
+  fixture when its subject requires real user data, and keeps explicit
+  controls proving demo activity stays excluded.
+- **Mission 2: close the Reviewed-history demo leak.** Review Queue's
+  collapsed "Reviewed history" panel must stop presenting seeded demo
+  ReviewLabels as the user's "Correction truth". Genuine human-reviewed
+  labels from real Sources stay visible. Seed records are not deleted or
+  rewritten, and the authoritative Reviewed-truth boundary does not
+  change. A focused browser test needs negative and positive controls.
+- **Validation:** red evidence before each fix; affected specs alone on
+  fresh instances; shared-instance stress past pagination limits where
+  accumulation matters; the complete default suite (194/194, no skips,
+  quarantine, concealing retries or order dependence); the onboarding,
+  bounded Review Queue and bounded-media configurations; `tsc` and
+  `vite build`; focused backend tests if API or repository behavior
+  changes; full Core if backend or cross-cutting production behavior
+  changes, otherwise a concrete Tier 3 justification.
+- **Artifact:** if any packaged product input changes, `215069b` is
+  superseded. A new private Windows ZIP is then built from the clean
+  implementation commit, verified for provenance, checksums and package
+  parity, and accepted on native Windows for the corrected behavior, clean
+  launch/shutdown/restart, and zero browser errors. If the changes are
+  test-only, there is no rebuild, and unchanged packaged inputs must be
+  proven instead.
+- **Non-goals:** unrelated features; reopening O-1/O-2 without a
+  reproduced dependency; weakening demo exclusion; detector, threshold or
+  identification-policy changes; Pi or Camera Node hardware acceptance;
+  Gate G or participant work; signing, publishing, uploading, tagging or
+  pushing; touching the seven protected untracked files or `uv.lock`;
+  self-authorizing another milestone.
+
+**Status: IN PROGRESS** (this record). Authorization returns to NONE on
+closure. *(Superseded 2026-09-29: executed, classification A -- see the
+closure entry above; authorization returned to NONE.)*
+
+---
+
+**Authorization after Reviewed-Truth Browser Closure v1: NONE.** The owner
+must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Final Release
+Hardening -- Reviewed-Truth Browser Closure v1 ran, this line read
+"Authorization: Owner-Only Final Release Hardening -- Reviewed-Truth
+Browser Closure v1". Before that it read "Authorization: NONE. The owner
+must decide the next step.", the state after Owner-Only Release Polish &
+Acceptance v1, whose closure entry follows further below.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1** (see
+[owner-only-final-release-hardening-reviewed-truth-browser-closure-v1-report.md](owner-only-final-release-hardening-reviewed-truth-browser-closure-v1-report.md)).
+**Status: EXECUTED -- classification B.**
+
+- **Root cause (both specs): stale test assumption, not a product
+  defect.**
+  - `review-queue-reviewed-tab.spec.ts` imported onto the seeded demo
+    Stream.
+  - `reviewed-product-loop.spec.ts` suggested on the seeded demo Visit and
+    targeted a removed inline "Review bird visit" card.
+  - Demo-Source activity is excluded from Review Queue, Bird Log and
+    exports by accepted contract, so neither spec could reach its subject.
+- **Fix:** `b946932` changes only the two spec files. They use a real
+  Source, Stream and Zone, drive today's path (Review Queue -> Visit Detail
+  -> Identification Assistant prefill -> Confirm species), keep every
+  original claim, add explicit no-truth-before-save checks, and scope
+  their assertions to their own Visit or camera.
+  - No product, backend or schema change.
+- **Evidence:**
+  - Red, captured before the change.
+  - Green alone in 3 fresh instances each.
+  - 60/60 at `--repeat-each=30` on one shared instance.
+  - A mutation that removes the Reviewed tab's Status-filter exemption
+    turns both specs red.
+- **Complete shared browser suite (194 tests):**
+  - Baseline, with the original specs: 185 passed, 9 failed.
+  - After the fix: **187 passed, 7 failed**.
+  - The 7 are identical on the baseline, so there are 0 new failures.
+  - The "82" in the previous closure was an unrecorded 13-spec subset.
+- **Not met: complete-suite green.** Seven pre-existing failures remain,
+  disclosed and not fixed, by the owner's decision to close at the two
+  target specs:
+  - 3 are shared-instance accumulation and pass when run fresh:
+    `review-queue-count-demo-exclusion`,
+    `review-queue-fast-review-keyboard`, and `today-report`'s empty state.
+  - 3 fail even on a fresh instance and are likely the same demo-Stream
+    fixture cause, but were not root-caused:
+    `broader-wildlife-maturity-review` x2 and
+    `review-queue-bulk-correct-stale-write`.
+  - 1 is the Lane D `notification-preferences` insight-alert gap.
+  - These are a named candidate follow-up, **not authorized**.
+- **Also disclosed:** Review Queue's collapsed "Reviewed history" panel
+  lists demo-seed ReviewLabels as "Correction truth". This is a
+  presentation-only leak. It creates no truth write and does not affect
+  Bird Log or exports.
+- **Validation:**
+  - `tsc` and `vite build` are clean.
+  - Backend and Core were not run, because the change is test-only
+    (`git diff 215069b` touches only `docs/` and `web/e2e/`).
+- **Artifact:** none. Candidate `215069b` and ZIP `d1050b99…` remain valid
+  (`build_local_product.py` excludes `e2e/`), with no rebuild and no
+  native-Windows rerun.
+- **Unchanged:**
+  - Gate G is **waived, not passed**, and the owner is the sole
+    pre-release tester.
+  - Nothing was pushed, tagged, signed, published or uploaded.
+  - The protected files and `uv.lock` are untouched.
+  - §6 lanes are unchanged. **Authorization: NONE.**
+
+---
+
+**Authorized, 2026-09-29.** *Owner-Only Final Release Hardening --
+Reviewed-Truth Browser Closure v1*, by ChatGPT global sequencing following
+acceptance of Owner-Only Release Polish & Acceptance v1 at classification
+A. Starts from record HEAD `b47c5bd`; candidate source `215069b` and the
+accepted Owner-Only Release Polish work stay frozen except where a
+reproduced defect directly requires a correction. Mission: bring the full
+shared browser suite to green (82/82, no quarantine or skip) by
+root-causing and closing exactly `web/e2e/reviewed-product-loop.spec.ts`
+and `web/e2e/review-queue-reviewed-tab.spec.ts` -- each reproduced red in
+a clean isolated instance first, classified as product defect, isolation/
+stale state, invalid fixture, or stale test assumption, and never fixed
+by weakening an assertion. Invariants: human-reviewed truth stays
+authoritative; suggestions never silently become Reviewed truth; the
+Reviewed tab shows applicable reviewed Visits without contradictory
+hidden filters; a correction propagates coherently through Review Queue,
+Bird Log and reviewed-data export; Local Only complete. Non-goals: new
+features, reopening O-1/O-2 or other accepted milestones without a
+reproduced dependency, Pi/Camera Node hardware work, Gate G or
+recruitment, signing keys, publish/tag/upload/push, detector or
+identification policy changes. Gate G remains **waived, not passed**; the
+owner remains the sole pre-release tester. Protected files and `uv.lock`
+untouched. **Status: IN PROGRESS** (this record). *(Superseded
+2026-09-29: executed, classification B -- see the closure entry above;
+authorization returned to NONE.)*
+
+---
+
+**Authorization after Owner-Only Release Polish & Acceptance v1: NONE.**
+The owner must decide the next step. See the
+closure entry immediately below. *(While Owner-Only Release Polish &
+Acceptance v1 ran, this line read "Authorization: Owner-Only Release
+Polish & Acceptance v1". The line that
+stood here before this entry -- "Authorization: NONE. The owner must decide
+the next step." -- recorded the state after Gate G -- Launch Package
+Refresh v1, whose closure entry follows.)*
+
+**Closure recorded, 2026-09-29, by Owner-Only Release Polish & Acceptance
+v1** (see
+[owner-only-release-polish-acceptance-v1-report.md](owner-only-release-polish-acceptance-v1-report.md)).
+**Status: EXECUTED -- classification A.**
+
+- **Gate G:** **waived by the owner, not passed.** The owner is the sole
+  pre-release tester. No participant was recruited or contacted, and
+  nothing was sent.
+- **Fixes:**
+  - **O-1:** "Capture time unknown", decided by provenance only: the
+    offline/acoustic path plus the source recording's absent
+    `captured_at`. This also applies to the research export, which had
+    certified the placeholder as `recorded`.
+  - **O-2:** offline-analysis wording instead of "manual media".
+  - **README-FIRST:** rewritten, with tests tied to product source.
+  - **Midnight fixture:** fixed, plus its sibling test in the same file.
+  - No schema, model, threshold, dependency or Camera Node change.
+- **Candidate:** source `215069b3f95e54fee8c660d53013e665dd67877c`
+  (`0.1.0`, `v61`).
+  - Windows ZIP SHA-256
+    `d1050b99d3eee93e0096e5ea5b6a3e982224860a4f904afa8a3892172f01bb9d`
+    (`build_id 85b92328bb185cba`, `source_clean: true`, 19,284 files /
+    4,923,721,175 bytes, unsigned).
+  - Camera Node wheel `38dfac47…`, byte-identical to the accepted wheel.
+  - Both are private under ignored
+    `dist/owner-only-release-polish-v1-215069b*/`.
+  - Verifier OK. Dependencies, models and SBOM (59) are identical to
+    `2272126`. 212/212 packaged modules equal the source.
+- **Validation:**
+  - Focused tests were red, then green.
+  - Affected suites: 576 passed / 0 failed.
+  - `tsc` and `vite build` are clean.
+  - e2e: 80 passed / 2 failed. Both failures are pre-existing, and one of
+    them was reproduced on the untouched `c02ffd5`.
+  - **Core: 6249 passed / 0 failed.**
+- **Native Windows** (exact ZIP, disposable home on `D:`, port 8151):
+  - Identity matched.
+  - Five-step onboarding completed, and Doctor was HEALTHY.
+  - A real field recording without `creation_time` was imported and
+    analysed into 2 Visits (`capture_time_known: false`).
+  - "Capture time unknown" appears on Review Queue, Visit, Event, Activity
+    Library and Today, with zero "Dec 31"/"7:00 PM".
+  - The offline wording is correct.
+  - Human authoritative Unknown Bird corrections gave Bird Log 2
+    confirmed.
+  - Two UI shutdowns and relaunches were clean
+    (`previous_shutdown_clean: true`, data intact).
+  - Doctor CLI on the stopped home is HEALTHY.
+  - 0 browser errors.
+- **Not claimed:** live camera, Observation resume, any Pi or Camera Node
+  hardware evidence, or external validation.
+- Nothing was pushed, tagged, signed, published or uploaded. The
+  protected files and `uv.lock` are byte-identical. §6 lanes A-S are
+  unchanged apart from the §6.S Gate G note. **Authorization: NONE.**
+
+---
+
+**Recorded, 2026-09-29, by Owner-Only Release Polish & Acceptance v1.**
+
+**Accepted delta -- the owner's decision, recorded here, not decided here.**
+
+- **Gate G is waived by the owner.** It is **not passed**. No participant
+  was recruited, contacted or sent anything; no finding was collected from
+  anyone but the owner. MockingBird must never be described -- in the
+  release, its documentation, launch material or any report -- as
+  externally validated, independently tested, or as having passed a
+  private pre-release cohort.
+- **The owner is the sole pre-release tester until public release.**
+- **Sequence, reconciled.** Previously: *External Pre-Release Acceptance
+  (Gate G) -> Final Release Hardening (Lane S) -> the one public launch*.
+  Now: *owner-only pre-release acceptance (owner testing plus
+  disposable-home native-Windows acceptance of each private candidate) ->
+  Final Release Hardening -> the one public launch*. The one-release
+  doctrine (§7) is unchanged: no beta, and the publish/announce decision
+  remains the owner's alone.
+- **Evidence lost by this waiver (disclosed, not substituted):**
+  - *Independent setup diversity:* no other homes, networks, Windows
+    builds and editions, locales, time zones, antivirus/SmartScreen
+    policies or disk layouts.
+  - *Hardware diversity:* no other GPUs (or GPU-less PCs), network/USB
+    cameras, or Camera Node hardware than the owner's own reference
+    setup.
+  - *User diversity:* no non-developer following only the shipped
+    materials (README-FIRST, onboarding) without the developer's knowledge
+    of the system; no independent accessibility, comprehension or
+    expectation findings; no independent findings intake. The owner's
+    knowledge of the system biases what gets exercised.
+  - Owner testing and automated/native acceptance **reduce** these gaps
+    for the owner's own configuration only; they do not close them.
+- **Historical Gate G material is preserved unchanged:**
+  [external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md),
+  `docs/gate-g-launch-package-v1/`,
+  [external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md)
+  and
+  [external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md](external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md).
+  The assembled participant bundle stays in ignored `dist/` and is not
+  sent. Its open `{{OWNER}}` placeholders are no longer needed.
+
+**Authorized.** *Owner-Only Release Polish & Acceptance v1*, directly by
+the owner, starting from `c02ffd5` (version `0.1.0`, schema `v61`,
+accepted Host candidate source `2272126`): (1) this record; (2) O-1 --
+recorded media without a capture time must read "Capture time unknown",
+never as the 1970 placeholder formatted as a date, preserving raw
+timestamps, provenance, ordering, evidence and reviewed truth, and using
+an existing provenance fact rather than inferring from old dates; (3) O-2
+-- a detector-produced offline Visit must not be called "manual media",
+without inventing evidence or Detection rows; (4) the embedded
+README-FIRST (five-step onboarding including Account; Local Data -> *Shut
+down MockingBird* as the primary stop, Task Manager/restart only for a
+forced stop; precise Local Only wording with opt-in network features;
+FFmpeg and BirdNET weights not bundled; accurate uninstall/data
+retention) with packaging tests that keep it true; (5) the
+midnight-boundary fixture in `test_today_dashboard_shows_only_corrected_
+truth`, without changing production Today/date semantics; then one frozen
+candidate-source commit, a fresh private Windows Host artifact (and the
+Camera Node artifact from the same commit if needed for consistency, with
+no Pi/hardware claim), independent verification, and native-Windows
+acceptance on a disposable home. Non-goals: new capability, schema
+change, detector/model/threshold change, Camera Node behaviour change,
+dependencies, Pi work, reopening accepted milestones. No push, tag,
+signature, publication, upload, recruitment or contact. Protected files
+and `uv.lock` untouched.
+
+**Status: IN PROGRESS** (this record). *(Superseded 2026-09-29: executed,
+classification A -- see the closure entry above; authorization returned to
+NONE.)* The closure -- candidate SHA,
+artifact identities, native-Windows evidence, validation, limitations and
+classification -- is added here and in
+`docs/owner-only-release-polish-acceptance-v1-report.md` when the
+milestone completes.
+
+---
+
+**Closure recorded, 2026-09-29, by Gate G -- Launch Package Refresh v1**
+(see
+[external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md](external-pre-release-acceptance-gate-g-launch-package-refresh-v1-report.md)).
+This was a bounded refresh under the freeze. It was not product
+development.
+
+- **Artifact, unchanged and not rebuilt:** Windows ZIP
+  `124939b96bde155fceb34595a8ab41d7ca65ef2c3ff9a1d4a6bdeaeecc8dc650`
+  (`build_id c1b25f79d2db3f10`, source `2272126`, `0.1.0`, schema `v61`);
+  Camera Node wheel `38dfac47…`. Checked this session: both `SHA256SUMS`
+  OK; `verify_release_artifact.py` OK; all 212/212 packaged
+  `mockingbird/*.py` files byte-identical to `2272126`; `LICENSE` and
+  `THIRD_PARTY_NOTICES.md` identical; no BirdNET weights, no FFmpeg.
+- **Materials reconciled:** the new package is in
+  `docs/gate-g-launch-package-v1/` (tracked sources). The assembled bundle
+  is in the ignored `dist/gate-g-launch-package-v1-2272126/`: the ZIP,
+  manifest, SBOM, `SHA256SUMS` and `PROVENANCE.txt`, plus consent,
+  install/verify, limitations, first-use tasks, diagnostics/support
+  bundle, backup/uninstall/withdrawal, and the findings template. The
+  package corrects four statements from 2026-09-08 that no longer matched
+  the candidate: four-step onboarding, stopping only through Task Manager,
+  BirdNET "downloads a model", and a bare `python` Doctor command.
+  §§2-9 of the old materials are marked superseded; the historical report
+  is unchanged.
+- **Disclosed, not fixed:** the ZIP's own `README-FIRST.txt` still
+  describes stopping only through Task Manager. That method is still safe,
+  and changing the file needs a rebuild. Recommended for Final Release
+  Hardening.
+- **Owner inputs remaining:** `{{PARTICIPANT_NAME}}`/cohort roster,
+  `{{OWNER_NAME}}`, `{{OWNER_CONTACT}}`, `{{DELIVERY_CHANNEL}}`,
+  `{{FINDINGS_CHANNEL}}`. Also open: approval of the wording, the go/no-go,
+  and whether any participant may use the Camera Node path.
+- No product, schema, model or Camera Node change; no new Pi evidence; no
+  contact, upload, account, push, tag, signature or publication. The
+  protected files and `uv.lock` are byte-identical. **Gate G is not
+  started. Authorization: NONE.**
+
+---
+
+**Closure recorded, 2026-09-29, by Native-Windows Runtime Shutdown &
+Listener Resilience Correction v1** (see
+[native-windows-runtime-shutdown-listener-resilience-correction-v1-report.md](native-windows-runtime-shutdown-listener-resilience-correction-v1-report.md)).
+
+**Accepted delta -- the owner's decision, recorded here, not decided
+here.** The Internal Release Candidate Rebuild & Native-Windows Acceptance
+v1 report is accepted as valid evidence. Candidate `661d054` is
+**rejected**. F-1 and F-2 are v0.1 **release blockers**; F-3 is a **P1**
+that must close before Gate G. Only the bounded correction was authorized:
+no Gate G, Pi work, feature development, publishing, tagging, signing or
+pushing.
+
+**Status: EXECUTED -- CORRECTION COMPLETE.** No release blocker from the
+prior acceptance remains open.
+
+- **Fixes:**
+  - **F-2:** on Windows, the uvicorn server now runs on a selector event
+    loop instead of the bundled CPython 3.12.7 Proactor loop. The change is
+    scoped to the server loop only; other platforms are unchanged. The
+    premise was verified: nothing on that loop needs Proactor.
+  - **F-1:** the selector loop removes the trigger. In addition, a bounded
+    `timeout_graceful_shutdown` of 5 s was selected from measured native
+    teardown (drain + lifespan 0.45-0.59 s, exit 0.83-1.06 s). It also
+    ends a previously unbounded wait on an open MJPEG-style stream.
+    `mark_clean_shutdown()` still runs last in the unchanged lifespan
+    teardown.
+  - **F-3:** the existing Doctor Storage check blocks on a missing media
+    root only once a MediaAsset has been recorded.
+  - Tests were written first: one red-then-green focused test per finding.
+    `scripts/native_windows_runtime_resilience_acceptance.py` was added.
+- **Candidate identity:**
+  - Frozen source SHA `2272126bfed784b48862fd59b99e19e03202b26f`, version
+    `0.1.0`, schema `v61`.
+  - Windows ZIP SHA-256
+    `124939b96bde155fceb34595a8ab41d7ca65ef2c3ff9a1d4a6bdeaeecc8dc650`
+    (`build_id c1b25f79d2db3f10`, `source_clean: true`, 19,284 files /
+    4,923,709,105 bytes, unsigned, SBOM 59 components identical to
+    `661d054`).
+  - Camera Node wheel SHA-256
+    `38dfac47a6ea6b164fe82e94642540d02be213506b7ee7d6e1090afe93f6d904`,
+    byte-identical to the `661d054` wheel.
+  - Both artifacts are private under ignored
+    `dist/native-windows-runtime-correction-v1-2272126*/`.
+- **Verification:**
+  - Verifier OK; `SHA256SUMS` all OK; a native `Get-FileHash` and the
+    native extraction match the manifest.
+  - Model provenance and all dependency lists are identical to the
+    accepted values. The only content changes against `661d054` are
+    `runtime.py`, `doctor.py` and build metadata.
+  - No FFmpeg or BirdNET weights in the ZIP.
+  - All packaged modules and Camera Node modules are byte-identical to
+    `2272126`.
+- **Native-Windows acceptance (disposable homes, ports 8141-8145, port 8000
+  untouched):**
+  - **F-2:** the exact prior burst gave 0/3 listener deaths (900 abortive
+    connections, health reachable after every burst); the untouched
+    `661d054` gave 3/3.
+  - **Resets then in-app shutdown:** 3/3 clean (exit < 0.9 s, nothing
+    remaining, relaunch a single process with
+    `previous_shutdown_clean: true`).
+  - **Ctrl+C after resets:** 3/3 clean.
+  - **Real Edge sessions:** 3 consecutive sessions with navigation, UI
+    media upload/use and in-app shutdown, each exiting cleanly in <= 3.3 s.
+  - **F-3:** Doctor after default onboarding is `HEALTHY` (no false
+    `FAIL`), and with stored media and the media root removed it is still
+    `FAIL`/blocking.
+  - **Prior rows 1-3 and 6-9:** repeated and passed -- identity, install
+    and onboarding, the product loop with an honest BioCLIP abstention and
+    human truth, abrupt recovery with byte-identical data, America/New_York
+    DST, and v59 -> v61 upgrade/restore with the downgrade guard.
+  - Live camera and Observation resume were not exercisable.
+- **Validation:**
+  - Tier 2: 639 passed / 1 skipped / 0 failed.
+  - Core: 6235 passed / **1 failed**. The failure is non-attributable: a
+    pre-existing midnight-boundary fixture defect in
+    `test_today_dashboard_shows_only_corrected_truth`, reproduced
+    identically on unmodified `673ccf1`.
+  - Protected files and `uv.lock` are byte-identical and untracked.
+- **Pi:** still unavailable; **no new Pi evidence was produced**; no
+  Camera Node code changed. Previously accepted hardware evidence remains
+  frozen and is not re-attributed.
+- **Verdict:** candidate `2272126` is corrected and re-accepted on native
+  Windows within the scope above. The next release decision belongs to the
+  owner. **Gate G remains unexecuted and unwaived.** Nothing was pushed,
+  tagged, signed, published or distributed. §6 lanes A-S are unchanged.
+
+---
+
+**Closure recorded, 2026-09-28, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1** (see
+[internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md](internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md)).
+
+**Status: EXECUTED -- NOT ACCEPTED.** It reproduced one release-blocker
+candidate on the exact frozen candidate, plus two further genuine defects.
+None was fixed (non-goal). A bounded correction contract is proposed in the
+report's §9; it is not authorized.
+
+- **Frozen source SHA:** `661d0540ad6b832db47539232ec7b1cc6d2594e2`, version
+  `0.1.0`, schema `v61`. The source is unchanged by this closure; only
+  documentation changed.
+- **Artifacts (reused, not rebuilt -- integrity passed):** Windows
+  `MockingBird-windows-x64.zip` SHA-256
+  `c63fea5a62eda5397651c3d492a392768ced6e2be921fa3f802ba18645c65645`
+  (`build_id b4630af21a31c341`, `source_clean: true`, 19,284 files /
+  4,923,707,741 bytes, unsigned, CycloneDX SBOM 59 components). Camera Node
+  wheel SHA-256
+  `38dfac47a6ea6b164fe82e94642540d02be213506b7ee7d6e1090afe93f6d904`.
+  Both kept private under ignored `dist/` paths.
+- **Verifier results:** `scripts/verify_release_artifact.py` returned OK on
+  the `dist/` copy and on the copy staged to Windows. A native
+  `Get-FileHash` matched. Native extraction matched the manifest's file count
+  and bytes. For the Camera Node, all 19 wheel entries matched the manifest,
+  all 15 modules and the installer were byte-identical to `661d054`, and every
+  `SHA256SUMS` entry was OK.
+- **Native-Windows evidence (disposable homes under `C:\MBRC`, ports
+  8123-8127; port 8000 untouched):**
+  - **Identity:** the running identity matched the manifest.
+  - **Install and first run:** native unpack; the `.vbs` launch; all
+    five onboarding steps completed in real Microsoft Edge.
+  - **Media setup:** Manual-media setup, folder preview (a true dry run)
+    and imports, using real recorded field inputs from the reference Pi
+    captured 2026-09-25.
+  - **Detector:** MDv5a ONNX at `score_threshold 0.1`, `cuda_only_verified`
+    (1772 CUDA / 0 CPU nodes) on an RTX 4060 Ti.
+  - **Classifier:** BioCLIP-2 loaded from the packaged bundle with hashes
+    equal to the manifest.
+  - **Product loop:** recorded ingest (2 candidate Visits,
+    `creates_truth: false`) -> evidence -> Review Queue -> BioCLIP
+    suggestion, which honestly abstained -> explicit human "Unknown Bird"
+    corrections (authoritative) -> Bird Log (4 confirmed) -> Today, which
+    held its count (5 -> 5, "2 visits confirmed today").
+  - **Recovery:** abrupt-termination recovery was honest
+    (`previous_shutdown_clean: false`) with all data and media
+    byte-identical. A graceful restart with no connection reset was
+    clean.
+  - **Time:** `Eastern Standard Time` -> `America/New_York`, with both DST
+    transitions correct.
+  - **Upgrade:** v59 (`039ce7d`) -> v61 on disposable copies, with an
+    automatic verified `pre_migration` backup and human truth preserved.
+    Restoring that backup rolled back a post-upgrade change, first creating a
+    verified `pre_restore` safety backup, and the restored database
+    re-migrated. The v59 binary safely refused the v61 database.
+  - **Browser evidence:** 35 real-browser screenshots.
+  - **Not exercisable here, and not claimed:** live camera preview and
+    readiness, and Observation start/resume. No live camera was available:
+    the webcam was disconnected and the Pi unavailable.
+- **Findings:**
+  - **F-1 -- RELEASE-BLOCKER CANDIDATE.** The in-app *Shut down MockingBird*
+    hangs forever on native Windows after any client connection reset. It
+    happened organically in 2/2 real-browser sessions, and in 0/11 sessions
+    with no reset. Root cause: in the bundled CPython 3.12.7, Proactor
+    `_call_connection_lost` raises `WinError 10054` before
+    `server._detach()`, so uvicorn 0.54's `server.wait_closed()` waits
+    forever. `runtime.py` leaves `timeout_graceful_shutdown` unbounded.
+  - **F-2 -- genuine defect, deterministic 3/3.** A burst of abortive
+    connections makes the Proactor accept loop close the listening socket
+    (`WinError 64`), leaving a live but unreachable process.
+  - **F-3 -- genuine defect, deterministic 2/2.** Doctor reports
+    `UNHEALTHY` / BLOCKING "media storage folder does not exist" right after
+    default onboarding, until the first media write.
+  - Five non-blocking observations are disclosed in the report's §7.
+    Classification of F-2/F-3 as blocking is the owner's decision.
+- **Pi limitation (precise):** the exact candidate wheel was
+  package-verified this session. The handoff records that it *reportedly*
+  passed a read-only `--preflight` against the reference Pi earlier in this
+  milestone, and that result was not re-observed. The Pi is no longer
+  available. The candidate was **not** freshly installed, upgraded, paired,
+  streamed or field-run on any Camera Node. Previously accepted Camera Node
+  hardware evidence is preserved and is not re-attributed to this artifact.
+- **Validation:** Tier 1 passed. Tier 2 focused
+  packaging/verification/installation/upgrade/recovery/runtime/Doctor
+  suites at `661d054`: **604 passed, 0 failed**. These suites do not cover
+  F-1/F-2, which are Windows-Proactor-only, or F-3. Tier 3 reuses the
+  accepted CI & Core Validation Closure v1 baseline (source unchanged).
+  Protected files and `uv.lock` are byte-identical and untracked.
+- **Verdict:** the candidate at `661d054` is **not accepted** for
+  release-candidate status. The single next release decision belongs to the
+  owner: whether to authorize the report's §9 correction (*Native-Windows
+  Runtime Shutdown & Listener Resilience Correction v1*, which would need a
+  new SHA, a rebuild and a repeat of this acceptance), or to classify
+  otherwise. **Gate G remains unexecuted and unwaived.** Nothing was pushed,
+  tagged, signed, published or distributed. §6 lanes A-S are unchanged.
+
+---
+
+**Recorded, 2026-09-26, by Internal Release Candidate Rebuild &
+Native-Windows Acceptance v1.**
+
+**Accepted delta -- the owner's decision, recorded here, not decided here.**
+*CI & Core Validation Closure v1* is **accepted at
+`149eb707ae6f13df29fc73334462d8d6d81aa124`, with the documented local
+transport-worker timing exception.** This is not a claim that the
+final-revision local run was green: local `6b6c0fc` 6231 passed / 0
+failed; local `d0b5dd0` 6230 passed / 1 failed (the recorded timing
+exception -- isolated reruns support attribution, they do not replace the
+full-run result); hosted `e2c543e` 6143 passed / 0 failed with every
+workflow job and the structural preflight green. One ffmpeg-dependent skip
+guard was added and is disclosed by identity (report §5/§13); fifteen of
+the sixteen hosted-only failures reproduced in local simulation and the
+BirdNET one was established from hosted evidence; the Calm Attention
+exact-midnight tick remains a real, disclosed product edge, contained by
+the service's exception handling and subsequent ticks, not repaired by
+changing test timezones. The contradictory summaries in the report and in
+this file (§3 entry below, §14 pointer) are corrected in place; the
+historical evidence and the complete remaining queue (§6, lanes A-S,
+classifications unchanged) are preserved.
+
+**Authorized.** *Internal Release Candidate Rebuild & Native-Windows
+Acceptance v1*, directly by the owner: (1) commit this record correction
+and freeze that exact commit as the candidate source SHA -- never a moving
+`main`; (2) build the Windows Host and Camera Node artifacts from it with
+the existing `build_local_product.py`/`build_camera_node_artifact.py`
+machinery in the documented supported configuration (version `0.1.0`,
+schema `v61`, accepted MDv5a ONNX detector at threshold 0.1, BioCLIP-2
+identification policy, no promotion or threshold change, no BirdNET model
+weights), distinguishing a complete intended-use candidate from CI's
+structural bundle and reporting -- never disguising -- any missing
+required component; record source SHA, configuration, hashes, manifests,
+SBOM, licensing notices and independent verifier results, artifacts kept
+private under ignored paths; no signing key created, no tag/release, no
+visibility change, no field-data upload -- unsigned if no authorized
+signing arrangement exists; (3) validate the built artifact on native
+Windows against a clearly identified disposable instance with isolated
+data, proving the running instance's identity matches the manifest and
+exercising the bounded release path (install, launch, onboarding, real
+frontend, supported camera connection/preview and readiness, accepted
+detector/classifier runtime loading on the intended hardware, observe ->
+evidence -> review/correction -> durable history, Today truth after
+confirmations, restart/resume and named-timezone/DST behaviour,
+`v59 -> v61` backup/restore/upgrade on disposable copies, clean shutdown
+and documented recovery) with real browser evidence for the critical
+visible path; (4) independently verify the Camera Node artifact and run
+only safe compatibility checks against the reference topology -- no
+reflash, upgrade, unpair, stop or reconfiguration of the live Node.
+Non-goals: product feature work, schema change, refactor, model
+evaluation, public distribution, Gate G recruitment; any newly reproduced
+blocker is reported with cause and a bounded proposed correction contract,
+not fixed opportunistically. Tier 1 focused packaging/provenance checks;
+Tier 2 affected packaging/verification/installation/upgrade/recovery
+suites; Tier 3 reuses the verified Core baseline where source is
+unchanged. Normal scoped documentation commits and pushes to the existing
+private repository authorized; no force-push or history rewrite. Protected
+files and `uv.lock` preserved byte-for-byte and untracked.
+
+**Status: IN PROGRESS** (this correction commit). *(Superseded
+2026-09-28: executed, NOT ACCEPTED -- see the closure entry above;
+authorization returned to NONE.)* The closure record --
+frozen SHA, artifact hashes, verifier results, native-Windows evidence,
+Camera Node verification limits, exceptions/blockers, verdict and the
+single next release decision -- is added here and in
+`docs/internal-release-candidate-rebuild-native-windows-acceptance-v1-report.md`
+when the milestone completes. **Gate G remains unexecuted and unwaived; an
+internally accepted candidate is not permission to publish or announce.**
+
+---
+
 **Recorded, 2026-09-26, by CI & Core Validation Closure v1** (see
 [ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)).
 
@@ -3934,7 +5357,18 @@ tag or deployment.
 **Status: EXECUTED.** Final HEAD: the documentation-closure commit on top of
 `e2c543e` (hash in `git log`; final code revision `d0b5dd0`, workflow fix
 `e2c543e`); schema `v61`, version
-`0.1.0`, unchanged. Outcome: both the hosted and the local Core gate pass with zero failures on the final code revision, with no concealed coverage reduction. All six recorded local
+`0.1.0`, unchanged. Outcome (as corrected 2026-09-26 -- see the report's
+§13): hosted Core passes with zero failures on the final code revision
+(`d0b5dd0`, 6143 passed; again at `e2c543e`, where every workflow job and
+the structural preflight also passed); local Core passes with zero
+failures at `6b6c0fc` (6231 passed, every production change of the
+milestone); local Core at the final code revision `d0b5dd0` recorded
+**6230 passed, one failure** -- the already-documented transport-worker
+timing exception, whose isolated reruns support the attribution but do not
+replace the full-run result -- so that run is **not** called green. No
+concealed coverage reduction: zero assertions weakened, zero xfails added,
+**one ffmpeg-dependent skip guard added and disclosed** (report §5). All
+six recorded local
 failures (two obsolete Doctor copy expectations after `4ec0702`; one
 date-dependent environmental-context fixture, closed by giving
 `get_place_environmental_context_today` the same optional `now` keyword its
@@ -3943,11 +5377,14 @@ dependent biodiversity fixtures and one date-dependent change-summary
 fixture, closed by pinning the HTTP routes' clock to the fixtures' own
 anchors) and all sixteen hosted-only failures (nine host-timezone
 assumptions, five ffmpeg assumptions, one optional-package assumption, one
-built-frontend assumption -- every one reproduced locally under a
-simulated hosted environment and corrected in tests only) are closed with
-their intended contracts preserved. One narrow product edge was disclosed
-with a proposed contract rather than patched (a Calm Attention sync tick
-landing exactly on local midnight; report §5). `Q-2`, `Q-4` and the stale
+built-frontend assumption -- fifteen reproduced locally under a
+simulated hosted environment, the BirdNET one established from the hosted
+evidence, all corrected in tests only) are closed with their intended
+contracts preserved. One narrow product edge was disclosed with a proposed
+contract rather than patched (a Calm Attention sync tick landing exactly on
+local midnight; report §5): it remains a real product edge, contained by
+the service's own exception handling and the following tick, not repaired
+by changing test timezones. `Q-2`, `Q-4` and the stale
 `camera_connected` field keep their disposition: **nonblocking, deferred,
 not fixed.**
 
@@ -4166,7 +5603,7 @@ The correction milestone's remaining acceptance work is complete.
 | Schema | **v61** (`v60 -> v61`, one additive table); version `0.1.0` unchanged |
 | **Final Core result** | **`11 failed, 6205 passed, 4 skipped, 35 deselected, 11 xfailed` (0:41:00) -- ZERO failures attributable to this milestone** |
 | Core attribution method | all eleven reproduce deterministically in isolation, and all eleven fail **identically at the pre-correction baseline `8a45d1a`**. Four are the established recorded pre-existing set; seven were bisected to `3d78f8a` (Review Queue Scale Closure v1, 2026-09-23) -- `73dbcd4` PASS -> `3d78f8a` FAIL, direct parent, so the attribution is exact |
-| Real-hardware evidence | real Windows 10 Pro Host + real Raspberry Pi 4 Camera Node (`node-76ec8e53ae586dd0`, real `ov64a40` CSI camera); build confirmed via the product's own `GET /api/product/instance`; four Host restarts; v60 -> v61 migration of a real 169-Visit / 343-asset field database with all counts intact and **0 intent rows** |
+| Real-hardware evidence | real Windows 10 Pro Host + real Raspberry Pi 4 Camera Node (`node-<id>`, real `ov64a40` CSI camera); build confirmed via the product's own `GET /api/product/instance`; four Host restarts; v60 -> v61 migration of a real 169-Visit / 343-asset field database with all counts intact and **0 intent rows** |
 | Protected files | all seven re-verified byte-identical to their hashes of record and still untracked; `uv.lock` untouched. Working tree carries those eight untracked files and nothing else |
 | Push | **not pushed.** No tag, no publish, no remote operation |
 
@@ -7315,7 +8752,7 @@ reconciliation:** determined the brief's suspected staleness (§1's
 commit that records it) is this document's own established, consistent
 convention across at least two full verified cycles, not a defect --
 verified, not corrected. **Camera Node golden path:** real, live evidence
-against the reachable reference Pi (`node-76ec8e53ae586dd0`) -- health,
+against the reachable reference Pi (`node-<id>`) -- health,
 both compatibility-preflight profiles (`ordinary_monitoring` and
 `field_acceptance`, the latter including a real 5/5-valid bounded RTT
 clock-calibration batch), an honest `409 pairing_code_used` rejection on a
@@ -7976,7 +9413,7 @@ branch, pointing at a new standalone script
 mirrors the `clock` check's own established "not measurable from a
 standalone Doctor check" precedent rather than adding a live probe to
 Doctor itself. Exercised live against the real, already-upgraded
-reference Camera Node (`192.168.1.112:8787`) from two independent
+reference Camera Node (`<node-ip>:8787`) from two independent
 network paths -- this sandbox and a real native-Windows Host (the actual
 Gate A Host platform) -- both profiles `compatible` on both paths, each
 with a real 5/5 valid RTT-bounded calibration batch (22.65ms RTT from
@@ -8273,7 +9710,7 @@ dependency the v8 reconciliation immediately below named as Gate A's own
 sharpest remaining item. See
 [reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
 for the complete record. Classification **A**. The real reference Camera
-Node (`node-76ec8e53ae586dd0`, Pi 4, `192.168.1.112`) was upgraded, using
+Node (`node-<id>`, Pi 4, `<node-ip>`) was upgraded, using
 the accepted `scripts/install_camera_node.py` mechanism end to end (build
 against accepted HEAD `1a39479` -> preflight -> install), from
 `git_commit baf9fdb` (71 commits behind, built 2026-08-27, predating the
@@ -9807,52 +11244,34 @@ contributor/research provenance.
 This is the most important section. Lanes are not removed merely because
 they are not next.
 
-**Four release-shape categories.** Every lane below already sorts into one
-of four categories; renaming the release model (§7, above) does not change
-which lanes are release-critical, deferred, or later -- it only fixes the
-words used to describe them:
+**Superseding release-shape categories (owner decision, 2026-09-29).** The
+earlier `release-critical / after release` split is superseded for the first
+public launch. The lettered lanes below remain the historical and technical
+inventory; this grouping controls their current scheduling:
 
-- **A. Release-critical** -- must be complete/credible before the one
-  public launch. Lanes marked **RELEASE-CRITICAL** below carry this:
-  representative field correctness/whole-product acceptance (Lane R),
-  camera/source golden path (Lane G), storage/retention/recovery (Lane M),
-  Local Only/privacy (Lane N), platform/runtime support truth (Lane O),
-  release/distribution closure (Lane P), accessibility/performance (Lane
-  Q), appliance/update/recovery (Lane L) -- plus, as the internal gates
-  above become credible, External Pre-Release Acceptance and Final
-  Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
-- **B. Pre-release decisions** -- decisions required before launch, not
-  necessarily implementation milestones: the codebase `LICENSE` --
-  **RESOLVED**: the owner selected MIT and mechanical adoption (a real
-  `LICENSE` file, package metadata, README truth, distribution inclusion)
-  is now complete, per MIT Source License Adoption & Lane P Mechanical
-  Closure v1 (Lane P now **CLOSED** -- see Lane P, below; full ffmpeg
-  distribution licensing, the item this line previously named alongside
-  it, is fully resolved); the still-open BirdNET
-  commercial-adjacent legal posture (§2, above -- blocks only
-  commercial-adjacent use of the optional acoustic feature, per the
-  2026-09-06 reconciliation below, not all public launch); platform-support
-  declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
-  Integrations scope (Lane K, resolved -- see Lane K, below); any other
-  genuine unresolved release decision as it surfaces.
-- **C. After release** -- real product development explicitly not
-  required for launch, kept so it is not lost: complete remote/
-  intermittent-WAN/LTE, solar/battery, custom CM4/CM5 (Lane B, and §8,
-  below); research-grade remote-field acceptance; broad multi-site (Lane
-  F's own explicitly-deferred remainder); native mobile (Lane E's own
-  explicitly-out-of-scope remainder); advanced acoustic analytics (Lane
-  A's own remaining bounded follow-up); mature automatic mammal species
-  identification (Lane I).
-- **D. Later / evidence-driven** -- the long-range, demand-driven queue in
-  §9, below: GenICam, GigE Vision, USB3 Vision, radiometric thermal,
-  specialized industrial cameras, individual-animal recognition,
-  population estimates, behavior prediction, causal ecological modeling,
-  large cloud/fleet infrastructure.
+- **A. Pre-1.0 software-completable** -- every named gap whose contract,
+  implementation, and meaningful acceptance can be completed with current
+  repository code, deterministic fixtures/simulation, CI, local services,
+  and available packaged-host environments. The exact promoted inventory is
+  §8 and
+  [final-product-release-scope-reconciliation-v1.md](final-product-release-scope-reconciliation-v1.md).
+- **B. External-dependency gated** -- work requiring real users,
+  representative field data, unavailable physical hardware, sustained field
+  conditions, external credentials/institutions, legal action, signing
+  authority, or a production service that cannot be honestly simulated.
+  These dependencies remain disclosed and must never be described as passed.
+- **C. Later / demand-and-evidence gated** -- industrial/specialized camera
+  protocols, individual-animal recognition, population/behavior/causal
+  claims, provider-specific adapters, and large cloud/fleet infrastructure.
+  Although prototypes could be typed in software, their valid product
+  contracts require demand, hardware, or evidence that does not exist.
+- **D. Accepted/frozen** -- completed lanes remain frozen unless the promoted
+  queue exposes a concrete dependency, correctness/security issue, or the
+  owner explicitly reopens them.
 
-This is a navigational grouping over the existing lettered lanes (A-S), not
-a new or renumbered lane system: no lane is removed, renamed, or promoted
-between categories by this grouping, and each lane's own status text below
-remains authoritative over this summary.
+This is a sequencing change, not permission for one giant implementation.
+Each surviving software gap is authorized only as a bounded milestone after
+the Pre-1.0 Software Gap Audit confirms it is genuinely still open.
 
 ### A. Acoustic / BirdNET Productization
 
@@ -10867,7 +12286,7 @@ declined to share real admin credentials, create a temporary account, or
 participate live right now. Nothing about the frozen perception/admission/
 Visit/evidence/classification stack was exercised or judged. Real,
 positive, non-live evidence preserved from this attempt: the reference
-Camera Node (`192.168.1.112:8787`) is reachable at the network level; the
+Camera Node (`<node-ip>:8787`) is reachable at the network level; the
 native-Windows Host dev deployment is healthy at the accepted commit
 (schema v53); the full accepted acceptance-tooling chain (recorder,
 motion-screen/contact-sheet review, independent encounter table,
@@ -11999,7 +13418,7 @@ read-only, no-`ProductRepository`-construction design invariant. No new
 check, no existing check's status/recoverability changed.
 
 Exercised live against the real, already-upgraded reference Camera Node
-(`192.168.1.112:8787`, confirmed LAN-reachable) from two independent
+(`<node-ip>:8787`, confirmed LAN-reachable) from two independent
 network paths: this sandbox (WSL2) and, more representatively, a real
 native-Windows Host (the actual Gate A Host platform) via the existing,
 accepted `scripts/deploy_windows_dev.py`, with the deployed instance's
@@ -12967,7 +14386,28 @@ desired; the standing BirdNET commercial-adjacent legal question; the
 publish/announce decision itself) are named explicitly in the report's §9
 and are not, and cannot be, resolved by this or any engineering milestone.
 
+**2026-09-29 update (Gate G waived by the owner; owner-only pre-release
+acceptance):** the owner waived Gate G -- **waived, not passed** -- and is
+the sole pre-release tester until public release (see §3, *Owner-Only
+Release Polish & Acceptance v1*, for the complete record and the
+disclosed loss of independent setup, hardware and user-diversity
+evidence). This lane's upstream dependency on "External Pre-Release
+Acceptance findings" is replaced by owner-only pre-release acceptance
+findings; the framing paragraph above and the dated updates before this
+one are preserved as history. Sequence: *owner-only pre-release
+acceptance -> Final Release Hardening -> the one public launch*. This
+lane's status remains **LAST**.
+
 ## 7. One-release doctrine
+
+**Owner correction, 2026-09-29:** "one release" now means one complete first
+public **`1.0.0`** launch, not publication of the accepted internal
+`0.1.0` baseline followed by completion later. Maintenance, security,
+compatibility, and future evidence-driven updates after `1.0.0` remain
+possible; "final product" is a launch-scope decision, not a promise that
+software will never change. The release includes all responsibly testable
+software work promoted in §8. Hardware/user/external dependencies in §9 are
+disclosed boundaries, not silently claimed capabilities.
 
 MockingBird's public release target is a trustworthy single-site/home
 observatory with:
@@ -12999,36 +14439,54 @@ observatory with:
 Acoustics may ship as the now-accepted optional capability. Remote
 LTE/solar/custom field hardware are not release blockers.
 
-## 8. After-release queue
+## 8. Pre-1.0 promoted software queue
 
-Explicitly keep:
+The audit required by the scope reconciliation is complete. The detailed
+evidence, removals, task contract, and dependency order are in
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md).
 
-- complete remote/intermittent-WAN/LTE field deployment;
-- solar/battery;
-- custom CM4/CM5 hardware;
-- research-grade remote-field acceptance;
-- broad multi-site;
-- native mobile;
-- advanced acoustic analytics;
-- mature automatic mammal species identification.
+**Removed as stale/already delivered:** generic soundscape analytics and the
+Remote/Intermittent-WAN foundation's resumable/idempotent chunks, pacing,
+bounded backlog, outage/restart simulation, ledger, and low-level diagnostics.
+Remote operator-facing configuration/backlog visibility remains; real LTE/Pi/
+carrier/power acceptance remains external.
 
-Unless new evidence creates a dependency, do not promote these into
-release scope.
+**Surviving bounded sequence:**
 
-## 9. Later / demand-driven queue
+1. Attention Integrity & Health Reliability v1 -- **ACCEPTED, A**.
+2. Everyday UX & Accessibility Closure v1 -- **ACCEPTED, A** (`e5cbfa3`).
+3. Orphan Media Integrity & Recovery v1 -- **ACCEPTED, A** (`6b927da`).
+4. Research Export & Ecological Workflow Completion v1 -- **ACCEPTED, A** (`f886400`; Core 6365/0, browser 218/218).
+5. Environmental Sensor Ingestion Foundation v1 -- **deferred post-1.0** (2026-10-03 scope lock).
+6. Intervention & Habitat Outcomes v1 -- **deferred post-1.0** (2026-10-03 scope lock).
+7. Ecosystem UX Closure v1 -- **deferred** with items 5-6 where it exists only for those domains.
+8. Multi-Camera Attribution & Filter Consolidation v1 -- **ACCEPTED, A** (`28463ea`; browser 226/226).
+9. Legacy Local-Camera Concurrency & Remote Operator UX v1 -- resource-aware scheduler **deferred**; real limit documented instead; remote LTE/data-budget operator UX **post-1.0**.
+10. Multi-Observatory Software Model v1 -- **post-1.0**.
+11. Optional Background Notification Transport v1 -- **post-1.0**.
+12. Linux Host Distribution & Service Lifecycle v1 -- **post-1.0**.
+13. Public Product, Deployment & Support Closure v1 -- **ACCEPTED, A** (`b7f708c`; docs tier, targeted 125 passed).
+14. Final 1.0 Hardening & Launch Candidate.
 
-Examples:
+No item is currently authorized. Each later item requires acceptance of its
+predecessor and an explicit scheduler update; this list is not blanket
+authorization.
 
-- GenICam;
-- GigE Vision;
-- USB3 Vision;
-- radiometric thermal;
-- specialized industrial cameras;
-- individual-animal recognition;
-- population estimates;
-- behavior prediction;
-- causal ecological modeling;
-- large cloud-first infrastructure.
+## 9. External-dependency and later queue
+
+Externally gated: real LTE/carrier/remote-Pi acceptance; solar/battery/BMS,
+CM4/CM5/custom hardware, specialized cameras and sustained field operation;
+real GPU/driver soak; acoustic field calibration; site-specific learning or
+mammal identification lacking representative reviewed field evidence;
+professional/research and user-diversity claims; native mobile device/store
+acceptance; live external OAuth/institutional workflows; legal/trademark and
+signing-certificate decisions.
+
+Demand/evidence gated: GenICam, GigE Vision, USB3 Vision, radiometric
+thermal, individual-animal recognition, population estimates, behavior
+prediction, causal ecological modeling, provider-specific adapters, and
+large cloud/fleet infrastructure. These are not promoted merely because a
+mock implementation could be written without the missing evidence.
 
 ## 10. Observability cross-cutting requirements
 
@@ -13122,6 +14580,17 @@ rather than cleaned up; re-verify their presence untouched at the start of
 each session that touches this repository.
 
 ## 14. Validation baselines
+
+**Latest Core run (Native-Windows Runtime Shutdown & Listener Resilience
+Correction v1, working tree committed as `2272126`, 2026-09-29):** 6235
+passed / 1 failed / 4 skipped / 35 deselected / 11 xfailed (42m16s). The
+single failure,
+`test_everyday_discovery_ux_closure.py::test_today_dashboard_shows_only_corrected_truth`,
+is a pre-existing midnight-boundary fixture defect: its Visits are dated
+30-50 minutes before "now". It reproduces with the local clock at 00:20 on
+unmodified `673ccf1`, and the file passes 19/19 otherwise. Tier 2 (18
+runtime/shutdown/Doctor/packaging/recovery/backup/upgrade/installation
+files): 639 passed / 1 skipped / 0 failed. See the correction report, §6.
 
 **Latest accepted Core checkpoint (Pre-Release Trust & Correctness
 Correction v1):** 6057 passed / **5 failed** / 4 skipped / 35 deselected
@@ -13228,12 +14697,21 @@ recent actual full-suite number.
 > passed 3/3 in isolation and 7/7 with its file immediately afterwards
 > and passes on the hosted runner at the same revision; hosted Core at `d0b5dd0` (GitHub Actions
 > run 36249121286, `ubuntu-24.04`, CPython 3.12.14, core dependencies +
-> `[test]` only): `6143 passed, 0 failed, 85 skipped, 35 deselected, 11
-> xfailed` (25:08).** Schema **v61**. A green suite, locally and hosted.
+> `[test]` only) and again at `e2c543e` (run 36250782155, every job and the
+> structural preflight green): `6143 passed, 0 failed, 85 skipped, 35
+> deselected, 11 xfailed`.** Schema **v61**. *Corrected 2026-09-26:* this
+> is a green suite **hosted on the final code revision and locally at
+> `6b6c0fc`**; the final-revision local run (`d0b5dd0`, 6230 passed / 1
+> failed) is not called green -- the isolated reruns support attributing
+> that one failure to the recorded timing exception but do not replace the
+> full-run result. One ffmpeg-dependent skip guard was added
+> (`test_offline_ingest.py::test_offline_ingest_malformed_video_fails_closed_with_no_partial_truth`,
+> its file's existing real-`ffprobe` guard; report §5).
 > The recorded six-set is closed (all six root-caused as obsolete
 > expectations or date/time-dependent fixtures, none a product defect) and
 > the sixteen hosted-only failures the first completed hosted run exposed
-> are closed as validation-environment assumptions. See
+> are closed as validation-environment assumptions (fifteen reproduced in
+> local simulation; the BirdNET one established from hosted evidence). See
 > [ci-core-validation-closure-v1-report.md](ci-core-validation-closure-v1-report.md)
 > §3-§6 for the run records, the identity-level local-versus-hosted
 > collection comparison (6,246 local vs 6,239 hosted; the difference is
@@ -14280,8 +15758,8 @@ rather than rewriting accepted history in place.
   found and documented, not fixed -- see the milestone report)
 - **Local Species Prior:** not authorized
 - **Another classifier campaign:** not authorized
-- **LICENSE:** still genuinely absent -- open business/legal decision, not
-  resolved by this or any prior milestone (see Lane P, above)
+- **LICENSE:** *(stale at that checkpoint; corrected 2026-10-01)* MIT was
+  adopted 2026-09-06 and a real root `LICENSE` file exists -- see Lane P
 - **Representative Field Acceptance (attempted 2026-08-25):** Gate C --
   OPEN, insufficient representative evidence; deferred by explicit user
   decision before any live session started (real-authentication/consent
@@ -14320,3 +15798,26 @@ rather than rewriting accepted history in place.
   parent still `21fbc42`, was independent, objective confirmation neither
   peer had committed anything in the interim).
 - **Push:** explicit authorization required
+
+### Current authorization summary
+
+*(Updated 2026-10-01; the checkpoint above is historical. §3 is the
+authoritative record.)*
+
+- **Authorization:** **NONE -- AWAITING ChatGPT GLOBAL SEQUENCING DECISION.** Nothing is executed-pending-acceptance. Prior accepted: Multi-Camera Attribution & Filter Consolidation v1 (`28463ea`, schema `v62`, browser 226/226, Core 6374 passed with two attributed non-regressions, A).
+- **Latest accepted milestone:** Public Product, Deployment & Support Closure
+  v1, classification A (HEAD `b7f708c`, schema `v62`; docs tier, targeted
+  125 passed; accepted 2026-10-06).
+- **State:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST. No public
+  `0.1.0` release; first public target `1.0.0`.
+- **Candidate source:** `d7e61c1` (Windows ZIP `75d998f7…`, build
+  `c901ac14bce22fe4`) is the accepted internal baseline, not the final
+  public candidate. The Camera Node wheel is unchanged at `38dfac47…`.
+  **Schema:** `v62`.
+- **Browser gate:** complete default suite 203/203 at `c146eff` (accepted);
+  Everyday UX & Accessibility Closure v1 then ran 209/209 (203 + 6 new).
+- **Gate G:** waived, not passed. The owner is the sole pre-release
+  tester.
+- **Phase label:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
+- **Next action:** ChatGPT global sequencing decision (whether to declare the 1.0 capability set frozen and whether to authorize Final 1.0 Hardening).
+- **Latest accepted milestone:** Everyday Wildlife Experience & Presentation Refinement v1, **ACCEPTED WITH LIMITATIONS** 2026-10-15 at `fd8a57b` (schema `v62`; browser 240 passed at `fd8a57b`; 250/250, Fast 1,817 and native-Windows packaged validation are of earlier `a69d55e`; `fd8a57b` not yet packaged on native Windows; see §3). Portfolio capture/publication are owner-controlled. Authorization after it: **NONE**.

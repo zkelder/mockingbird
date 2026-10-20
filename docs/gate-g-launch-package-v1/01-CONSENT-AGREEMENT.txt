@@ -1,0 +1,100 @@
+MockingBird Private Pre-Release Testing -- Participant Agreement
+=================================================================
+
+WHAT THIS IS
+
+MockingBird is unreleased software. You are testing a private
+pre-release build (version 0.1.0). It is not a released product and not
+a public beta. {{OWNER_NAME}} is the only point of contact for support
+and for anything you report: {{OWNER_CONTACT}}.
+
+WHAT MOCKINGBIRD DOES WITH YOUR DATA
+
+- MockingBird is Local Only by default. Your camera footage, database,
+  and history stay on your own computer. There is no MockingBird cloud
+  service, account, or relay.
+- Nothing leaves your computer unless you turn on one of these yourself:
+  1. Weather context (Open-Meteo). Off by default. Turning on the
+     separate sunrise/sunset setting does not turn this on.
+  2. Access from your phone or another device. Off by default. It needs
+     a special start command (see the MockingBird guide) and still
+     requires signing in. Only use it on a network you trust.
+  Neither one turns on the other.
+- Bird-sound identification (BirdNET) is NOT included in this build. It
+  is never downloaded or installed for you. It is not part of this test.
+- Camera login details (for example an RTSP password) that you enter are
+  stored in PLAIN TEXT on your own computer. They are not encrypted.
+  They are protected only by your normal Windows account and file
+  permissions.
+- Privacy Zones and Ignore Zones stop activity in that area from
+  starting a Visit. They do NOT blur or remove that area from every
+  image MockingBird keeps. Do not rely on a Zone as a guaranteed blur.
+- Your camera may capture people (household members, visitors,
+  delivery drivers) as well as wildlife. That footage stays on your
+  computer like everything else.
+
+WHAT I MAY ASK YOU TO SHARE, AND WHAT I WON'T
+
+If you report a problem, I may ask for:
+- a plain description of what happened;
+- a MockingBird Doctor summary or a support bundle (see
+  05-DIAGNOSTICS-AND-SUPPORT.txt). Both leave out camera passwords,
+  pairing secrets, sign-in tokens, and all images/video;
+- basic facts about your setup (Windows version, graphics card, camera
+  type, roughly how many cameras).
+
+I will NOT routinely ask for your database file, your camera images or
+video, or your camera passwords. If one specific item is truly needed
+to reproduce a problem, I will ask for that one item, explain why, and
+you are free to say no.
+
+WHAT THIS SOFTWARE DOES NOT PROMISE
+
+- It does not guarantee correct species identification. It offers
+  guesses for you to confirm or correct, and it will sometimes honestly
+  say it is not sure rather than guess.
+- It does not promise a fixed time for a Visit to appear. Typically
+  about 80-115 seconds after the activity; occasionally several minutes
+  during busy activity.
+- It has no cloud dependency.
+- It is a nature-observation tool. It is not a security camera or
+  alarm system and has no security-alerting function.
+
+HOW LONG YOUR REPORTS ARE KEPT
+
+Anything you send me is kept at least until this private test and the
+release preparation that follows it are finished, so it can be used to
+fix real problems. You can ask me to delete anything you sent, at any
+time, including after you stop taking part.
+
+YOUR RIGHT TO STOP
+
+You can stop taking part at any time, for any reason, without
+explaining why. Your MockingBird data stays exactly where it already is,
+on your own computer. I will delete anything you sent me if you ask.
+
+ACKNOWLEDGEMENT
+
+Please tick each line, then sign and date.
+
+[ ] I understand this is unreleased, private software, not a public
+    beta.
+[ ] I understand MockingBird is Local Only by default and what that
+    means for my data.
+[ ] I understand camera login details I enter are stored in plain text
+    on my own computer.
+[ ] I understand Privacy/Ignore Zones stop Visits from starting in that
+    area, and do not blur every stored image.
+[ ] I agree to share bounded diagnostic information (written
+    descriptions, Doctor summaries, support bundles) as described above.
+[ ] I understand there is no guarantee of species-identification
+    accuracy, no guaranteed speed, no cloud dependency, and no
+    security-alerting function.
+[ ] I understand I can stop at any time without giving a reason.
+
+Name: ______________________________   Date: ______________
+
+Signature: ____________________________________________
+
+Please return the signed agreement to {{OWNER_NAME}} through
+{{OWNER_CONTACT}} before installing anything.

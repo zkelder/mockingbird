@@ -60,6 +60,9 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "doctor":
         from mockingbird.diagnostics.doctor_cli import run as doctor_run
         raise SystemExit(doctor_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "storage-integrity":
+        from mockingbird.diagnostics.storage_integrity_cli import run as storage_integrity_run
+        raise SystemExit(storage_integrity_run(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "support-bundle":
         from mockingbird.diagnostics.support_bundle_cli import run as support_bundle_run
         raise SystemExit(support_bundle_run(sys.argv[2:]))

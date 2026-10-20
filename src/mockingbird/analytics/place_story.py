@@ -201,6 +201,26 @@ DIVERSITY_MILESTONE_ORDINALS: tuple[int, ...] = (1, 5, 10, 25, 50, 100)
 
 
 
+StorySourceScope = Literal["place_level", "single_source", "multiple_sources"]
+
+
+@dataclass(frozen=True)
+class StorySourceContribution:
+    """One camera (Source) that contributed an encounter anchoring a Story
+    entry -- Multi-Camera Attribution & Filter Consolidation v1.
+
+    `visit_id` is the earliest reviewed Visit from that Source that anchors
+    the entry, so a reader can open each contributing camera's own evidence.
+    Identity is the stable Source id; `source_name`/`source_archived` are
+    display context only, resolved at read time.
+    """
+
+    source_id: str
+    source_name: str
+    visit_id: str
+    source_archived: bool = False
+
+
 @dataclass(frozen=True)
 class PlaceStoryEvent:
     """One Place Story entry -- a presentation derived from one or more
@@ -240,6 +260,19 @@ class PlaceStoryEvent:
     # not duplicate the underlying authoritative fact merely to display it
     # in a timeline").
     detail_refs: Mapping[str, str] = field(default_factory=dict)
+    # Cameras that contributed the concrete encounter(s) this entry is
+    # anchored to (first_seen / diversity_milestone / return). Empty means
+    # the entry is genuinely Place-level (an aggregate trend, a Feature
+    # change, phenology) or no attributable source data exists -- a camera is
+    # never fabricated, and with several contributors none is arbitrarily
+    # chosen as "the" camera.
+    contributions: tuple[StorySourceContribution, ...] = ()
+
+    @property
+    def source_scope(self) -> StorySourceScope:
+        if not self.contributions:
+            return "place_level"
+        return "single_source" if len(self.contributions) == 1 else "multiple_sources"
 
     def __post_init__(self) -> None:
         if self.event_end_date is not None and self.event_end_date < self.event_date:

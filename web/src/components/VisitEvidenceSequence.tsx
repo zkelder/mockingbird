@@ -3,7 +3,7 @@ import { apiClient } from "../api/client";
 import type { VisitEvidenceFrame } from "../api/types";
 import { EvidenceBadge } from "./EvidenceBadge";
 import { EvidenceZoomControls, EvidenceZoomViewport, useEvidenceZoom } from "./EvidenceImageViewer";
-import { formatDateTime } from "../utils";
+import { formatCaptureDateTime } from "../utils";
 
 interface VisitEvidenceSequenceProps {
   frames: VisitEvidenceFrame[];
@@ -19,6 +19,10 @@ interface VisitEvidenceSequenceProps {
   recommendedMediaAssetId?: string | null;
   /** Plain-language reason shown alongside the recommendation, if any. */
   recommendationNote?: string | null;
+  /** Owner-Only Release Polish & Acceptance v1 (O-1): false when these
+   * frames' times are the 1970 placeholder for a recording with no
+   * capture-time fact -- see `formatCaptureDateTime`. */
+  captureTimeKnown?: boolean;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -75,6 +79,7 @@ export function VisitEvidenceSequence({
   keyboardControls = false,
   recommendedMediaAssetId,
   recommendationNote,
+  captureTimeKnown,
 }: VisitEvidenceSequenceProps) {
   const persistedPrimaryIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
   const recommendedIndex = recommendedMediaAssetId
@@ -146,7 +151,7 @@ export function VisitEvidenceSequence({
   // viewport (pannable image) and controls (toolbar) render from it in two
   // different places below -- see the module comment in EvidenceImageViewer.
   const zoom = useEvidenceZoom({
-    alt: `Visit evidence captured ${formatDateTime(selectedFrame.captured_at)}`,
+    alt: `Visit evidence captured ${formatCaptureDateTime(selectedFrame.captured_at, captureTimeKnown)}`,
     frameKey: selectedFrame.media_asset_id,
     fullResolutionSrc: fullResolutionUrl(selectedFrame),
     naturalHeight: selectedFrame.height,
@@ -209,7 +214,7 @@ export function VisitEvidenceSequence({
               ? "Recommended view (supporting evidence)"
               : "Supporting evidence"}
         </strong>
-        <span>{formatDateTime(selectedFrame.captured_at)}</span>
+        <span>{formatCaptureDateTime(selectedFrame.captured_at, captureTimeKnown)}</span>
         <span>{relativeLabel(selectedFrame)}</span>
         <span>{evidenceRoleLabel(selectedFrame)}</span>
         {selectedFrame.width && selectedFrame.height ? (

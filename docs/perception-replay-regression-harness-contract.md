@@ -341,7 +341,7 @@ guidance. Consequently:
 **Concrete next step, explicitly out of scope for tonight, ready to run:**
 point `--provider onnx-cuda`/`--provider frame-driven-onnx-cuda` at the real
 model bundle
-(`/home/zkelder/projects/mockingbird-active/data/models/observation-onnx-cuda/frame-driven-provider-config.json`,
+(`/home/<user>/projects/mockingbird-active/data/models/observation-onnx-cuda/frame-driven-provider-config.json`,
 already referenced in the fixture registry) from an environment with real
 CUDA access, and re-run the same four fixtures. The harness requires no
 further code changes to do this -- only real hardware access this milestone

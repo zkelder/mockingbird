@@ -34,7 +34,7 @@ Verified present and untouched, both required artifacts:
   `stream-ca892992771c/20260820T222528Z` — not committed to the repository
   (raw media is gitignored by design), located instead on the real Windows
   host filesystem this WSL checkout can read via `/mnt/c` at
-  `C:\Users\zachk\AppData\Local\MockingBirdDev\acceptance-recordings\
+  `C:\Users\<user>\AppData\Local\MockingBirdDev\acceptance-recordings\
   stream-ca892992771c\20260820T222528Z`. Confirmed present (last modified
   Aug 20 19:55, consistent with the session's own recorded end time and no
   later modification) alongside its 6 prior sibling session directories.

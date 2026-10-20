@@ -78,6 +78,40 @@ computation, which every caller of this module must not do (see
 "Performance" below). Human truth determines *taxon eligibility* (the truth
 contract above); evidence quality, ranked here, determines *which image*.
 
+## Subject-region units (Everyday Wildlife Experience & Presentation Refinement v1)
+
+`mockingbird.analytics.representative_evidence.resolve_subject_region` is the
+one place a frame's `(has_subject_region, subject_pixel_area)` is computed,
+in *this frame's own pixels*. The two boxes a `VisitEvidenceFrame` can carry
+live in different coordinate spaces and are no longer conflated:
+
+- `normalized_track_box` is populated only for a frame that still spans the
+  camera's full field of view with proven alignment (`_frame_local_subject_box`),
+  so it is a fraction of that image: subject area is `box x (width, height)`.
+- `normalized_crop_box` is present on a *derived crop* and records where the
+  crop sits in its parent frame. The crop image is already the subject-centred
+  region, so its subject area is its own pixel area. The earlier computation
+  multiplied the crop's own dimensions by that parent-relative fraction,
+  shrinking a good crop's area twice over and letting a wide frame with a tiny
+  speck outrank a clean subject-centred crop. A crop whose short side is under
+  `MIN_CROP_SHORT_SIDE_PX` (64) earns no region credit.
+- A malformed box (not four fractions in [0, 1], or empty), or an unknown pixel
+  size, yields `(False, 0)`; nothing is guessed.
+
+Truth precedence is untouched: candidates are still gathered only from Visits
+already classified as confirmed wildlife, so a better-looking image can never
+outrank correct provenance. The selector's ordering is unchanged.
+
+### Thumbnail framing (presentation only)
+
+`web/src/components/subjectFraming.ts` frames a representative thumbnail and
+never changes which image is selected. A vouched `normalized_track_box` on a
+sufficiently large frame centres the subject with generous padding (the tracker
+box is known to be imprecise); a derived crop is shown whole; a small source
+(longest edge under 360 px) is shown whole on a soft backdrop rather than
+stretched; a malformed box, or a zoom that would fall under 160 px across, shows
+the whole frame.
+
 ## Source-resolution interaction
 
 Reuses the accepted source-resolution evidence path exactly: `VisitEvidenceFrame`

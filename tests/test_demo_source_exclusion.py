@@ -1131,3 +1131,91 @@ async def test_repurposed_demo_source_counts_toward_place_biodiversity(
     body = response.json()
     assert body["historical_baseline"]["distinct_taxa_count"] == 1
     assert [taxon["label"] for taxon in body["taxa"]] == ["squirrel"]
+
+
+# Owner-Only Final Release Hardening -- Browser Suite Determinism &
+# Demo-Boundary Closure v1. Review Queue's collapsed "Reviewed history"
+# panel lists every effective ReviewLabel from `GET /api/review-labels` and
+# titles each one "Correction truth" -- so on a fresh install the seeded
+# demo label (`review-label-squirrel-001`, `imported_curated`) read as the
+# user's own reviewed history, while the Reviewed tab, Bird Log and exports
+# already excluded it. The raw endpoint stays demo-inclusive by default
+# (audit access, and many callers rely on it); `real_sources_only=true` is
+# the product-surface read, filtered through the same `_real_stream_ids`
+# seam as every other demo-exclusion site.
+
+DEMO_SEED_REVIEW_LABEL_ID = "review-label-squirrel-001"
+DEMO_BIRD_VISIT_ID = "visit-bird-feeder-001"
+
+
+async def test_raw_review_labels_read_still_includes_demo_seed_labels(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/review-labels")
+    assert response.status_code == 200
+    assert DEMO_SEED_REVIEW_LABEL_ID in {label["id"] for label in response.json()}
+
+
+async def test_real_sources_only_review_labels_excludes_demo_and_keeps_real_corrections(
+    client: httpx.AsyncClient, fresh_repository: ProductRepository,
+) -> None:
+    stream_id, zone_id = _add_real_stream_and_zone(fresh_repository)
+    _add_real_needs_review_visit(
+        fresh_repository,
+        stream_id=stream_id,
+        zone_id=zone_id,
+        event_id="event-reviewed-history-real",
+        visit_id="visit-reviewed-history-real",
+    )
+    real = await client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "human",
+            "target_type": "visit",
+            "target_id": "visit-reviewed-history-real",
+            "label": "northern_cardinal",
+        },
+    )
+    assert real.status_code == 201
+    # A human correction on the demo Visit is still demo activity: the
+    # Review Queue never offered it, so it is not the user's history either.
+    demo = await client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "human",
+            "target_type": "visit",
+            "target_id": DEMO_BIRD_VISIT_ID,
+            "label": "blue_jay",
+        },
+    )
+    assert demo.status_code == 201
+
+    response = await client.get("/api/review-labels", params={"real_sources_only": "true"})
+    assert response.status_code == 200
+    labels = response.json()
+    assert [(label["target_type"], label["target_id"], label["label"]) for label in labels] == [
+        ("visit", "visit-reviewed-history-real", "northern_cardinal")
+    ]
+
+    raw_target_ids = {label["target_id"] for label in (await client.get("/api/review-labels")).json()}
+    assert {"visit-reviewed-history-real", DEMO_BIRD_VISIT_ID} <= raw_target_ids
+
+
+async def test_real_sources_only_review_labels_is_empty_on_a_fresh_install(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/review-labels", params={"real_sources_only": "true"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_real_sources_only_review_labels_includes_a_repurposed_demo_source(
+    client: httpx.AsyncClient, fresh_repository: ProductRepository,
+) -> None:
+    """Parity with `_real_source_condition()`: once the seeded demo Source
+    gains a real provider, its history is real history."""
+
+    de_demo_seeded_source(fresh_repository)
+    response = await client.get("/api/review-labels", params={"real_sources_only": "true"})
+    assert response.status_code == 200
+    assert DEMO_SEED_REVIEW_LABEL_ID in {label["id"] for label in response.json()}

@@ -14,7 +14,7 @@ import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { explainSpeciesSuggestion } from "../components/suggestionExplanation";
-import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets, userFacingErrorMessage } from "../utils";
 
 type SpeciesSuggestionFilter = "all" | SpeciesSuggestionStatus;
 
@@ -196,7 +196,7 @@ export function SpeciesSuggestionsPage({
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Could not load species suggestions.",
+        userFacingErrorMessage(caught, "Could not load species suggestions."),
       );
     } finally {
       if (showLoading) {
@@ -211,7 +211,7 @@ export function SpeciesSuggestionsPage({
       setCandidatePacks(packs);
       return packs;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load candidate packs.");
+      setError(userFacingErrorMessage(caught, "Could not load candidate packs."));
       return [];
     }
   }
@@ -249,7 +249,7 @@ export function SpeciesSuggestionsPage({
       const matches = await apiClient.getTaxonomySuggestions({ category: "bird", query });
       setCandidateTaxonomyMatches(matches.filter((label) => label.is_species));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not search the bird taxonomy.");
+      setError(userFacingErrorMessage(caught, "Could not search the bird taxonomy."));
     }
   }
 
@@ -288,7 +288,7 @@ export function SpeciesSuggestionsPage({
           : `${saved.display_name} v${saved.version} created with ${saved.candidate_count} bird candidates.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save the candidate pack.");
+      setError(userFacingErrorMessage(caught, "Could not save the candidate pack."));
     } finally {
       setIsSavingCandidatePack(false);
     }
@@ -303,7 +303,7 @@ export function SpeciesSuggestionsPage({
       editCandidatePack(cloned);
       setMessage(`${cloned.display_name} v${cloned.version} cloned. Edit its ordered bird members, then save a successor.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not clone the candidate pack.");
+      setError(userFacingErrorMessage(caught, "Could not clone the candidate pack."));
     } finally {
       setIsSavingCandidatePack(false);
     }
@@ -326,7 +326,7 @@ export function SpeciesSuggestionsPage({
       }
       setMessage(`${pack.display_name} v${pack.version} archived. Streams safely fall back if it was selected.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not archive the candidate pack.");
+      setError(userFacingErrorMessage(caught, "Could not archive the candidate pack."));
     } finally {
       setIsSavingCandidatePack(false);
     }
@@ -368,7 +368,7 @@ export function SpeciesSuggestionsPage({
       parsedAlternatives = parseJsonArray(alternativesJson, "Alternatives");
       parsedEvidenceRegion = parseOptionalJsonObject(evidenceRegionJson, "Evidence region");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Suggestion fields are invalid.");
+      setError(userFacingErrorMessage(caught, "Suggestion fields are invalid."));
       return;
     }
 
@@ -417,7 +417,7 @@ export function SpeciesSuggestionsPage({
       });
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Manual species suggestion could not be created.",
+        userFacingErrorMessage(caught, "Manual species suggestion could not be created."),
       );
     } finally {
       setIsCreating(false);
@@ -436,7 +436,7 @@ export function SpeciesSuggestionsPage({
       );
       await loadSuggestions({ showLoading: false, selectSuggestionId: updated.id });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Suggestion status could not be updated.");
+      setError(userFacingErrorMessage(caught, "Suggestion status could not be updated."));
     } finally {
       setActionId(null);
     }

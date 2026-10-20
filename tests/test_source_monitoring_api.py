@@ -26,7 +26,7 @@ pytestmark = pytest.mark.anyio
 
 SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
-EXTERNAL_URL = "http://192.168.1.50/camera/still.jpg"
+EXTERNAL_URL = "http://192.168.1.23/camera/still.jpg"
 
 
 @pytest.fixture
@@ -178,7 +178,7 @@ def seed_external_url_snapshot(
         content=png_bytes(frame),
         content_type="image/png",
         fetched_at=datetime(2026, 1, 2, tzinfo=UTC),
-        url_host="192.168.1.50",
+        url_host="192.168.1.23",
         note=note,
     )
     return media_asset.id
@@ -334,7 +334,7 @@ async def test_storage_guardrail_blocks_monitor_start(
             content=png_bytes(),
             content_type="image/png",
             fetched_at=datetime(2026, 1, 2, tzinfo=UTC),
-            url_host="192.168.1.50",
+            url_host="192.168.1.23",
             note="Storage guardrail fixture.",
         )
 

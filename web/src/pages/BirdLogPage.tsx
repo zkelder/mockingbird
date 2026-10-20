@@ -19,18 +19,23 @@ import type {
   Zone,
 } from "../api/types";
 import { activityLibraryPath } from "./ActivityLibraryPage";
+import { CameraFilter } from "../components/CameraFilter";
+import { streamCameraOptions } from "../cameraFilter";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
+import { thumbnailFraming } from "../components/subjectFraming";
 import {
   changeStatusBadge,
+  formatCaptureDateTime,
   formatDateTime,
   historicalStatusBadge,
   modalityBadge,
   regularityNarrativeBadge,
   seasonalPatternNote,
+  userFacingErrorMessage,
 } from "../utils";
 
 interface BirdLogPageProps {
@@ -185,17 +190,19 @@ function hourLabel(hour: number): string {
   return `${hour % 12 || 12} ${suffix}`;
 }
 
-function thumbnailAlt(label: string, observedAt: string): string {
-  return `${label}, reviewed observation ${formatDateTime(observedAt)}`;
+function thumbnailAlt(label: string, observedAt: string, captureTimeKnown?: boolean): string {
+  return `${label}, reviewed observation ${formatCaptureDateTime(observedAt, captureTimeKnown)}`;
 }
 
 function JournalThumbnail({
   label,
   observedAt,
+  captureTimeKnown,
   representative,
 }: {
   label: string;
   observedAt: string;
+  captureTimeKnown?: boolean;
   representative?: WildlifeJournalRepresentative | WildlifeJournalObservation | null;
 }) {
   const [failed, setFailed] = useState(false);
@@ -208,20 +215,28 @@ function JournalThumbnail({
   // seen" state, never the same copy a genuinely missing image uses.
   if (evidence.content_type.startsWith("audio/")) {
     return (
-      <div className="journal-thumbnail-fallback journal-thumbnail-audio" aria-label={`${label}, heard ${formatDateTime(observedAt)}`}>
+      <div className="journal-thumbnail-fallback journal-thumbnail-audio" aria-label={`${label}, heard ${formatCaptureDateTime(observedAt, captureTimeKnown)}`}>
         🔊 Heard
       </div>
     );
   }
+  const framing = thumbnailFraming(evidence);
   return (
     <img
-      alt={thumbnailAlt(label, observedAt)}
+      alt={thumbnailAlt(label, observedAt, captureTimeKnown)}
+      className={framing.className || undefined}
+      style={framing.style}
       loading="lazy"
       onError={() => setFailed(true)}
       src={`${apiClient.baseUrl}${evidence.preview_url}`}
     />
   );
 }
+
+// Search/recency only earn their space once the log is long enough to need them.
+const MIN_SPECIES_FOR_SEARCH = 4;
+const MIN_SPECIES_FOR_RECENT_STRIP = 6;
+const RECENT_STRIP_SIZE = 5;
 
 type LikelySightingEvidenceSource = "identification" | "visit_preview" | "unavailable";
 
@@ -383,6 +398,7 @@ function BreakdownList({
 }
 
 export function BirdLogPage({
+  sources,
   streams,
   onOpenVisit,
   onOpenStreams,
@@ -397,6 +413,9 @@ export function BirdLogPage({
   const [customEndDate, setCustomEndDate] = useState(location.endDate || localDateInputValue());
   const [zones, setZones] = useState<Zone[]>([]);
   const [overview, setOverview] = useState<WildlifeJournalOverviewResponse | null>(null);
+  // Everyday Wildlife Experience & Presentation Refinement v1: client-side
+  // find-a-species over the already-loaded overview -- no new endpoint.
+  const [speciesSearch, setSpeciesSearch] = useState("");
   const [history, setHistory] = useState<WildlifeJournalHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -454,7 +473,7 @@ export function BirdLogPage({
       });
       setCollectionMessage(response.result.status === "updated" ? `Added Visit to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
       setCollections((current) => current.map((item) => item.id === response.collection.id ? response.collection : item));
-    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+    } catch (caught) { setCollectionMessage(userFacingErrorMessage(caught, "Could not add this Visit to the Collection.")); }
   }
 
   async function addObservationTag(visitId: string) {
@@ -476,7 +495,7 @@ export function BirdLogPage({
             : item),
         },
       } : current);
-    } catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not add this tag to the Visit."); }
+    } catch (caught) { setTagMessage(userFacingErrorMessage(caught, "Could not add this tag to the Visit.")); }
   }
 
   useEffect(() => {
@@ -521,7 +540,7 @@ export function BirdLogPage({
           if (active) setHistory(next);
         })
         .catch((caught) => {
-          if (active) setError(caught instanceof Error ? caught.message : "Could not load this Bird Log history.");
+          if (active) setError(userFacingErrorMessage(caught, "Could not load this Bird Log history."));
         })
         .finally(() => {
           if (active) setIsLoading(false);
@@ -584,11 +603,28 @@ export function BirdLogPage({
         };
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load more reviewed observations.");
+      setError(userFacingErrorMessage(caught, "Could not load more reviewed observations."));
     } finally {
       setIsLoadingMore(false);
     }
   };
+
+  const searchTerm = speciesSearch.trim().toLowerCase();
+  const visibleLabels = (overview?.labels ?? []).filter(
+    (item) =>
+      !searchTerm ||
+      item.display_name.toLowerCase().includes(searchTerm) ||
+      item.label.replace(/_/g, " ").toLowerCase().includes(searchTerm),
+  );
+  // Most recent first; a label whose latest time is the recorded-video
+  // placeholder has no real "recent" time, so it never claims a recency slot.
+  const recentlySeen =
+    (overview?.labels.length ?? 0) >= MIN_SPECIES_FOR_RECENT_STRIP
+      ? [...(overview?.labels ?? [])]
+          .filter((item) => item.latest_capture_time_known !== false)
+          .sort((a, b) => b.latest_observed_at.localeCompare(a.latest_observed_at))
+          .slice(0, RECENT_STRIP_SIZE)
+      : [];
 
   if (!journalLabel) {
     return (
@@ -616,6 +652,17 @@ export function BirdLogPage({
               {overviewOrders.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
+          {overview && overview.labels.length >= MIN_SPECIES_FOR_SEARCH ? (
+            <label>
+              Find a species
+              <input
+                onChange={(event) => setSpeciesSearch(event.target.value)}
+                placeholder="Search by name"
+                type="search"
+                value={speciesSearch}
+              />
+            </label>
+          ) : null}
         </section>
         {likelySpecies.length > 0 ? (
           <section className="panel journal-likely-panel" aria-label="Likely sightings awaiting confirmation">
@@ -672,12 +719,42 @@ export function BirdLogPage({
             action={<button className="secondary-action" onClick={streams.length === 0 ? onOpenStreams : onOpenReview} type="button">{streams.length === 0 ? "Add Camera" : "Open Review Queue"}</button>}
           />
         ) : null}
-        {overview?.labels.length ? (
+        {recentlySeen.length > 0 && !searchTerm ? (
+          <section aria-label="Recently seen" className="panel journal-recent-strip">
+            <div className="section-heading">
+              <div>
+                <h2>Recently seen</h2>
+                <span className="meta-text">The latest confirmed species — open one to see its history.</span>
+              </div>
+            </div>
+            <div className="journal-recent-list">
+              {recentlySeen.map((item) => (
+                <button className="journal-recent-item" key={item.label} onClick={() => navigateJournalLabel(item.label)} type="button">
+                  <strong>{item.display_name}</strong>
+                  <span className="meta-text">{formatCaptureDateTime(item.latest_observed_at, item.latest_capture_time_known)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {searchTerm && overview && visibleLabels.length === 0 ? (
+          <EmptyState
+            title={`No species match “${speciesSearch.trim()}”`}
+            description="Check the spelling, or clear the search to see everything you have confirmed."
+            action={<button className="secondary-action" onClick={() => setSpeciesSearch("")} type="button">Clear search</button>}
+          />
+        ) : null}
+        {searchTerm && overview && visibleLabels.length > 0 ? (
+          <span className="meta-text" role="status">
+            Showing {visibleLabels.length} of {overview.labels.length} species
+          </span>
+        ) : null}
+        {visibleLabels.length ? (
           <section className="journal-label-grid" aria-label="Confirmed wildlife labels">
-            {overview.labels.map((item) => (
+            {visibleLabels.map((item) => (
               <article className="journal-label-card" key={item.label}>
                 <button className="journal-label-image" onClick={() => navigateJournalLabel(item.label)} type="button">
-                  <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} representative={item.representative} />
+                  <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} captureTimeKnown={item.latest_capture_time_known} representative={item.representative} />
                 </button>
                 <div className="journal-label-card-body">
                   <div className="section-heading">
@@ -708,8 +785,8 @@ export function BirdLogPage({
                     <Sparkline activity={item.recent_activity} />
                   </div>
                   <div className="journal-label-facts">
-                    <span>First: <strong>{formatDateTime(item.first_observed_at)}</strong></span>
-                    <span>Latest: <strong>{formatDateTime(item.latest_observed_at)}</strong></span>
+                    <span>First: <strong>{formatCaptureDateTime(item.first_observed_at, item.first_capture_time_known)}</strong></span>
+                    <span>Latest: <strong>{formatCaptureDateTime(item.latest_observed_at, item.latest_capture_time_known)}</strong></span>
                     <span>Seen on {item.stream_count} camera{item.stream_count === 1 ? "" : "s"} · {item.zone_count} area{item.zone_count === 1 ? "" : "s"}</span>
                   </div>
                   <button className="secondary-action" onClick={() => navigateJournalLabel(item.label)} type="button">Open history</button>
@@ -723,6 +800,13 @@ export function BirdLogPage({
   }
 
   const activeHistory = history;
+  // False only on positive server provenance that the latest observation's
+  // time is the recorded-video placeholder (see `formatCaptureDateTime`).
+  const snapshotTimeKnown = activeHistory?.latest_observation?.capture_time_known !== false;
+  const hasHistoryAssociations =
+    [...(activeHistory?.habitat_associations ?? []), ...(activeHistory?.weather_associations ?? [])].some(
+      (association) => association.status !== "no_clear_association",
+    );
   // Everyday Product / Discovery UX Closure v1: a multi-subject Visit
   // Assembly Event (schema 36) can have two simultaneous individuals of the
   // same species -- with nothing marking them as concurrent, a same-species
@@ -782,13 +866,11 @@ export function BirdLogPage({
             >Apply</button>
           </>
         ) : null}
-        <label>
-          Stream
-          <select onChange={(event) => commitLocation({ ...location, streamId: event.target.value, zoneId: "", offset: 0 })} value={location.streamId}>
-            <option value="">All Streams</option>
-            {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
-          </select>
-        </label>
+        <CameraFilter
+          onChange={(ids) => commitLocation({ ...location, streamId: ids[0] ?? "", zoneId: "", offset: 0 })}
+          options={streamCameraOptions(streams, sources)}
+          value={location.streamId ? [location.streamId] : []}
+        />
         <label>
           Zone
           <select onChange={(event) => commitLocation({ ...location, zoneId: event.target.value, offset: 0 })} value={location.zoneId}>
@@ -907,28 +989,37 @@ export function BirdLogPage({
                 </div>
               ) : null}
               <section className="journal-history-grid">
-                <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatDateTime(activeHistory.first_observation.observed_at)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
-                <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatDateTime(activeHistory.latest_observation.observed_at)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
+                <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.first_observation.observed_at, activeHistory.first_observation.capture_time_known)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
+                <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatCaptureDateTime(activeHistory.latest_observation.observed_at, activeHistory.latest_observation.capture_time_known)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
               </section>
-              {activeHistory.place_context ? (
+              {activeHistory.place_context && (snapshotTimeKnown || hasHistoryAssociations) ? (
                 // Biodiversity & Place Intelligence v1: context tied to the
                 // single most recent reviewed observation only -- never a
                 // per-Visit or statistical summary, and never phrased as a
                 // cause. See docs/biodiversity-place-intelligence-v1-contract.md.
+                //
+                // Portfolio acceptance: when that observation came from a
+                // recorded video with no capture-time fact, its stored time is
+                // the 1970 placeholder -- rendering it (or daylight/phenology
+                // computed from it) would invent a capture time. The snapshot
+                // lines are shown only when the server says the time is known;
+                // history-wide associations below do not depend on it.
                 <section className="journal-history-grid">
                   <div className="panel">
                     <h2>Habitat &amp; environment</h2>
-                    <span className="meta-text">
-                      Recorded alongside the most recent sighting, {formatDateTime(activeHistory.place_context.observed_at)} — association only, never a cause.
-                    </span>
-                    {activeHistory.place_context.environmental_context.available ? (
+                    {snapshotTimeKnown ? (
+                      <span className="meta-text">
+                        Recorded alongside the most recent sighting, {formatDateTime(activeHistory.place_context.observed_at)} — association only, never a cause.
+                      </span>
+                    ) : null}
+                    {snapshotTimeKnown && activeHistory.place_context.environmental_context.available ? (
                       <p className="meta-text">
                         {activeHistory.place_context.environmental_context.daylight_state === "day"
                           ? "Recorded during daylight"
                           : "Recorded at night"}
                       </p>
                     ) : null}
-                    {activeHistory.place_context.phenology_context.length > 0 ? (
+                    {snapshotTimeKnown && activeHistory.place_context.phenology_context.length > 0 ? (
                       <ul className="habitat-phenology-list">
                         {activeHistory.place_context.phenology_context.map((observation) => (
                           <li key={observation.id}>
@@ -979,9 +1070,9 @@ export function BirdLogPage({
                 {activeHistory.gallery.observations.length === 0 ? <EmptyState title="No observations match this tag" description="The reviewed-label counts and milestones above remain unchanged by tag filtering." /> : null}
                 {activeHistory.gallery.observations.map((observation) => (
                   <article className="journal-gallery-card" key={observation.visit_id}>
-                    <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
+                    <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} captureTimeKnown={observation.capture_time_known} representative={observation} /></button>
                     <div className="journal-gallery-body">
-                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}{(() => {
+                      <div className="section-heading"><div><h3>{formatCaptureDateTime(observation.observed_at, observation.capture_time_known)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}{(() => {
                         // Everyday Discovery / Product Experience v2 (Phase
                         // B): a confidently-associated visual+acoustic pair
                         // already collapsed into this one card server-side

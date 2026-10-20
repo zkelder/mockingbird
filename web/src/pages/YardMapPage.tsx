@@ -16,7 +16,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { cameraHealthLabel, cameraHealthTone, formatDateTime, formatLabel } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface YardMapPageProps {
   onOpenStream: (streamId: string) => void;
@@ -102,9 +102,7 @@ export function YardMapPage({
       setData(await apiClient.getYardMap(nextRange));
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not refresh the Yard Map. The last successful view is still shown.",
+        userFacingErrorMessage(caught, "Could not refresh the Yard Map. The last successful view is still shown."),
       );
     } finally {
       setIsLoading(false);
@@ -128,7 +126,7 @@ export function YardMapPage({
         "Blank local canvas created. Camera positions remain approximate context.",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create the blank Yard Map.");
+      setError(userFacingErrorMessage(caught, "Could not create the blank Yard Map."));
     }
   }
 
@@ -144,7 +142,7 @@ export function YardMapPage({
         "Local yard image saved. It is protected configuration media, not Visit evidence.",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save that local yard image.");
+      setError(userFacingErrorMessage(caught, "Could not save that local yard image."));
     }
   }
 
@@ -164,7 +162,7 @@ export function YardMapPage({
         "Background removed. Placements remain on the blank canvas.",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not remove the yard image.");
+      setError(userFacingErrorMessage(caught, "Could not remove the yard image."));
     }
   }
 
@@ -188,7 +186,7 @@ export function YardMapPage({
         `Saved approximate position for ${stream.name}.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save this camera placement.");
+      setError(userFacingErrorMessage(caught, "Could not save this camera placement."));
     }
   }
 
@@ -207,7 +205,7 @@ export function YardMapPage({
       );
       setSelectedStreamId(stream.id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not place this camera.");
+      setError(userFacingErrorMessage(caught, "Could not place this camera."));
     }
   }
 
@@ -228,7 +226,7 @@ export function YardMapPage({
       );
       setSelectedStreamId(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not remove this camera from the map.");
+      setError(userFacingErrorMessage(caught, "Could not remove this camera from the map."));
     }
   }
 
@@ -243,7 +241,7 @@ export function YardMapPage({
         `Placed ${zone.name} as map context. Its Stream image-space Zone is unchanged.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not place this Zone.");
+      setError(userFacingErrorMessage(caught, "Could not place this Zone."));
     }
   }
 
@@ -266,7 +264,7 @@ export function YardMapPage({
         `Saved map context for ${zone.name}.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save this Zone anchor.");
+      setError(userFacingErrorMessage(caught, "Could not save this Zone anchor."));
     }
   }
 
@@ -286,7 +284,7 @@ export function YardMapPage({
         `Removed ${zone.name} from the map. Its image-space Zone is unchanged.`,
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not remove this Zone anchor.");
+      setError(userFacingErrorMessage(caught, "Could not remove this Zone anchor."));
     }
   }
 

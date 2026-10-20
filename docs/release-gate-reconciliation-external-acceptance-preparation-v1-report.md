@@ -56,7 +56,7 @@ matching the governing directive's own expected baseline exactly:
 | Schema | v59 | `CURRENT_DATABASE_SCHEMA_VERSION = 59` (`src/mockingbird/storage/database.py:46`) |
 | Latest accepted milestone | Lane R Release-Budget Adjudication & Gate A Decision v1 | Confirmed -- `aeff038` is that milestone's own reconciliation commit |
 | Lane R | CLOSED | Confirmed -- `release-execution-state.md` §6.R top status line |
-| Lane P | CLOSED | Confirmed -- real `LICENSE` (MIT, `Copyright (c) 2026 MockingBird contributors`), `pyproject.toml`/`web/package.json` SPDX metadata present on disk |
+| Lane P | CLOSED | Confirmed -- real `LICENSE` (MIT, `Copyright (c) 2026 Zac Kelder`), `pyproject.toml`/`web/package.json` SPDX metadata present on disk |
 | Current authorization | NONE | Confirmed -- every recent milestone's own close returns this value |
 | Push state | Not pushed | `+381 -0` vs. `origin/main` |
 | Worktree | Clean except seven preserved files | Confirmed byte-identical to `release-execution-state.md` §13's own list (below) |

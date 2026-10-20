@@ -83,12 +83,12 @@ anything:
 ## Pre-upgrade RTT protocol RED
 
 Confirmed directly, live, immediately before the upgrade
-(`curl http://192.168.1.112:8787/node/v1/health` from this sandbox, which
+(`curl http://<node-ip>:8787/node/v1/health` from this sandbox, which
 has real, working LAN reachability to the Pi):
 
 ```json
 {
-  "node_id": "node-76ec8e53ae586dd0", "...": "...",
+  "node_id": "node-<id>", "...": "...",
   "self_test": {"status": "passed", "...": "..."},
   "watchdog": {"enabled": true, "...": "..."}
 }
@@ -173,7 +173,7 @@ files over SSH:
 ## Pairing/config result
 
 Pairing **survived the software upgrade itself intact** -- `node_id`
-(`node-76ec8e53ae586dd0`) and `pairing_required: false` were identical
+(`node-<id>`) and `pairing_required: false` were identical
 before and after, confirmed by both the live health endpoint and the
 installer's own `--status` view. This directly answers §16's primary
 question ("determine whether pairing survived... if preserved: verify
@@ -216,7 +216,7 @@ configured or needed here). Driven end to end through the real product API
    (`rtt-smoke-admin`, disposable password), never the operator's own
    identity.
 2. `POST /api/camera-nodes/pair` -- real pairing against
-   `http://192.168.1.112:8787` with the fresh code. Advertised cameras
+   `http://<node-ip>:8787` with the fresh code. Advertised cameras
    correctly included `picamera2-camera-0` (`provider_type: picamera2`,
    `status: available`) alongside the 7 `v4l2` fixtures; the real
    `picamera2` sensor was explicitly selected, not a fixture.
@@ -407,7 +407,7 @@ test, above):
 ## Local Only
 
 Every action in this milestone ran over a plain LAN connection between
-this sandbox and the real Pi (`192.168.1.112:8787`) -- the same connection
+this sandbox and the real Pi (`<node-ip>:8787`) -- the same connection
 already used for pairing/status in ordinary operation. No external NTP
 server, no internet reachability, and no cloud service was read or
 required anywhere: `sample_clock_round_trip` only ever calls the existing

@@ -9,7 +9,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel, sortedEntries } from "../utils";
+import { formatDateTime, formatLabel, sortedEntries, userFacingErrorMessage } from "../utils";
 
 interface ClassifierManifestPageProps {
   onOpenClassifierReadiness: () => void;
@@ -83,7 +83,7 @@ export function ClassifierManifestPage({
       setVisibleExampleCount(15);
       setVisibleSkippedCount(15);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load classifier manifest.");
+      setError(userFacingErrorMessage(caught, "Could not load classifier manifest."));
     } finally {
       setIsLoading(false);
     }
@@ -156,7 +156,7 @@ export function ClassifierManifestPage({
           : "Metadata export created. Review the local output directory before external training work.",
       );
     } catch (caught) {
-      setExportError(caught instanceof Error ? caught.message : "Could not create metadata export.");
+      setExportError(userFacingErrorMessage(caught, "Could not create metadata export."));
     } finally {
       setExportAction(null);
     }

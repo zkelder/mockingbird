@@ -42,7 +42,7 @@ import {
   isUnknownBirdLabel,
   taxonomyKey,
 } from "../components/taxonomy";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 type ReviewTriageCategory =
   | "animal_evidence"
@@ -81,6 +81,16 @@ const PRODUCT_REVIEW_PAGE_SIZE = 25;
 
 function productReviewTitle(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   if (item.product_category === "animal") {
+    // Everyday Wildlife Experience & Presentation Refinement v1: a card that
+    // carries MockingBird's explicit suggestion leads with it, still plainly
+    // provisional ("Likely", "needs your check") -- never a confirmation.
+    if (
+      item.suggestion_id &&
+      item.identification?.suggestion?.id === item.suggestion_id &&
+      item.media_asset?.media_type !== "audio"
+    ) {
+      return `Likely ${displayTaxonomyLabel(item.identification.suggestion.suggested_label, taxonomyLabels)} — needs your check`;
+    }
     // Acoustic / BirdNET Observation Foundation v1: honest about whether
     // this candidate's evidence was heard or seen.
     return item.media_asset?.media_type === "audio"
@@ -1816,7 +1826,7 @@ export function ReviewQueuePage({
       } catch (caught) {
         if (sequence === queueRequestSequence.current) {
           setQueuePageError(
-            caught instanceof Error ? caught.message : "Review work could not be loaded.",
+            userFacingErrorMessage(caught, "Review work could not be loaded."),
           );
         }
         return null;
@@ -1900,7 +1910,7 @@ export function ReviewQueuePage({
         }
       } catch (caught) {
         if (isMounted) {
-          setMessage(caught instanceof Error ? caught.message : "Could not load taxonomy labels.");
+          setMessage(userFacingErrorMessage(caught, "Could not load taxonomy labels."));
         }
       }
     }
@@ -2008,7 +2018,10 @@ export function ReviewQueuePage({
 
     async function loadReviewLabels() {
       try {
-        const labels = await apiClient.getReviewLabels();
+        // Demo-seed labels are not the user's reviewed history ("Reviewed
+        // history" titles each entry "Correction truth"), and demo Visits
+        // never reach this queue, so this page reads real Sources only.
+        const labels = await apiClient.getReviewLabels({ realSourcesOnly: true });
         if (isMounted) {
           setReviewLabels(labels);
         }
@@ -2028,7 +2041,7 @@ export function ReviewQueuePage({
 
   async function refreshReviewLabels() {
     try {
-      setReviewLabels(await apiClient.getReviewLabels());
+      setReviewLabels(await apiClient.getReviewLabels({ realSourcesOnly: true }));
     } catch {
       // Recent helpers are convenience only; correction truth is handled by submit.
     }
@@ -2123,9 +2136,7 @@ export function ReviewQueuePage({
       setSelectedBulkTargetType(targetType);
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "The eligible review items could not be selected.",
+        userFacingErrorMessage(caught, "The eligible review items could not be selected."),
       );
     }
   }
@@ -2448,7 +2459,7 @@ export function ReviewQueuePage({
             : ""),
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Bulk correction could not be saved.");
+      setMessage(userFacingErrorMessage(caught, "Bulk correction could not be saved."));
     } finally {
       setIsBulkSaving(false);
     }
@@ -2477,7 +2488,7 @@ export function ReviewQueuePage({
           await apiClient.updateSpeciesSuggestionStatus(acceptedSuggestionId, "accepted");
         } catch (caught) {
           const detail =
-            caught instanceof Error ? caught.message : "status update failed";
+            userFacingErrorMessage(caught, "status update failed");
           suggestionStatusWarning =
             ` Suggestion evidence status was not updated (${detail});` +
             " the correction is still saved truth.";
@@ -2522,7 +2533,7 @@ export function ReviewQueuePage({
         } still need review.${suggestionStatusWarning}`,
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
+      setMessage(userFacingErrorMessage(caught, "Correction could not be saved."));
     } finally {
       setSavingId(null);
     }
@@ -2569,7 +2580,7 @@ export function ReviewQueuePage({
       setMessage(message);
     } catch (caught) {
       setMessage(
-        caught instanceof Error ? caught.message : "Identification assist could not run.",
+        userFacingErrorMessage(caught, "Identification assist could not run."),
       );
     } finally {
       setIdentifyingId(null);
@@ -2591,7 +2602,7 @@ export function ReviewQueuePage({
       await refreshQueuePage();
       setMessage("Suggestion rejected as evidence. No review truth was created.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Suggestion could not be rejected.");
+      setMessage(userFacingErrorMessage(caught, "Suggestion could not be rejected."));
     } finally {
       setIdentifyingId(null);
     }
@@ -2616,7 +2627,7 @@ export function ReviewQueuePage({
       await refreshDetectionEvidence();
       setMessage("Suggestion evidence rejected. No review truth was created.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Suggestion evidence could not be rejected.");
+      setMessage(userFacingErrorMessage(caught, "Suggestion evidence could not be rejected."));
     } finally {
       setIdentifyingId(null);
     }
@@ -3376,6 +3387,7 @@ export function ReviewQueuePage({
                   <div className="review-candidate-media">
                     <VisitEvidenceSequence
                       frames={evidenceFrames}
+                      captureTimeKnown={item.capture_time_known}
                       surfaceOverlay={
                         <>
                           {focusCropOverlay}
@@ -3389,6 +3401,7 @@ export function ReviewQueuePage({
                     <MediaAssetPreview
                       asset={item.media_asset}
                       compact
+                      captureTimeKnown={item.capture_time_known}
                       surfaceOverlay={
                         <>
                           {focusCropOverlay}
@@ -3484,9 +3497,9 @@ export function ReviewQueuePage({
                         <span>Session: {item.activity_session_id ?? "n/a"}</span>
                         <span>
                           Window:{" "}
-                          {item.activity_started_at ? formatDateTime(item.activity_started_at) : "n/a"} -{" "}
+                          {item.activity_started_at ? formatCaptureDateTime(item.activity_started_at, item.capture_time_known) : "n/a"} -{" "}
                           {item.activity_last_seen_at
-                            ? formatDateTime(item.activity_last_seen_at)
+                            ? formatCaptureDateTime(item.activity_last_seen_at, item.capture_time_known)
                             : "n/a"}
                         </span>
                         <span>
@@ -3864,7 +3877,7 @@ function ProductReviewCard({
       data-target-id={reviewQueueTargetId(item)}
     >
       {item.media_asset ? (
-        <MediaAssetPreview asset={item.media_asset} compact />
+        <MediaAssetPreview asset={item.media_asset} compact captureTimeKnown={item.capture_time_known} hideFileFacts />
       ) : (
         <div className="review-product-image-unavailable">
           Primary evidence unavailable
@@ -3875,7 +3888,7 @@ function ProductReviewCard({
           <div className="queue-card-heading-text">
             <strong>{productReviewTitle(item, taxonomyLabels)}</strong>
             <span className="meta-text">
-              {capturedAt ? formatDateTime(capturedAt) : "Capture time unavailable"} · {location}
+              {capturedAt ? formatCaptureDateTime(capturedAt, item.capture_time_known) : "Capture time unavailable"} · {location}
             </span>
           </div>
           <EvidenceBadge
@@ -3884,29 +3897,21 @@ function ProductReviewCard({
           />
         </div>
         <div className="review-product-facts">
-          <span>{evidenceClass}</span>
-          {item.detector_score != null ? <span>Score {item.detector_score.toFixed(3)}</span> : null}
+          {/* The detector-class sentence duplicates the badge above for the
+              ordinary animal card; it stays for the non-obvious categories. */}
+          {item.product_category === "animal" ? null : <span>{evidenceClass}</span>}
           <span>
-            {item.evidence_count === 1 ? "1 evidence item" : `${item.evidence_count} evidence items`}
+            {item.evidence_count === 1 ? "1 saved item" : `${item.evidence_count} saved items`}
           </span>
         </div>
         {explicitSuggestion ? (
           <div className="review-product-suggestion">
-            <strong>Species suggestions</strong>
             <span>
               {explainSpeciesSuggestion({
                 label: displayTaxonomyLabel(explicitSuggestion.suggested_label, taxonomyLabels),
-              })}
+              })}{" "}
+              <span className="meta-text">Evidence only.</span>
             </span>
-            <span className="meta-text">Evidence only.</span>
-            <span>
-              {item.identification?.candidate_pack
-                ? `Candidate pack ${item.identification.candidate_pack.display_name} v${item.identification.candidate_pack.version}`
-                : "Open the Visit for full suggestion evidence."}
-            </span>
-            <button className="text-action" onClick={onOpenReview} type="button">
-              View all suggestions
-            </button>
           </div>
         ) : null}
         <div className="detail-actions">
@@ -3932,6 +3937,12 @@ function ProductReviewCard({
         <details className="review-diagnostic-details">
           <summary>Advanced evidence</summary>
           <div className="review-diagnostic-grid">
+            {item.detector_score != null ? <span>Detector score: {item.detector_score.toFixed(3)}</span> : null}
+            {item.identification?.candidate_pack ? (
+              <span>
+                Candidate pack: {item.identification.candidate_pack.display_name} v{item.identification.candidate_pack.version}
+              </span>
+            ) : null}
             <span>Queue item: {item.id}</span>
             <span>Track generation: {item.track_generation_id ?? "not recorded"}</span>
             <span>Detector: {item.detector_class ?? "not recorded"}</span>
@@ -4174,7 +4185,7 @@ function FastReviewPanel({
       setIsOpen(true);
       setActiveItem(null);
       setMessage(
-        caught instanceof Error ? caught.message : "Fast Review could not be started.",
+        userFacingErrorMessage(caught, "Fast Review could not be started."),
       );
     } finally {
       setIsStartingSession(false);
@@ -4241,7 +4252,7 @@ function FastReviewPanel({
           " in this filtered queue.",
       );
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not move through Fast Review.");
+      setMessage(userFacingErrorMessage(caught, "Could not move through Fast Review."));
     } finally {
       setIsNavigating(false);
     }
@@ -4281,9 +4292,7 @@ function FastReviewPanel({
       await navigate("next", activeItem);
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "Correction could not be saved. This Visit may have changed elsewhere.",
+        userFacingErrorMessage(caught, "Correction could not be saved. This Visit may have changed elsewhere."),
       );
     } finally {
       setIsSaving(false);
@@ -4327,9 +4336,7 @@ function FastReviewPanel({
       setMessage("Correction undone. The Visit is back in its prior review state.");
     } catch (caught) {
       setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "Undo is no longer available because a newer correction replaced it.",
+        userFacingErrorMessage(caught, "Undo is no longer available because a newer correction replaced it."),
       );
     } finally {
       setIsSaving(false);
@@ -4348,7 +4355,7 @@ function FastReviewPanel({
       });
       setLastCorrectionFavorited(true);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not favorite that Visit.");
+      setMessage(userFacingErrorMessage(caught, "Could not favorite that Visit."));
     } finally {
       setIsFavoritingLastCorrection(false);
     }
@@ -4358,13 +4365,13 @@ function FastReviewPanel({
     const tag = availableTags.find((item) => item.id === postCorrectionTagId);
     if (!undoState || !tag) return;
     try { await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag") }); setMessage(`Correction saved; added tag “${tag.name}” independently.`); setPostCorrectionTagId(""); const refreshed = await apiClient.getVisitTags(); setAvailableTags(refreshed); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the tag could not be added."); }
+    catch (caught) { setMessage(userFacingErrorMessage(caught, "Correction was saved, but the tag could not be added.")); }
   }
 
   async function createAndTagLastCorrectedVisit() {
     if (!undoState || !newPostCorrectionTag.trim()) return;
     try { const tag = await apiClient.createVisitTag({ name: newPostCorrectionTag, idempotency_key: createFastReviewKey("fast-review-tag-create") }); setNewPostCorrectionTag(""); setAvailableTags((current) => [...current, tag]); await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag-add") }); setMessage(`Correction saved; created and added tag “${tag.name}” independently.`); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the new tag could not be added."); }
+    catch (caught) { setMessage(userFacingErrorMessage(caught, "Correction was saved, but the new tag could not be added.")); }
   }
 
   useEffect(() => {
@@ -4388,7 +4395,7 @@ function FastReviewPanel({
       .catch((caught: unknown) => {
         if (isMounted) {
           setIdentificationAssistantError(
-            caught instanceof Error ? caught.message : "Could not check Identification Assistant availability.",
+            userFacingErrorMessage(caught, "Could not check Identification Assistant availability."),
           );
         }
       })
@@ -4438,7 +4445,7 @@ function FastReviewPanel({
       }
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Identification Assistant could not analyze saved evidence.",
+        userFacingErrorMessage(caught, "Identification Assistant could not analyze saved evidence."),
       );
     } finally {
       setIsRunningIdentificationAssistant(false);
@@ -4463,7 +4470,7 @@ function FastReviewPanel({
       setMessage("Suggestion dismissed as evidence. No review truth was created.");
     } catch (caught) {
       setIdentificationAssistantError(
-        caught instanceof Error ? caught.message : "Suggestion could not be dismissed.",
+        userFacingErrorMessage(caught, "Suggestion could not be dismissed."),
       );
     }
   }
@@ -4481,11 +4488,23 @@ function FastReviewPanel({
   }
 
   useEffect(() => {
-    if (!isOpen || !activeItem) {
+    if (!isOpen) {
       return undefined;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isFastReviewTypingTarget(event.target)) {
+        return;
+      }
+      // Fast Review Queue-End Undo v1: `Z` must also work from the
+      // "Filtered queue complete" screen, because saving the final item is
+      // exactly what lands there while its undo token is still live. Every
+      // other shortcut acts on the active item, so none runs without one.
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undoLastCorrection();
+        return;
+      }
+      if (!activeItem) {
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -4517,9 +4536,6 @@ function FastReviewPanel({
       } else if (event.key.toLowerCase() === "u") {
         event.preventDefault();
         void saveAndNext("ambiguous", "Marked ambiguous activity in Fast Review.");
-      } else if (event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        void undoLastCorrection();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -4539,6 +4555,18 @@ function FastReviewPanel({
   if (targets.length === 0 && !isOpen) {
     return null;
   }
+
+  // Shared by the active-item and "Filtered queue complete" screens: the
+  // last save of a filtered queue lands on the latter, and its undo token
+  // stays valid there (Fast Review Queue-End Undo v1).
+  const undoControl = undoState ? (
+    <div className="fast-review-undo">
+      <span>Saved {displayTaxonomyLabel(undoState.label, taxonomyLabels)}.</span>
+      <button className="text-action" disabled={isSaving} onClick={() => void undoLastCorrection()} type="button">
+        Undo last correction
+      </button>
+    </div>
+  ) : null;
 
   if (!isOpen) {
     return (
@@ -4573,6 +4601,7 @@ function FastReviewPanel({
           <span className="eyebrow">Fast Review</span>
           <h2 ref={completeHeadingRef} tabIndex={-1}>Filtered queue complete</h2>
           <p>{message ?? "No unresolved Visits remain in this filtered queue."}</p>
+          {undoControl}
         </div>
         <button className="secondary-action" onClick={() => setIsOpen(false)} type="button">
           Return to Review Queue
@@ -4630,48 +4659,39 @@ function FastReviewPanel({
           <label>New tag <input maxLength={50} value={newPostCorrectionTag} onChange={(event) => setNewPostCorrectionTag(event.target.value)} /></label><button className="text-action" disabled={!newPostCorrectionTag.trim()} onClick={() => void createAndTagLastCorrectedVisit()} type="button">Create and add</button>
         </div>
       ) : null}
-      <div className="fast-review-context">
-        <div className="data-row">
-          <span>Stream</span>
-          <strong>{reviewQueueStreamLabel(activeItem)}</strong>
-          <small>{reviewQueueSourceLabel(activeItem)}</small>
-        </div>
-        <div className="data-row">
-          <span>Zone</span>
-          <strong>{reviewItemZoneLabel(activeItem)}</strong>
-          <small>{activeItem.activity_session_id ? "Live activity Visit" : "Review Queue Visit"}</small>
-        </div>
-        <div className="data-row">
-          <span>Visit time</span>
-          <strong>
-            {activeItem.activity_started_at
-              ? formatDateTime(activeItem.activity_started_at)
-              : activeItem.media_asset?.created_at
-                ? formatDateTime(activeItem.media_asset.created_at)
-                : "Unavailable"}
-          </strong>
-          <small>Duration {fastReviewDuration(activeItem)}</small>
-        </div>
-        <div className="data-row">
-          <span>Queue progress</span>
-          <strong>
-            {orderedTargets.findIndex(
-              (target) => target.target_id === reviewQueueTargetId(activeItem),
-            ) + 1}{" "}
-            / {orderedTargets.length}
-          </strong>
-          <small>Current active filters only</small>
-        </div>
-      </div>
+      {/* Everyday Wildlife Experience & Presentation Refinement v1: four
+          label/value cards ("Live activity Visit", "Current active filters
+          only", ...) collapsed into one plain sentence. Same facts. */}
+      <p className="fast-review-context fast-review-context-line">
+        {[
+          reviewQueueStreamLabel(activeItem),
+          reviewItemZoneLabel(activeItem),
+          activeItem.activity_started_at
+            ? formatCaptureDateTime(activeItem.activity_started_at, activeItem.capture_time_known)
+            : activeItem.media_asset?.created_at
+              ? formatCaptureDateTime(activeItem.media_asset.created_at, activeItem.capture_time_known)
+              : null,
+          activeItem.activity_started_at && activeItem.activity_last_seen_at ? fastReviewDuration(activeItem) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        <span className="meta-text">
+          {" "}
+          — Visit{" "}
+          {orderedTargets.findIndex((target) => target.target_id === reviewQueueTargetId(activeItem)) + 1} of{" "}
+          {orderedTargets.length}
+        </span>
+      </p>
       <div className="fast-review-content">
         <div className="fast-review-evidence">
           {activeItem.evidence_frames.length > 0 ? (
             <VisitEvidenceSequence
               frames={activeItem.evidence_frames}
               keyboardControls
+              captureTimeKnown={activeItem.capture_time_known}
             />
           ) : activeItem.media_asset ? (
-            <MediaAssetPreview asset={activeItem.media_asset} compact />
+            <MediaAssetPreview asset={activeItem.media_asset} compact captureTimeKnown={activeItem.capture_time_known} hideFileFacts />
           ) : (
             <div className="fast-review-no-evidence">No saved evidence frame is available for this Visit.</div>
           )}
@@ -4703,6 +4723,7 @@ function FastReviewPanel({
             onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
             onUseSuggestion={useIdentificationAssistantSuggestion}
             prefilledSuggestionId={assistantPrefillSuggestionId}
+            taxonomyLabels={taxonomyLabels}
           />
           <div className="fast-review-suggestions">
             <strong>Evidence-only suggestions</strong>
@@ -4812,14 +4833,7 @@ function FastReviewPanel({
               Ambiguous / unknown
             </button>
           </div>
-          {undoState ? (
-            <div className="fast-review-undo">
-              <span>Saved {displayTaxonomyLabel(undoState.label, taxonomyLabels)}.</span>
-              <button className="text-action" disabled={isSaving} onClick={() => void undoLastCorrection()} type="button">
-                Undo last correction
-              </button>
-            </div>
-          ) : null}
+          {undoControl}
           <details className="fast-review-shortcuts">
             <summary>Keyboard shortcuts</summary>
             <span>Left / Right: evidence frame · Space: play/pause · Ctrl/Cmd+Enter: save & next</span>
@@ -4937,7 +4951,7 @@ function IdentificationAssistPanel({
         ) : null}
         <div className="data-row">
           <span>Best frame</span>
-          <strong>{identification.media_asset_id ?? "No best frame"}</strong>
+          <strong>{identification.media_asset_id ? "One saved frame" : "No saved frame"}</strong>
           <small>
             {identification.can_run_on_best_frame
               ? "Runnable media"
@@ -5372,7 +5386,8 @@ function LabelValidationLine({ status }: { status: LabelValidationStatus }) {
     suggested: "Matches suggested label.",
     recent: "Matches recent correction.",
     taxonomy: "Matches taxonomy.",
-    custom: "Custom label. Saved only after you apply it.",
+    custom:
+      "Custom label. Saved as your answer when you apply it, but it is not in the species list, so it will not appear in Bird Log or species analytics yet.",
   };
 
   return (

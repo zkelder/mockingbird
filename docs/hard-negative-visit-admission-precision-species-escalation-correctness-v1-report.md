@@ -12,7 +12,7 @@ escalated to a confident, wrong species label.
 
 Verified before any change, per this milestone's own instruction:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`, branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`, branch `main`.
 - Accepted HEAD: `58c0634` (git `rev-parse HEAD`, confirmed) -- the
   reconciliation commit accepting Representative Daylight Gate A Field
   Acceptance v9. `docs/release-execution-state.md`'s own content as of this

@@ -10,7 +10,7 @@ from collections import Counter
 import contextlib
 import csv
 import dataclasses
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 import hashlib
 import hmac
@@ -31,10 +31,11 @@ import uuid
 from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
 )
-from sqlalchemy import Engine, and_, delete, func, or_, select
+from sqlalchemy import Engine, and_, delete, func, literal, or_, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column
 
+from mockingbird.monitoring.model_runtime_health import ModelRuntimeHealthEvaluation
 from mockingbird.repository.review_queue_filters import (
     ReviewQueueFilterIndex,
     is_bulk_correction_eligible,
@@ -140,6 +141,7 @@ from mockingbird.analytics.feature_change_comparison import (
 from mockingbird.analytics.feature_yield import compute_feature_yield
 from mockingbird.analytics.place_story import (
     PlaceStoryEvent,
+    StorySourceContribution,
     build_place_story,
     comparison_insight_event,
     compute_diversity_milestone_events,
@@ -175,6 +177,7 @@ from mockingbird.analytics.soundscape import (
 )
 from mockingbird.analytics.representative_evidence import (
     EvidenceCandidateFact,
+    resolve_subject_region,
     select_representative_evidence,
 )
 from mockingbird.analytics.zone_insights import (
@@ -192,6 +195,8 @@ from mockingbird.research.acquisition_effort import (
 )
 from mockingbird.research.camtrap_dp import (
     CamtrapDpMappingOptions,
+    CamtrapDpPackage,
+    restrict_package_to_bundled_media,
     build_camtrap_dp_package,
     datapackage_descriptor as camtrap_dp_datapackage_descriptor,
     deployment_to_row as camtrap_deployment_to_row,
@@ -210,6 +215,21 @@ from mockingbird.research.darwin_core import (
     build_eml_xml as darwin_core_eml_xml,
     build_meta_xml as darwin_core_meta_xml,
     occurrence_to_row as darwin_core_occurrence_to_row,
+)
+from mockingbird.research.media_bundle import (
+    BUNDLE_MEDIA_DIRECTORY,
+    MEDIA_BUNDLE_CSV_FIELDNAMES,
+    MEDIA_BUNDLE_FILE_NAME,
+    RESEARCH_EXPORT_MEDIA_MAX_FILES,
+    RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES,
+    STATUS_BUNDLED,
+    STATUS_OMITTED_INTEGRITY,
+    STATUS_OMITTED_MISSING,
+    STATUS_OMITTED_UNSAFE_PATH,
+    MediaBundleEntry,
+    entry_to_row as media_bundle_entry_to_row,
+    media_requests_for_observations,
+    plan_bundle_names,
 )
 from mockingbird.research.eligibility import (
     RESEARCH_ELIGIBILITY_POLICY_VERSION,
@@ -402,6 +422,7 @@ from mockingbird.api.schemas import (
     ResearchCollectionSummary,
     ResearchExportFilters,
     ResearchExportManifest,
+    ResearchMediaBundleSummary,
     ResearchExportRequest,
     ResearchExportResponse,
     AdapterEvaluationItem,
@@ -561,6 +582,7 @@ from mockingbird.api.schemas import (
     PlaceActivityReportResponse,
     Point,
     ProductAlert,
+    ProductAlertGroupMember,
     ProductAlertAction,
     UserNotificationPreferences,
     UserNotificationPreferencesUpdate,
@@ -844,6 +866,7 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservationUpdate,
     PlaceStoryEntry,
     PlaceStoryResponse,
+    PlaceStorySourceContribution,
     PlaceYearOverYearResponse,
     SelfPasswordChangeRequest,
     SignInRequest,
@@ -918,6 +941,7 @@ from mockingbird.storage.models import (
     PlaceFeatureObservationLinkModel,
     PlaceHabitatFactModel,
     PlacePhenologyObservationModel,
+    ProductAlertAcknowledgementModel,
     ProductAlertModel,
     UserNotificationPreferenceModel,
     ResearchCollectionModel,
@@ -1426,6 +1450,51 @@ def _research_acquisition_type_for_provider_key(provider_key: str | None) -> str
     return RESEARCH_OFFLINE_PROVIDER_KEYS.get(provider_key, "continuous_live")
 
 
+# Owner-Only Release Polish & Acceptance v1 (O-1): a recording imported with
+# no capture-time fact is analysed on the 1970 epoch anchor (see "Frame-time
+# semantics" in docs/offline-recorded-media-observation-contract.md and
+# `acoustic_ingest.EPOCH_ANCHOR`). Whether a Visit's time is that placeholder
+# is decided only by recorded provenance -- the offline/acoustic acquisition
+# path *and* the source recording's own absent `MediaAssetModel.captured_at`
+# -- never by "the date looks old": a recording that genuinely states a 1970
+# capture time stays known. This ceiling is only a query-avoidance
+# prefilter: an Event starting at or after it cannot be epoch-anchored (every
+# recording is far shorter than a year), so ordinary Visits cost no extra
+# query.
+CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING = datetime(1971, 1, 1, tzinfo=UTC)
+ACOUSTIC_CANDIDATE_EVENT_TYPE = "acoustic_observation_candidate"
+
+
+@dataclass(frozen=True)
+class VisitCaptureTimeFacts:
+    """Presentation facts about a Visit's own time. `capture_time_known` is
+    False only when the Visit's timestamps are the epoch placeholder for a
+    recording with no capture-time fact; the raw timestamps themselves are
+    never altered. `acquisition_type` reuses the research-export mapping
+    (`recorded_video`/`continuous_live`/`unknown`)."""
+
+    acquisition_type: str
+    capture_time_known: bool
+
+
+def _offline_source_media_asset_ids(ledger: ObservationCandidateVisitModel) -> set[str]:
+    """The imported recording(s) an offline-ingest candidate was decoded
+    from. Offline frame ids are `"<source media_asset_id>:<index:08d>"` by
+    construction (`recorded_video_source.frame_packets_from_recorded_video`),
+    persisted on the ledger's own frame-lineage fields."""
+
+    source_ids: set[str] = set()
+    for raw in (ledger.supporting_frame_ids_json, ledger.source_capture_frame_ids_json):
+        try:
+            frame_ids = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            continue
+        for frame_id in frame_ids if isinstance(frame_ids, list) else ():
+            if isinstance(frame_id, str) and ":" in frame_id:
+                source_ids.add(frame_id.rsplit(":", 1)[0])
+    return source_ids
+
+
 RESEARCH_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "observations.csv": "text/csv",
     "observations.jsonl": "application/x-ndjson",
@@ -1433,6 +1502,7 @@ RESEARCH_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "sources.csv": "text/csv",
     "effort.csv": "text/csv",
     "manifest.json": "application/json",
+    MEDIA_BUNDLE_FILE_NAME: "text/csv",
 }
 
 CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
@@ -1440,6 +1510,7 @@ CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "media.csv": "text/csv",
     "observations.csv": "text/csv",
     "datapackage.json": "application/json",
+    MEDIA_BUNDLE_FILE_NAME: "text/csv",
 }
 
 DARWIN_CORE_EXPORT_CONTENT_TYPES: dict[str, str] = {
@@ -1636,7 +1707,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 required=True,
                 secret=False,
                 description="LAN IP address or .local hostname of the ONVIF device.",
-                placeholder="192.168.1.50",
+                placeholder="192.168.1.100",
             ),
             SourceProviderField(
                 key="onvif_port",
@@ -4044,6 +4115,16 @@ def _place_story_entry(event: PlaceStoryEvent) -> PlaceStoryEntry:
         zone_name=event.zone_name,
         source_id=event.source_id,
         detail_refs=dict(event.detail_refs),
+        source_scope=event.source_scope,
+        contributions=[
+            PlaceStorySourceContribution(
+                source_id=item.source_id,
+                source_name=item.source_name,
+                visit_id=item.visit_id,
+                source_archived=item.source_archived,
+            )
+            for item in event.contributions
+        ],
     )
 
 
@@ -4468,6 +4549,7 @@ class ProductRepository:
                     )
                     session.add(user)
                     session.flush()
+                    self._adopt_legacy_alert_acknowledgement_in_session(session, user_id=user.id, now=now)
                     token = self._create_session_in_session(session, user_id=user.id, now=now)
                     self._record_audit_event_in_session(
                         session, now=now, actor_user_id=user.id, actor_display_name=user.display_name,
@@ -4475,6 +4557,40 @@ class ProductRepository:
                         metadata={"login_identity": login_identity},
                     )
                     return self._current_user(user), token
+
+    @staticmethod
+    def _adopt_legacy_alert_acknowledgement_in_session(session: Session, *, user_id: str, now: datetime) -> None:
+        """Attention Integrity & Health Reliability v1: the one deferred leg
+        of the schema-62 legacy-acknowledgement rule (see
+        `mockingbird.storage.database._migrate_to_per_user_alert_
+        acknowledgement`). A database upgraded before any user existed kept
+        its pre-v62 global read/dismiss state in the legacy columns; the
+        bootstrap Administrator is the pre-identity operator who produced
+        it, so they adopt it as their own -- once. The legacy columns are
+        cleared in the same transaction, so no later user can inherit it.
+        On every database migrated with users present, or created fresh,
+        the legacy columns are already empty and this is a no-op."""
+
+        legacy = session.scalars(
+            select(ProductAlertModel).where(
+                or_(
+                    ProductAlertModel.legacy_global_read_at.is_not(None),
+                    ProductAlertModel.legacy_global_dismissed_at.is_not(None),
+                )
+            )
+        ).all()
+        for alert in legacy:
+            read_at, dismissed_at = alert.legacy_global_read_at, alert.legacy_global_dismissed_at
+            if session.get(ProductAlertAcknowledgementModel, (alert.id, user_id)) is None:
+                session.add(ProductAlertAcknowledgementModel(
+                    alert_id=alert.id, user_id=user_id, read_at=read_at, dismissed_at=dismissed_at,
+                    updated_at=max(
+                        (_as_utc(value) for value in (read_at, dismissed_at) if value is not None),
+                        default=now,
+                    ),
+                ))
+            alert.legacy_global_read_at = None
+            alert.legacy_global_dismissed_at = None
 
     def authenticate_user(
         self, payload: SignInRequest, *, source_ip: str | None = None
@@ -14966,14 +15082,19 @@ class ProductRepository:
             state = CameraHealthState.starting
             message = "Monitoring is enabled and awaiting local supervision."
 
+        # Attention Integrity & Health Reliability v1: this camera-health
+        # fact is observatory-global (it is computed for every viewer and by
+        # the background health sync, with no signed-in user), so it now
+        # means "an open camera alert exists" rather than reading anyone's
+        # acknowledgement. Before v62 it read the shared read/dismiss
+        # state, which let one user's "Mark read" hide it from everyone.
+        # Per-user unread state lives in the Attention Center.
         unread_alert = bool(
             session.scalar(
                 select(ProductAlertModel.id)
                 .where(
                     ProductAlertModel.stream_id == stream.id,
                     ProductAlertModel.category == AlertCategory.monitoring.value,
-                    ProductAlertModel.read_at.is_(None),
-                    ProductAlertModel.dismissed_at.is_(None),
                     ProductAlertModel.resolved_at.is_(None),
                 )
                 .limit(1)
@@ -19092,6 +19213,66 @@ class ProductRepository:
                 for visit, event in rows
             ]
 
+    def visit_capture_time_facts(self, visit_ids: Iterable[str]) -> dict[str, VisitCaptureTimeFacts]:
+        """Owner-Only Release Polish & Acceptance v1 (O-1): see
+        `VisitCaptureTimeFacts`. Unknown ids are simply absent."""
+
+        facts: dict[str, VisitCaptureTimeFacts] = {}
+        with self.session_factory() as session:
+            for visit_id in dict.fromkeys(visit_ids):
+                visit = session.get(VisitModel, visit_id)
+                event = session.get(EventModel, visit.event_id) if visit is not None else None
+                if visit is None or event is None:
+                    continue
+                ledger = session.scalars(
+                    select(ObservationCandidateVisitModel).where(ObservationCandidateVisitModel.visit_id == visit.id)
+                ).first()
+                facts[visit_id] = VisitCaptureTimeFacts(
+                    acquisition_type=_research_acquisition_type_for_provider_key(
+                        ledger.provider_key if ledger is not None else None
+                    ),
+                    capture_time_known=self._visit_capture_time_known(session, visit, event),
+                )
+        return facts
+
+    def event_capture_time_known(self, event_id: str) -> bool:
+        with self.session_factory() as session:
+            event = session.get(EventModel, event_id)
+            return True if event is None else self._event_capture_time_known(session, event)
+
+    def _event_capture_time_known(self, session: Session, event: EventModel) -> bool:
+        if _as_utc(event.started_at) >= CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING:
+            return True
+        visits = session.scalars(select(VisitModel).where(VisitModel.event_id == event.id)).all()
+        return all(self._visit_capture_time_known(session, visit, event) for visit in visits)
+
+    def _visit_capture_time_known(self, session: Session, visit: VisitModel, event: EventModel) -> bool:
+        """False only on positive provenance that this Visit's time is the
+        epoch placeholder; anything unresolvable keeps the prior
+        presentation (known) rather than guessing."""
+
+        if _as_utc(event.started_at) >= CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING:
+            return True
+        if event.event_type == ACOUSTIC_CANDIDATE_EVENT_TYPE:
+            # An acoustic candidate's evidence link *is* its source audio
+            # asset (`create_acoustic_candidate_visit`).
+            source_assets = session.scalars(
+                select(MediaAssetModel)
+                .join(VisitEvidenceLinkModel, VisitEvidenceLinkModel.media_asset_id == MediaAssetModel.id)
+                .where(VisitEvidenceLinkModel.visit_id == visit.id, MediaAssetModel.media_type == "audio")
+            ).all()
+            return not (source_assets and all(asset.captured_at is None for asset in source_assets))
+        ledger = session.scalars(
+            select(ObservationCandidateVisitModel).where(ObservationCandidateVisitModel.visit_id == visit.id)
+        ).first()
+        if ledger is None or _research_acquisition_type_for_provider_key(ledger.provider_key) != "recorded_video":
+            return True
+        source_ids = _offline_source_media_asset_ids(ledger)
+        if len(source_ids) != 1:
+            return True
+        source = session.get(MediaAssetModel, next(iter(source_ids)))
+        return not (source is not None and source.media_type == "video" and source.captured_at is None)
+
     def _stream_visit_summary_from_models(
         self,
         session: Session,
@@ -19178,6 +19359,7 @@ class ProductRepository:
             evidence_modality=(
                 "acoustic" if event.event_type == "acoustic_observation_candidate" else "visual"
             ),
+            capture_time_known=self._visit_capture_time_known(session, visit, event),
         )
 
     def _visit_activity_window(
@@ -20491,11 +20673,14 @@ class ProductRepository:
         viewer: CurrentUser | None = None,
     ) -> ProductAlertListResponse:
         """Read bounded inbox history. Reading never reconciles product
-        conditions. `viewer` is optional only for internal/test callers
-        that pre-date Calm Attention & Notifications v1's per-user
-        preferences; every real route passes the signed-in user (Phase 16/
-        18: preferences and the Viewer Needs-Help ceiling are enforced
-        here, once, rather than in each caller)."""
+        conditions and never writes acknowledgement. `viewer` is optional
+        only for internal/test callers that pre-date Calm Attention &
+        Notifications v1's per-user preferences; every real route passes
+        the signed-in user (Phase 16/18: preferences and the Viewer
+        Needs-Help ceiling are enforced here, once, rather than in each
+        caller). Read/dismiss status is that viewer's own (Attention
+        Integrity & Health Reliability v1); with no viewer there is no one
+        to have acknowledged anything, so every item reads unacknowledged."""
 
         bounded_size = max(1, min(page_size, MAX_ALERT_PAGE_SIZE))
         bounded_offset = max(0, min(offset, 10_000))
@@ -20507,7 +20692,7 @@ class ProductRepository:
         if category is not None and visible is not None and category not in visible:
             return ProductAlertListResponse(items=[], next_offset=None)
         with self.session_factory() as session:
-            query = select(ProductAlertModel)
+            query = select(ProductAlertModel).where(~self._grouped_review_alert_condition())
             if category is not None:
                 query = query.where(ProductAlertModel.category == category.value)
             elif visible is not None:
@@ -20517,24 +20702,56 @@ class ProductRepository:
                 .offset(bounded_offset)
                 .limit(bounded_size + 1)
             ).all()
+            page = rows[:bounded_size]
+            acknowledgements = self._alert_acknowledgements(
+                session, user_id=viewer.id if viewer is not None else None, alert_ids=[row.id for row in page]
+            )
             return ProductAlertListResponse(
-                items=[self._product_alert_from_model(session, row) for row in rows[:bounded_size]],
+                items=[
+                    self._product_alert_from_model(session, row, acknowledgement=acknowledgements.get(row.id))
+                    for row in page
+                ],
                 next_offset=(bounded_offset + bounded_size if len(rows) > bounded_size else None),
             )
 
     def product_alert_unread(self, *, viewer: CurrentUser | None = None) -> ProductAlertUnreadResponse:
+        """The app-shell attention summary for one signed-in viewer: how many
+        current (unresolved) alerts *this user* has neither read nor
+        dismissed, plus the most recent alerts *this user* has not
+        dismissed. Another user's acknowledgement never enters either
+        query (Attention Integrity & Health Reliability v1). Side-effect
+        free: a GET never creates an acknowledgement row."""
+
         visible = (
             self._visible_alert_categories(viewer_role=viewer.role, user_id=viewer.id)
             if viewer is not None
             else None
         )
+        user_id = viewer.id if viewer is not None else None
+        acknowledgement = ProductAlertAcknowledgementModel
+        # An outer join restricted to *this* user's row: at most one match
+        # per alert (composite primary key), so the counts stay exact.
+        join_condition = and_(
+            acknowledgement.alert_id == ProductAlertModel.id,
+            acknowledgement.user_id == user_id,
+        )
         with self.session_factory() as session:
-            unread_query = select(func.count(ProductAlertModel.id)).where(
-                ProductAlertModel.read_at.is_(None),
-                ProductAlertModel.dismissed_at.is_(None),
-                ProductAlertModel.resolved_at.is_(None),
+            unread_query = (
+                select(func.count(ProductAlertModel.id))
+                .select_from(ProductAlertModel)
+                .outerjoin(acknowledgement, join_condition)
+                .where(
+                    ProductAlertModel.resolved_at.is_(None),
+                    acknowledgement.read_at.is_(None),
+                    acknowledgement.dismissed_at.is_(None),
+                    ~self._grouped_review_alert_condition(),
+                )
             )
-            recent_query = select(ProductAlertModel).where(ProductAlertModel.dismissed_at.is_(None))
+            recent_query = (
+                select(ProductAlertModel)
+                .outerjoin(acknowledgement, join_condition)
+                .where(acknowledgement.dismissed_at.is_(None), ~self._grouped_review_alert_condition())
+            )
             if visible is not None:
                 allowed_values = [item.value for item in visible]
                 unread_query = unread_query.where(ProductAlertModel.category.in_(allowed_values))
@@ -20544,50 +20761,182 @@ class ProductRepository:
                 recent_query.order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
                 .limit(MAX_RECENT_ALERTS)
             ).all()
+            acknowledgements = self._alert_acknowledgements(
+                session, user_id=user_id, alert_ids=[row.id for row in recent]
+            )
             return ProductAlertUnreadResponse(
                 unread_count=unread_count,
-                recent=[self._product_alert_from_model(session, row) for row in recent],
+                recent=[
+                    self._product_alert_from_model(session, row, acknowledgement=acknowledgements.get(row.id))
+                    for row in recent
+                ],
             )
 
-    def mark_product_alert_read(self, alert_id: str) -> bool:
+    @staticmethod
+    def _alert_acknowledgements(
+        session: Session, *, user_id: str | None, alert_ids: Sequence[str]
+    ) -> dict[str, ProductAlertAcknowledgementModel]:
+        if user_id is None or not alert_ids:
+            return {}
+        rows = session.scalars(
+            select(ProductAlertAcknowledgementModel).where(
+                ProductAlertAcknowledgementModel.user_id == user_id,
+                ProductAlertAcknowledgementModel.alert_id.in_(list(alert_ids)),
+            )
+        ).all()
+        return {row.alert_id: row for row in rows}
+
+    @staticmethod
+    def _grouped_review_alert_condition() -> Any:
+        """SQL predicate: this review alert is another camera's view of an
+        encounter whose *primary* Visit's review alert is still active, so the
+        presentation shows one item for the encounter, not one per camera.
+
+        Cross-camera Calm Attention grouping (Multi-Camera Attribution &
+        Filter Consolidation v1). Reuses the accepted `associated`-tier
+        cross-camera association and its canonical primary/secondary order
+        (the same rule counting uses, `_associated_visit_ids_to_exclude_from_
+        counting`) -- a `possible` pair is never grouped, two merely similar
+        simultaneous sightings never are. It hides nothing durable: the
+        member's alert row, Visit and review state are untouched, resolution
+        stays global, and per-user acknowledgement rows are never merged.
+        When the primary's alert resolves the member is no longer hidden, so
+        an encounter that still needs a camera's review is never silently
+        dropped."""
+
+        primary_alert = aliased(ProductAlertModel)
+        hidden_visit_ids = (
+            select(CrossCameraVisitAssociationModel.secondary_visit_id)
+            .join(
+                primary_alert,
+                and_(
+                    primary_alert.visit_id == CrossCameraVisitAssociationModel.primary_visit_id,
+                    primary_alert.category == AlertCategory.review.value,
+                    primary_alert.resolved_at.is_(None),
+                    primary_alert.deduplication_key
+                    == literal("review:") + CrossCameraVisitAssociationModel.primary_visit_id,
+                ),
+            )
+            .where(CrossCameraVisitAssociationModel.tier == "associated")
+        )
+        return and_(
+            ProductAlertModel.category == AlertCategory.review.value,
+            ProductAlertModel.resolved_at.is_(None),
+            ProductAlertModel.visit_id.in_(hidden_visit_ids),
+        )
+
+    @staticmethod
+    def _grouped_review_alert_members(
+        session: Session, primary_visit_ids: Sequence[str]
+    ) -> list[ProductAlertModel]:
+        """Active review alerts folded under the given primary Visit(s),
+        transitively (A-B and B-C associated => C is also one encounter),
+        bounded to a few hops. Mirrors `_grouped_review_alert_condition`."""
+
+        found: dict[str, ProductAlertModel] = {}
+        frontier = list(primary_visit_ids)
+        seen = set(frontier)
+        for _ in range(4):
+            if not frontier:
+                break
+            rows = session.scalars(
+                select(ProductAlertModel)
+                .join(
+                    CrossCameraVisitAssociationModel,
+                    CrossCameraVisitAssociationModel.secondary_visit_id == ProductAlertModel.visit_id,
+                )
+                .where(
+                    CrossCameraVisitAssociationModel.tier == "associated",
+                    CrossCameraVisitAssociationModel.primary_visit_id.in_(frontier),
+                    ProductAlertModel.category == AlertCategory.review.value,
+                    ProductAlertModel.resolved_at.is_(None),
+                    ProductAlertModel.deduplication_key == literal("review:") + ProductAlertModel.visit_id,
+                )
+            ).all()
+            frontier = []
+            for member in rows:
+                if member.visit_id is None or member.visit_id in seen:
+                    continue
+                seen.add(member.visit_id)
+                found[member.id] = member
+                frontier.append(member.visit_id)
+        return list(found.values())
+
+    def _acknowledge_product_alerts(
+        self, alert_ids: Sequence[str], *, user_id: str, read: bool, dismiss: bool
+    ) -> int:
+        """Record one user's own acknowledgement. Never touches the shared
+        alert row (not even `updated_at`, which describes the condition),
+        so nothing about the alert changes for anyone else. Idempotent: an
+        existing timestamp is kept, never moved forward. Returns how many of
+        `alert_ids` named a real alert."""
+
         now = datetime.now(UTC)
         with self.session_factory() as session:
             with session.begin():
-                alert = session.get(ProductAlertModel, alert_id)
-                if alert is None:
-                    return False
-                if alert.read_at is None:
-                    alert.read_at = now
-                    alert.updated_at = now
-                return True
+                if session.get(UserModel, user_id) is None:
+                    raise ValueError("alert_acknowledgement_user_not_found")
+                existing_ids = list(
+                    session.scalars(
+                        select(ProductAlertModel.id).where(ProductAlertModel.id.in_(list(alert_ids)))
+                    ).all()
+                )
+                # Acknowledging a grouped encounter's representative covers the
+                # same encounter's other-camera alerts *for this user only*, so
+                # resolving the representative later never resurfaces the same
+                # sighting as fresh noise. Never touches another user's rows.
+                requested_count = len(existing_ids)
+                represented_visit_ids = list(
+                    session.scalars(
+                        select(ProductAlertModel.visit_id).where(
+                            ProductAlertModel.id.in_(existing_ids),
+                            ProductAlertModel.category == AlertCategory.review.value,
+                            ProductAlertModel.visit_id.is_not(None),
+                        )
+                    ).all()
+                )
+                if represented_visit_ids:
+                    existing_ids.extend(
+                        member.id
+                        for member in self._grouped_review_alert_members(session, represented_visit_ids)
+                        if member.id not in existing_ids
+                    )
+                acknowledgements = self._alert_acknowledgements(session, user_id=user_id, alert_ids=existing_ids)
+                for alert_id in existing_ids:
+                    row = acknowledgements.get(alert_id)
+                    if row is None:
+                        row = ProductAlertAcknowledgementModel(
+                            alert_id=alert_id, user_id=user_id, read_at=None, dismissed_at=None, updated_at=now,
+                        )
+                        session.add(row)
+                    changed = False
+                    if read and row.read_at is None:
+                        row.read_at, changed = now, True
+                    if dismiss and row.dismissed_at is None:
+                        row.dismissed_at, changed = now, True
+                    if changed:
+                        row.updated_at = now
+                return requested_count
 
-    def mark_product_alerts_read(self, alert_ids: list[str]) -> int:
-        now = datetime.now(UTC)
-        seen = {alert_id.strip() for alert_id in alert_ids if alert_id.strip()}
-        with self.session_factory() as session:
-            with session.begin():
-                rows = session.scalars(
-                    select(ProductAlertModel).where(ProductAlertModel.id.in_(list(seen)[:50]))
-                ).all()
-                for alert in rows:
-                    if alert.read_at is None:
-                        alert.read_at = now
-                        alert.updated_at = now
-                return len(rows)
+    def mark_product_alert_read(self, alert_id: str, *, user_id: str) -> bool:
+        return self._acknowledge_product_alerts([alert_id], user_id=user_id, read=True, dismiss=False) == 1
 
-    def dismiss_product_alert(self, alert_id: str) -> bool:
-        now = datetime.now(UTC)
-        with self.session_factory() as session:
-            with session.begin():
-                alert = session.get(ProductAlertModel, alert_id)
-                if alert is None:
-                    return False
-                if alert.dismissed_at is None:
-                    alert.dismissed_at = now
-                    alert.updated_at = now
-                return True
+    def mark_product_alerts_read(self, alert_ids: list[str], *, user_id: str) -> int:
+        seen = sorted({alert_id.strip() for alert_id in alert_ids if alert_id.strip()})[:MAX_ALERT_PAGE_SIZE]
+        if not seen:
+            return 0
+        return self._acknowledge_product_alerts(seen, user_id=user_id, read=True, dismiss=False)
 
-    def _product_alert_from_model(self, session: Session, alert: ProductAlertModel) -> ProductAlert:
+    def dismiss_product_alert(self, alert_id: str, *, user_id: str) -> bool:
+        return self._acknowledge_product_alerts([alert_id], user_id=user_id, read=False, dismiss=True) == 1
+
+    def _product_alert_from_model(
+        self,
+        session: Session,
+        alert: ProductAlertModel,
+        *,
+        acknowledgement: ProductAlertAcknowledgementModel | None = None,
+    ) -> ProductAlert:
         stream = session.get(StreamModel, alert.stream_id) if alert.stream_id else None
         zone = session.get(ZoneModel, alert.zone_id) if alert.zone_id else None
         try:
@@ -20602,7 +20951,13 @@ class ProductRepository:
             if visit is None or visit.is_superseded:
                 action_type = AlertActionType.open_stream if stream is not None else AlertActionType.open_storage_retention
         elif action_type == AlertActionType.open_stream and stream is None:
-            action_type = AlertActionType.open_storage_retention
+            # A model/runtime health condition's recovery surface is Doctor,
+            # not storage (Attention Integrity & Health Reliability v1).
+            action_type = (
+                AlertActionType.open_doctor
+                if alert.deduplication_key.startswith("observatory-health:")
+                else AlertActionType.open_storage_retention
+            )
         action = ProductAlertAction(
             action_type=action_type,
             visit_id=alert.visit_id if action_type == AlertActionType.review_visit else None,
@@ -20612,10 +20967,14 @@ class ProductRepository:
             feature_id=(str(action_data["feature_id"]) if action_type == AlertActionType.open_place_story and action_data.get("feature_id") else None),
             story_kind=(str(action_data["story_kind"]) if action_type == AlertActionType.open_place_story and action_data.get("story_kind") else None),
         )
+        # Read/dismiss is the viewer's own acknowledgement; resolution is
+        # the shared condition. Precedence is unchanged from before v62.
+        read_at = acknowledgement.read_at if acknowledgement is not None else None
+        dismissed_at = acknowledgement.dismissed_at if acknowledgement is not None else None
         status = (
-            "dismissed" if alert.dismissed_at is not None else
+            "dismissed" if dismissed_at is not None else
             "resolved" if alert.resolved_at is not None else
-            "read" if alert.read_at is not None else "unread"
+            "read" if read_at is not None else "unread"
         )
         category = AlertCategory(alert.category)
         severity = AlertSeverity(alert.severity)
@@ -20627,8 +20986,8 @@ class ProductRepository:
             message=alert.message,
             created_at=_as_utc(alert.created_at),
             updated_at=_as_utc(alert.updated_at),
-            read_at=_as_utc(alert.read_at) if alert.read_at else None,
-            dismissed_at=_as_utc(alert.dismissed_at) if alert.dismissed_at else None,
+            read_at=_as_utc(read_at) if read_at else None,
+            dismissed_at=_as_utc(dismissed_at) if dismissed_at else None,
             resolved_at=_as_utc(alert.resolved_at) if alert.resolved_at else None,
             status=status,
             stream_id=alert.stream_id,
@@ -20640,7 +20999,28 @@ class ProductRepository:
             action=action,
             attention_category=self._attention_category_for(category),
             urgency=self._attention_urgency_for(category, severity),
+            grouped_visits=self._grouped_visits_for(session, alert),
         )
+
+    def _grouped_visits_for(self, session: Session, alert: ProductAlertModel) -> list[ProductAlertGroupMember]:
+        if alert.category != AlertCategory.review.value or alert.resolved_at is not None or not alert.visit_id:
+            return []
+        members = self._grouped_review_alert_members(session, [alert.visit_id])
+        result: list[ProductAlertGroupMember] = []
+        for member in sorted(members, key=lambda item: (_as_utc(item.created_at), item.id)):
+            stream = session.get(StreamModel, member.stream_id) if member.stream_id else None
+            source = session.get(CameraSourceModel, stream.source_id) if stream is not None else None
+            result.append(
+                ProductAlertGroupMember(
+                    alert_id=member.id,
+                    visit_id=member.visit_id,
+                    stream_id=member.stream_id,
+                    stream_name=stream.name if stream is not None else None,
+                    source_id=source.id if source is not None else None,
+                    source_name=source.name if source is not None else None,
+                )
+            )
+        return result
 
     @staticmethod
     def _attention_category_for(category: AlertCategory) -> AttentionCategory:
@@ -20732,7 +21112,7 @@ class ProductRepository:
         created = ProductAlertModel(
             id=f"alert-{uuid.uuid4().hex}", category=category.value, severity=severity.value,
             title=title, message=message, created_at=now, updated_at=now,
-            read_at=None, dismissed_at=None, resolved_at=None,
+            legacy_global_read_at=None, legacy_global_dismissed_at=None, resolved_at=None,
             stream_id=stream_id, zone_id=zone_id, visit_id=visit_id, source_id=source_id,
             cleanup_context=cleanup_context, deduplication_key=deduplication_key,
             condition_fingerprint=condition_fingerprint, condition_version=version,
@@ -20740,6 +21120,54 @@ class ProductRepository:
         )
         session.add(created)
         return created
+
+    _MODEL_RUNTIME_ALERT_TITLES = {
+        "detector_model": "Wildlife detection is unavailable",
+        "gpu_runtime": "Wildlife detection cannot use this computer's GPU",
+        "species_model": "Species suggestions are unavailable",
+    }
+
+    def sync_model_runtime_health_alerts(
+        self, evaluation: ModelRuntimeHealthEvaluation, *, now: datetime | None = None
+    ) -> None:
+        """Attention Integrity & Health Reliability v1: reconcile the
+        Observatory Health alert for each model/runtime kind from one
+        already-computed `ModelRuntimeHealthEvaluation`. One observatory-
+        global alert per kind (stable `deduplication_key`); a changed
+        underlying code or affected Stream is a new condition version via
+        the ordinary `_refresh_product_alert` path, and a kind the
+        evaluation positively observed healthy resolves automatically.
+        Only attention state is written -- never evidence, never truth."""
+
+        moment = now or datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                for kind in evaluation.cleared:
+                    self._resolve_product_alerts(session, f"observatory-health:model-runtime:{kind.value}", moment)
+                for condition in evaluation.sustained:
+                    stream = session.get(StreamModel, condition.stream_id) if condition.stream_id else None
+                    self._refresh_product_alert(
+                        session,
+                        category=AlertCategory.monitoring,
+                        # A Stream that was asked to observe and could not
+                        # start is losing observation right now; a Doctor-
+                        # only configuration fact is a degradation to fix.
+                        severity=AlertSeverity.high if stream is not None else AlertSeverity.warning,
+                        title=self._MODEL_RUNTIME_ALERT_TITLES[condition.kind.value],
+                        message=condition.message,
+                        deduplication_key=f"observatory-health:model-runtime:{condition.kind.value}",
+                        condition_fingerprint=f"{condition.code}:{stream.id if stream is not None else 'host'}",
+                        action_type=AlertActionType.open_stream if stream is not None else AlertActionType.open_doctor,
+                        action_parameters={},
+                        now=moment,
+                        stream_id=stream.id if stream is not None else None,
+                        source_id=stream.source_id if stream is not None else None,
+                    )
+        log_event(
+            "attention", "model_runtime_health_synced",
+            active_kinds=sorted(condition.kind.value for condition in evaluation.sustained),
+            cleared_kinds=sorted(kind.value for kind in evaluation.cleared),
+        )
 
     def _resolve_product_alerts(self, session: Session, deduplication_key: str, now: datetime) -> None:
         for alert in session.scalars(
@@ -28402,12 +28830,21 @@ class ProductRepository:
                     review_queue_count=self._visible_review_queue_count(session),
                 )
 
-    def list_review_labels(self) -> list[ReviewLabel]:
+    def list_review_labels(self, *, real_sources_only: bool = False) -> list[ReviewLabel]:
+        """Effective ReviewLabels, demo-inclusive by default (raw/audit read).
+
+        `real_sources_only` is the product-surface read (Review Queue's
+        "Reviewed history"): it drops every label whose Visit/Event belongs
+        to the seeded demo Source, through the same `_real_stream_ids` seam
+        every other demo-exclusion site uses. It filters presentation only;
+        truth resolution (`_effective_review_label_models`) is unchanged."""
+
         with self.session_factory() as session:
             labels = session.scalars(
                 select(ReviewLabelModel).order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
             effective = self._effective_review_label_models(labels)
+            real_stream_ids = _real_stream_ids(session) if real_sources_only else None
             # Performance / Scale / Stability Closure v1: resolve "is this
             # label's Visit still active?" for every label in one chunked
             # query instead of one `session.get` per label -- 1,720
@@ -28419,18 +28856,39 @@ class ProductRepository:
             )
             active_visit_ids: set[str] = set()
             for chunk in _id_chunks(visit_ids):
-                active_visit_ids.update(
-                    session.scalars(
-                        select(VisitModel.id).where(
-                            VisitModel.id.in_(chunk),
-                            VisitModel.is_superseded.is_(False),
-                        )
-                    ).all()
+                visit_query = select(VisitModel.id).where(
+                    VisitModel.id.in_(chunk),
+                    VisitModel.is_superseded.is_(False),
                 )
+                if real_stream_ids is not None:
+                    visit_query = visit_query.join(
+                        EventModel, VisitModel.event_id == EventModel.id
+                    ).where(EventModel.stream_id.in_(real_stream_ids))
+                active_visit_ids.update(session.scalars(visit_query).all())
+            real_event_ids: set[str] | None = None
+            if real_stream_ids is not None:
+                event_ids = sorted(
+                    {label.target_id for label in effective if label.target_type == "event"}
+                )
+                real_event_ids = set()
+                for chunk in _id_chunks(event_ids):
+                    real_event_ids.update(
+                        session.scalars(
+                            select(EventModel.id).where(
+                                EventModel.id.in_(chunk),
+                                EventModel.stream_id.in_(real_stream_ids),
+                            )
+                        ).all()
+                    )
             return [
                 _review_label_from_model(label)
                 for label in effective
-                if label.target_type != "visit" or label.target_id in active_visit_ids
+                if (label.target_type != "visit" or label.target_id in active_visit_ids)
+                and (
+                    real_event_ids is None
+                    or label.target_type != "event"
+                    or label.target_id in real_event_ids
+                )
             ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:
@@ -35386,6 +35844,8 @@ class ProductRepository:
                         observation_count=self._deduplicated_observation_count(session, ordered),
                         first_observed_at=ordered[0]["observed_at"],
                         latest_observed_at=ordered[-1]["observed_at"],
+                        first_capture_time_known=ordered[0]["summary"].capture_time_known,
+                        latest_capture_time_known=ordered[-1]["summary"].capture_time_known,
                         stream_count=len({record["summary"].stream_id for record in ordered}),
                         zone_count=len(
                             {
@@ -35755,6 +36215,7 @@ class ProductRepository:
                     collection_count=collection_counts.get(record["summary"].id, 0),
                     tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
                     evidence_modality=record["summary"].evidence_modality,
+                    capture_time_known=record["summary"].capture_time_known,
                 )
                 for record in page_records
             ]
@@ -36525,17 +36986,149 @@ class ProductRepository:
             offset=offset,
             page_size=page_size,
         )
+        # Attribution is attached only to the page actually returned (bounded
+        # by `page_size`), never to every event the Story could build.
+        page_events = self._place_story_attach_contributions(
+            page.events,
+            taxonomy_index=taxonomy_index,
+            local_timezone=resolved_local_timezone,
+        )
 
         return PlaceStoryResponse(
             generated_at=generation_moment,
             period_start_at=period_start_at,
             period_end_at=period_end_at,
-            entries=[_place_story_entry(event) for event in page.events],
+            entries=[_place_story_entry(event) for event in page_events],
             has_more=page.has_more,
             next_offset=page.next_offset,
             total_matched=page.total_matched,
             is_early_experience=intelligence.baseline.maturity == "insufficient",
         )
+
+    def _place_story_attach_contributions(
+        self,
+        events: Sequence[PlaceStoryEvent],
+        *,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        local_timezone: tzinfo,
+    ) -> list[PlaceStoryEvent]:
+        """Multi-Camera Attribution & Filter Consolidation v1: re-attach the
+        camera(s) behind Story entries that are anchored to a concrete
+        encounter, which the shared all-time/trailing aggregates cannot
+        carry (a `MIN()`/`GROUP BY reviewed_label` has no Visit or Source).
+
+        Anchored kinds only -- `first_seen`/`diversity_milestone` (the
+        taxon's earliest reviewed Visit on its debut day) and `return` (that
+        taxon's reviewed Visits on the displayed presence day). Aggregate
+        trends (`regularity_change`, `noteworthy_activity`), Feature changes,
+        phenology and insights stay honestly Place-level: no camera is
+        invented for them. Contributors are the stable Sources of the
+        anchoring reviewed Visits, one entry per Source (its earliest Visit),
+        plus the Sources of any *confidently associated* cross-camera partner
+        Visit that is itself reviewed as the same taxon -- the same
+        `associated`-tier rule counting already uses; a `possible` pair is
+        never merged. Read-only; reviewed truth is never touched.
+        """
+
+        anchored_kinds = {"first_seen", "diversity_milestone", "return"}
+        if not any(event.kind in anchored_kinds and event.taxon_label for event in events):
+            return list(events)
+
+        def resolve_label(label: str | None) -> str | None:
+            if not label:
+                return None
+            taxonomy = taxonomy_index.get(_taxonomy_key(label))
+            if taxonomy is None:
+                return None
+            return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy)).label
+
+        result: list[PlaceStoryEvent] = []
+        with self.session_factory() as session:
+            real_stream_ids = _real_stream_ids(session)
+
+            def visit_rows(*conditions: Any) -> list[Any]:
+                return list(
+                    session.execute(
+                        select(
+                            VisitModel.id,
+                            VisitModel.reviewed_label,
+                            EventModel.started_at,
+                            CameraSourceModel.id,
+                            CameraSourceModel.name,
+                            CameraSourceModel.status,
+                        )
+                        .join(EventModel, VisitModel.event_id == EventModel.id)
+                        .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                        .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                        .where(
+                            VisitModel.is_superseded.is_(False),
+                            VisitModel.review_status == ReviewStatus.reviewed.value,
+                            VisitModel.reviewed_label.is_not(None),
+                            EventModel.stream_id.in_(real_stream_ids),
+                            *conditions,
+                        )
+                        .order_by(EventModel.started_at, VisitModel.id)
+                    ).all()
+                )
+
+            for event in events:
+                if event.kind not in anchored_kinds or not event.taxon_label:
+                    result.append(event)
+                    continue
+                day_start = datetime.combine(event.event_date, datetime.min.time(), tzinfo=local_timezone)
+                day_rows = visit_rows(
+                    EventModel.started_at >= day_start.astimezone(UTC).replace(tzinfo=None),
+                    EventModel.started_at < (day_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None),
+                )
+                same_taxon = [row for row in day_rows if resolve_label(row[1]) == event.taxon_label]
+                if event.kind == "return":
+                    anchors = same_taxon
+                else:
+                    # Debut: the single earliest encounter, never every camera
+                    # that happened to see the taxon later that day.
+                    anchors = same_taxon[:1]
+                partner_ids: set[str] = set()
+                if anchors:
+                    anchor_ids = [row[0] for row in anchors]
+                    for primary_id, secondary_id in session.execute(
+                        select(
+                            CrossCameraVisitAssociationModel.primary_visit_id,
+                            CrossCameraVisitAssociationModel.secondary_visit_id,
+                        ).where(
+                            CrossCameraVisitAssociationModel.tier == "associated",
+                            or_(
+                                CrossCameraVisitAssociationModel.primary_visit_id.in_(anchor_ids),
+                                CrossCameraVisitAssociationModel.secondary_visit_id.in_(anchor_ids),
+                            ),
+                        )
+                    ).all():
+                        partner_ids.update({primary_id, secondary_id} - set(anchor_ids))
+                partner_rows = (
+                    [
+                        row
+                        for row in visit_rows(VisitModel.id.in_(sorted(partner_ids)))
+                        if resolve_label(row[1]) == event.taxon_label
+                    ]
+                    if partner_ids
+                    else []
+                )
+                earliest_by_source: dict[str, StorySourceContribution] = {}
+                for row in sorted([*anchors, *partner_rows], key=lambda item: (_as_utc(item[2]), item[0])):
+                    source_id = row[3]
+                    if source_id not in earliest_by_source:
+                        earliest_by_source[source_id] = StorySourceContribution(
+                            source_id=source_id,
+                            source_name=row[4],
+                            visit_id=row[0],
+                            source_archived=row[5] == SourceStatus.archived.value,
+                        )
+                contributions = tuple(earliest_by_source.values())
+                result.append(
+                    replace(event, contributions=contributions, visit_id=contributions[0].visit_id)
+                    if contributions
+                    else event
+                )
+        return result
 
     def _place_story_feature_events(
         self,
@@ -36776,20 +37369,19 @@ class ProductRepository:
             # report at a broken image (regression: missing/deleted media
             # gracefully yields no representative).
             return None
-        subject_box = frame.normalized_track_box or frame.normalized_crop_box
-        subject_width: int | None = None
-        subject_height: int | None = None
-        if subject_box is not None and frame.width and frame.height:
-            left, top, right, bottom = subject_box
-            subject_width = round((right - left) * frame.width)
-            subject_height = round((bottom - top) * frame.height)
+        has_subject_region, subject_pixel_area = resolve_subject_region(
+            width=frame.width,
+            height=frame.height,
+            normalized_track_box=frame.normalized_track_box,
+            normalized_crop_box=frame.normalized_crop_box,
+        )
         return EvidenceCandidateFact(
             visit_id=summary.id,
             media_asset_id=frame.media_asset_id,
             captured_at=frame.captured_at,
             is_native_resolution=frame.resolution_provenance == "synchronized",
-            has_subject_region=subject_width is not None and subject_height is not None,
-            subject_pixel_area=(subject_width or 0) * (subject_height or 0),
+            has_subject_region=has_subject_region,
+            subject_pixel_area=subject_pixel_area,
             asset_pixel_area=(frame.width or 0) * (frame.height or 0),
         )
 
@@ -36884,6 +37476,7 @@ class ProductRepository:
             display_name=selected["display_name"],
             observed_at=selected["observed_at"],
             primary_evidence=primary_evidence,
+            capture_time_known=summary.capture_time_known,
         )
 
     # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a Visit
@@ -37036,11 +37629,18 @@ class ProductRepository:
             else None
         )
         # `MediaAssetModel.captured_at` (not `VisitEvidenceFrame.captured_at`,
-        # which always carries a fallback value) is `None` precisely when the
-        # underlying frame's real capture time was unknown -- see "Frame-time
-        # semantics" in docs/offline-recorded-media-observation-contract.md.
+        # which always carries a fallback value) is `None` when a frame's own
+        # capture time was never recorded. That alone is not sufficient for
+        # offline recorded video: the frame-driven provider's epoch fallback
+        # persists `1970 + offset` as the evidence asset's own `captured_at`,
+        # so the same source-recording provenance fact every product surface
+        # uses (`capture_time_known`, Owner-Only Release Polish & Acceptance
+        # v1) must also hold before a research export may call the time
+        # "recorded".
         capture_timestamp_known = (
-            primary_evidence_asset is not None and primary_evidence_asset.captured_at is not None
+            primary_evidence_asset is not None
+            and primary_evidence_asset.captured_at is not None
+            and summary.capture_time_known
         )
 
         candidate_ledger = session.scalars(
@@ -37215,6 +37815,10 @@ class ProductRepository:
         if filters.collection_id is not None:
             collection_visit_ids = self._research_collection_visit_ids(session, filters.collection_id)
             query = query.where(VisitModel.id.in_(collection_visit_ids))
+        if filters.visit_ids is not None:
+            # Narrows only: an explicitly requested Visit is still resolved
+            # through the ordinary eligibility boundary by the caller.
+            query = query.where(VisitModel.id.in_(filters.visit_ids))
 
         rows = session.execute(
             query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
@@ -37374,6 +37978,147 @@ class ProductRepository:
                     excluded_reasons[reason] += 1
         return observations, excluded_reasons
 
+    def _research_eligible_signature(self, filters: ResearchExportFilters) -> str:
+        """Fingerprint of the currently eligible set, used to detect an
+        eligibility change (a correction, reopen, or Zone reclassification)
+        between selection and bundle generation."""
+
+        observations, _ = self.research_export_eligibility_preview(filters)
+        return observations_content_fingerprint(
+            sorted_observations([obs for obs in observations if obs.eligibility.eligible])
+        )
+
+    def _plan_research_media_bundle(
+        self, eligible: list[ResearchObservation],
+    ) -> list[tuple[MediaBundleEntry, Path | None]]:
+        """Resolve every eligible media id to either a safely resolved
+        source file or an explicit omission reason. Reads only the database
+        and file metadata -- never file contents -- so it also backs the
+        dry-run preview. Raises when the planned bundle exceeds the bounds."""
+
+        requests = media_requests_for_observations(eligible)
+        names = plan_bundle_names(requests)
+        planned: list[tuple[MediaBundleEntry, Path | None]] = []
+        with self.session_factory() as session:
+            for request in requests:
+                name = names[request.media_id]
+
+                def omitted(status: str) -> tuple[MediaBundleEntry, Path | None]:
+                    return (
+                        MediaBundleEntry(request.media_id, request.observation_ids, None, None, None, status),
+                        None,
+                    )
+
+                if name.omit_status is not None:
+                    planned.append(omitted(name.omit_status))
+                    continue
+                asset = session.get(MediaAssetModel, request.media_id)
+                if asset is None:
+                    planned.append(omitted(STATUS_OMITTED_MISSING))
+                    continue
+                path, _relative, size, error = self._storage_managed_media_path(asset)
+                if error is not None or path is None:
+                    status = {
+                        "missing_or_incomplete_file": STATUS_OMITTED_MISSING,
+                        "integrity_mismatch": STATUS_OMITTED_INTEGRITY,
+                    }.get(error or "", STATUS_OMITTED_UNSAFE_PATH)
+                    planned.append(omitted(status))
+                    continue
+                planned.append(
+                    (
+                        MediaBundleEntry(
+                            request.media_id, request.observation_ids, name.relative_path, size, None,
+                            STATUS_BUNDLED,
+                        ),
+                        path,
+                    )
+                )
+        bundleable = [entry for entry, source in planned if source is not None]
+        total_bytes = sum(entry.size_bytes or 0 for entry in bundleable)
+        if (
+            len(bundleable) > RESEARCH_EXPORT_MEDIA_MAX_FILES
+            or total_bytes > RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES
+        ):
+            raise ValueError(
+                "research_export_media_limit_exceeded: "
+                f"{len(bundleable)} files / {total_bytes} bytes exceeds the "
+                f"{RESEARCH_EXPORT_MEDIA_MAX_FILES} file / {RESEARCH_EXPORT_MEDIA_MAX_TOTAL_BYTES} byte "
+                "limit; narrow the export filters."
+            )
+        return planned
+
+    @staticmethod
+    def _copy_research_media_file(source: Path, destination: Path) -> tuple[int, str]:
+        """Stream one managed file into the bundle, hashing the bytes actually
+        written. `O_NOFOLLOW` closes the window between path validation and
+        open in which the file could be swapped for a symlink; the exclusive
+        destination open refuses to overwrite an existing bundle entry."""
+
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        digest = hashlib.sha256()
+        total = 0
+        with os.fdopen(os.open(source, flags), "rb") as reader, destination.open("xb") as writer:
+            while chunk := reader.read(1024 * 1024):
+                digest.update(chunk)
+                writer.write(chunk)
+                total += len(chunk)
+        return total, digest.hexdigest()
+
+    def _write_research_media_bundle(
+        self, directory: Path, planned: list[tuple[MediaBundleEntry, Path | None]],
+    ) -> list[MediaBundleEntry]:
+        """Copy planned media into `<directory>/media/` and write
+        `media-bundle.csv`. A file that cannot be copied or fails its
+        integrity check is omitted with a reason, never half-written."""
+
+        (directory / BUNDLE_MEDIA_DIRECTORY).mkdir()
+        final: list[MediaBundleEntry] = []
+        with self.session_factory() as session:
+            for entry, source in planned:
+                if source is None or entry.bundled_path is None:
+                    final.append(entry)
+                    continue
+                destination = directory / entry.bundled_path
+                asset = session.get(MediaAssetModel, entry.media_id)
+                try:
+                    size, sha256 = self._copy_research_media_file(source, destination)
+                except FileNotFoundError:
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_MISSING))
+                    continue
+                except OSError:
+                    destination.unlink(missing_ok=True)
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_UNSAFE_PATH))
+                    continue
+                recorded_sha = asset.content_sha256 if asset is not None else None
+                if size != entry.size_bytes or (recorded_sha is not None and recorded_sha != sha256):
+                    destination.unlink(missing_ok=True)
+                    final.append(dataclasses.replace(entry, bundled_path=None, size_bytes=None, status=STATUS_OMITTED_INTEGRITY))
+                    continue
+                final.append(dataclasses.replace(entry, size_bytes=size, sha256=sha256))
+        self._write_csv(
+            directory / MEDIA_BUNDLE_FILE_NAME,
+            list(MEDIA_BUNDLE_CSV_FIELDNAMES),
+            [media_bundle_entry_to_row(entry) for entry in final],
+        )
+        return final
+
+    @staticmethod
+    def _research_media_bundle_summary(entries: list[MediaBundleEntry]) -> ResearchMediaBundleSummary:
+        reasons: Counter[str] = Counter(entry.status for entry in entries if entry.status != STATUS_BUNDLED)
+        bundled = [entry for entry in entries if entry.status == STATUS_BUNDLED]
+        warnings = [
+            f"{entry.media_id}: not bundled ({entry.status})"
+            for entry in entries if entry.status != STATUS_BUNDLED
+        ]
+        return ResearchMediaBundleSummary(
+            requested=len(entries),
+            bundled=len(bundled),
+            omitted=len(entries) - len(bundled),
+            omitted_reasons=dict(sorted(reasons.items())),
+            total_bytes=sum(entry.size_bytes or 0 for entry in bundled),
+            warnings=warnings,
+        )
+
     def export_research_dataset(self, payload: ResearchExportRequest) -> ResearchExportResponse:
         """Generic research-safe CSV/JSON export (see "Generic research
         export" in the governing milestone brief). Always trusted-only by
@@ -37403,6 +38148,12 @@ class ProductRepository:
             content_fingerprint=observations_content_fingerprint(eligible),
         )
         file_names = ["observations.csv", "observations.jsonl", "media.csv", "sources.csv", "effort.csv", "manifest.json"]
+        media_plan = self._plan_research_media_bundle(eligible) if payload.include_media else None
+        if media_plan is not None:
+            file_names.append(MEDIA_BUNDLE_FILE_NAME)
+            manifest = manifest.model_copy(
+                update={"media_bundle": self._research_media_bundle_summary([entry for entry, _ in media_plan])}
+            )
 
         if payload.dry_run:
             return ResearchExportResponse(
@@ -37420,6 +38171,7 @@ class ProductRepository:
                 excluded_count=manifest.excluded_count,
                 excluded_reasons=manifest.excluded_reasons,
                 manifest=manifest,
+                media_bundle=manifest.media_bundle,
                 dry_run=True,
             )
 
@@ -37470,6 +38222,16 @@ class ProductRepository:
                 list(RESEARCH_EFFORT_CSV_FIELDNAMES),
                 self._research_effort_rows(coverage=coverage, offline=offline_effort),
             )
+            if media_plan is not None:
+                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
+                manifest = manifest.model_copy(
+                    update={"media_bundle": self._research_media_bundle_summary(bundled_entries)}
+                )
+                # Bytes can take a while to copy; never publish a bundle whose
+                # records stopped being eligible (correction, reopen, Zone
+                # reclassification) after the selection was made.
+                if self._research_eligible_signature(payload.filters) != manifest.content_fingerprint:
+                    raise ValueError("research_export_eligibility_changed")
             self._write_json(temporary_dir / "manifest.json", manifest.model_dump(mode="json"))
             temporary_dir.rename(output_dir)
         except Exception:
@@ -37492,6 +38254,7 @@ class ProductRepository:
             excluded_count=manifest.excluded_count,
             excluded_reasons=manifest.excluded_reasons,
             manifest=manifest,
+            media_bundle=manifest.media_bundle,
             dry_run=False,
         )
 
@@ -37535,17 +38298,32 @@ class ProductRepository:
             include_machine_classifications=payload.include_machine_classifications,
         )
         package = build_camtrap_dp_package(observations, options=options)
-        validation_result = validate_camtrap_dp_package(package)
-        validation = CamtrapDpValidation(
-            valid=validation_result.valid,
-            errors=list(validation_result.errors),
-            warnings=list(validation_result.warnings),
-        )
+
+        def _validate(candidate: CamtrapDpPackage) -> CamtrapDpValidation:
+            result = validate_camtrap_dp_package(candidate)
+            return CamtrapDpValidation(
+                valid=result.valid, errors=list(result.errors), warnings=list(result.warnings),
+            )
+
 
         export_id = self._research_export_id(payload.output_name, prefix="camtrap-dp")
         file_names = ["deployments.csv", "media.csv", "observations.csv", "datapackage.json"]
+        eligible_observations = sorted_observations([obs for obs in observations if obs.eligibility.eligible])
+        eligible_fingerprint = observations_content_fingerprint(eligible_observations)
+        media_plan = self._plan_research_media_bundle(eligible_observations) if payload.include_media else None
+        media_summary = (
+            self._research_media_bundle_summary([entry for entry, _ in media_plan])
+            if media_plan is not None else None
+        )
+        if media_plan is not None:
+            file_names.append(MEDIA_BUNDLE_FILE_NAME)
 
         if payload.dry_run:
+            if media_plan is not None:
+                package = restrict_package_to_bundled_media(
+                    package, {entry.media_id for entry, _ in media_plan if entry.status == STATUS_BUNDLED},
+                )
+            validation = _validate(package)
             return CamtrapDpExportResponse(
                 export_id=export_id,
                 output_directory=None,
@@ -37560,7 +38338,8 @@ class ProductRepository:
                 deployment_count=len(package.deployments),
                 media_count=len(package.media),
                 observation_count=len(package.observations),
-                validation=validation,
+                validation=self._camtrap_validation_with_media(validation, media_summary),
+                media_bundle=media_summary,
                 dry_run=True,
             )
 
@@ -37573,6 +38352,17 @@ class ProductRepository:
 
         temporary_dir.mkdir()
         try:
+            if media_plan is not None:
+                bundled_entries = self._write_research_media_bundle(temporary_dir, media_plan)
+                media_summary = self._research_media_bundle_summary(bundled_entries)
+                # Only media whose bytes really landed in the archive may be
+                # advertised by media.csv (see restrict_package_to_bundled_media).
+                package = restrict_package_to_bundled_media(
+                    package, {e.media_id for e in bundled_entries if e.status == STATUS_BUNDLED},
+                )
+                if self._research_eligible_signature(payload.filters) != eligible_fingerprint:
+                    raise ValueError("research_export_eligibility_changed")
+            validation = _validate(package)
             self._write_csv(
                 temporary_dir / "deployments.csv",
                 list(CAMTRAP_DEPLOYMENT_CSV_FIELDNAMES),
@@ -37614,8 +38404,22 @@ class ProductRepository:
             deployment_count=len(package.deployments),
             media_count=len(package.media),
             observation_count=len(package.observations),
-            validation=validation,
+            validation=self._camtrap_validation_with_media(validation, media_summary),
+            media_bundle=media_summary,
             dry_run=False,
+        )
+
+    @staticmethod
+    def _camtrap_validation_with_media(
+        validation: CamtrapDpValidation, media_summary: ResearchMediaBundleSummary | None,
+    ) -> CamtrapDpValidation:
+        """Media that could not be bundled has no media.csv row (its bytes are
+        not in the archive); it is disclosed here and in media-bundle.csv."""
+
+        if media_summary is None or not media_summary.warnings:
+            return validation
+        return validation.model_copy(
+            update={"warnings": [*validation.warnings, *media_summary.warnings]}
         )
 
     def conservation_report(self, payload: ConservationReportRequest) -> ConservationReportResponse:
@@ -40463,6 +41267,7 @@ class ProductRepository:
                 target_type="visit",
                 target_id=visit.id,
                 title=f"Review {visit.subject_label} visit",
+                capture_time_known=self._visit_capture_time_known(session, visit_model, event_model),
                 stream_id=event.stream_id,
                 stream_name=stream_name,
                 source_id=source_id,

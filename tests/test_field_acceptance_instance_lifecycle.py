@@ -651,7 +651,7 @@ def test_storage_preflight_windows_drive_path_on_posix_fails_closed_without_tran
 
     with pytest.raises(InstanceLifecycleError, match="wslpath"):
         storage_preflight_report(
-            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            dev_root=Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceV12"),
             windows_host=fake_host, recorder_max_bytes=1_000_000_000,
             disk_usage_fn=_disk_usage_must_not_be_called,
             scan_siblings=False, is_native_windows=False, wsl_translate_fn=lambda _raw: None,
@@ -667,10 +667,10 @@ def test_storage_preflight_windows_drive_path_translates_and_reports_provenance(
     measured Windows storage', never the v12 case, 'requested Windows root
     -> measured WSL virtual disk' (governing brief §14)."""
 
-    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"
+    windows_style = r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceV12"
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
     fake_mount_root.mkdir(parents=True)
-    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
+    translated = str(fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
 
     report = storage_preflight_report(
         dev_root=Path(windows_style), windows_host=fake_host, recorder_max_bytes=1_000_000_000,
@@ -732,9 +732,9 @@ def test_init_accepts_a_windows_style_dev_root_matching_preflights_own_translati
     string `preflight` already accepted, and resolves to the identical
     real target -- never a second, silently-diverging translation."""
 
-    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdLatencyConvergenceV3"
+    windows_style = r"C:\Users\exampleuser\AppData\Local\MockingBirdLatencyConvergenceV3"
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
-    translated = fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdLatencyConvergenceV3"
+    translated = fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdLatencyConvergenceV3"
     _make_deploy_tool_root(translated, windows_host=fake_host, git_commit="d" * 40, build_id="build-v3")
 
     manifest = init_instance(
@@ -759,7 +759,7 @@ def test_init_fails_closed_for_a_windows_style_dev_root_with_no_translation_avai
 
     with pytest.raises(InstanceLifecycleError, match="wslpath"):
         init_instance(
-            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdMissingTranslation"),
+            dev_root=Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdMissingTranslation"),
             windows_host=fake_host, is_native_windows=False, wsl_translate_fn=lambda _raw: None,
         )
 
@@ -801,7 +801,7 @@ def test_init_is_idempotent_across_two_spellings_of_the_same_real_directory(
     first = init_instance(dev_root=real_root, windows_host=fake_host)  # ordinary WSL-visible spelling
     with pytest.raises(InstanceLifecycleError, match="already marked"):
         init_instance(
-            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceIdempotent"),
+            dev_root=Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdFieldAcceptanceIdempotent"),
             windows_host=fake_host, is_native_windows=False, wsl_translate_fn=lambda _raw: str(real_root),
         )
     assert read_manifest(real_root).created_at == first.created_at
@@ -816,8 +816,8 @@ def test_assess_complete_and_cleanup_also_accept_a_windows_style_dev_root(
     convention' for the whole tool."""
 
     fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
-    translated = fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdWideCheck"
-    windows_style = Path(r"C:\Users\zachk\AppData\Local\MockingBirdWideCheck")
+    translated = fake_mount_root / "Users" / "exampleuser" / "AppData" / "Local" / "MockingBirdWideCheck"
+    windows_style = Path(r"C:\Users\exampleuser\AppData\Local\MockingBirdWideCheck")
     translate = lambda _raw: str(translated)  # noqa: E731
     _make_deploy_tool_root(translated, windows_host=fake_host)
 

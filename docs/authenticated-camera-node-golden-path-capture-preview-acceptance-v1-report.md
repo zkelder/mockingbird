@@ -47,7 +47,7 @@ No discrepancy found -- proceeded as authorized.
 ## Current pairing state
 
 Investigated before touching anything. The reference Camera Node
-(`node-76ec8e53ae586dd0`, `192.168.1.112:8787`) was reachable and healthy
+(`node-<id>`, `<node-ip>:8787`) was reachable and healthy
 (`self_test: passed`, though `camera_count: 8`/`available_camera_count: 8`
 -- the exact pre-fix symptom, see "Camera Node accepted-build deployment"
 below) but **single-slot paired to a credential no locally-known Host
@@ -217,7 +217,7 @@ against a genuinely fresh, disposable Host instance (a real
 isolated SQLite DB, own throwaway first-run Administrator account -- never
 the operator's own credentials, never asked of the user):
 
-- discover/enter Node (`http://192.168.1.112:8787`) -> authenticate/pair
+- discover/enter Node (`http://<node-ip>:8787`) -> authenticate/pair
   (real one-time code) -> select the real advertised camera
   (`picamera2-camera-0`) -> configure Source/Stream/Zone -> save.
 - Reload/read-back: `GET /api/sources` / `GET /api/streams` /

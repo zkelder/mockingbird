@@ -67,7 +67,7 @@ def _pair_camera_node_source(
         SourceProviderConfigurationUpdate(
             provider_key="camera_node",
             config={
-                "node_base_address": "http://192.168.1.50:8787",
+                "node_base_address": "http://192.168.1.23:8787",
                 "node_credential": "pairing-credential-value",
                 "node_transport_credential": transport_credential,
                 "node_camera_id": "cam-1",

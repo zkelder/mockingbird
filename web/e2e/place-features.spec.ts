@@ -83,6 +83,10 @@ test("a brand-new Place shows an honest empty state, not a bare zero", async ({ 
   await completeSetup(page);
   await page.goto("/");
 
+  // Empty optional Place details are one collapsed "About your place" line on
+  // Today until something is recorded (Everyday Wildlife Experience &
+  // Presentation Refinement v1).
+  await page.getByText("About your place").click();
   const card = page.locator(".place-features-card");
   await expect(card).toBeVisible();
   await expect(card.getByText("No feeders, water features, or other Place features recorded yet.")).toBeVisible();
@@ -118,6 +122,7 @@ test("Manage features reveals an accessible add-feature form", async ({ page }) 
   await mockFeaturesList(page, []);
 
   await page.goto("/");
+  await page.getByText("About your place").click();
   await page.getByRole("button", { name: "Add a feature" }).click();
 
   const card = page.locator(".place-features-card");

@@ -609,6 +609,64 @@ a.secondary-action {
   bottom: 10px;
 }
 
+.zone-drawing-canvas:focus-visible {
+  outline: 3px solid #1f5c4d;
+  outline-offset: 2px;
+}
+
+.zone-drawing-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #c9d6c4;
+  border-radius: 8px;
+}
+
+.zone-drawing-fields legend {
+  padding: 0 6px;
+  color: #3f5a3d;
+  font-size: 0.9rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.visit-curation-details > summary h2,
+.local-data-secondary > summary h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.visit-curation-details > summary,
+.local-data-secondary > summary {
+  display: grid;
+  gap: 3px;
+}
+
+.visit-curation-details > summary span,
+.local-data-secondary > summary span {
+  color: #526159;
+  font-size: 0.84rem;
+  font-weight: 400;
+}
+
+details > summary:focus-visible {
+  outline: 3px solid #1f5c4d;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .zone-drawing-rectangle {
   position: absolute;
   box-sizing: border-box;
@@ -1486,6 +1544,19 @@ a.secondary-action {
   font-size: 0.84rem;
 }
 
+/* The preview wrapper is itself a direct child <div>, so the generic
+   `> div` rule above (flex: 1 1 auto; display: grid) used to override its
+   fixed 82x62 box and let the image render at natural height, overlapping the
+   rows below. Pin it back to a clipped, fixed thumbnail. */
+.dashboard-visit-row > .dashboard-visit-preview-wrap {
+  display: block;
+  flex: 0 0 82px;
+  width: 82px;
+  height: 62px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
 .dashboard-visit-row .primary-action,
 .dashboard-visit-row > .secondary-action,
 .dashboard-observation-row > .text-action {
@@ -1575,14 +1646,22 @@ a.secondary-action {
    see docs/representative-species-evidence-contract.md. `align-self` is
    set explicitly because the row itself uses `align-items: baseline` for
    its text children, which an image has no meaningful baseline for. */
-.today-report-species-thumb {
+.today-report-species-thumb-frame {
+  display: block;
   flex: 0 0 auto;
   align-self: center;
   width: 40px;
   height: 40px;
   border-radius: 6px;
-  object-fit: cover;
+  overflow: hidden;
   background: #eaf0e8;
+}
+
+.today-report-species-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .today-report-species-list li span {
@@ -7388,244 +7467,67 @@ a.secondary-action {
   max-width: 360px;
 }
 
-.bird-log-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
 
-.bird-log-summary-card {
-  display: grid;
-  gap: 6px;
-  border: 1px solid #dce3d8;
-  border-radius: 8px;
-  padding: 14px;
-  background: #ffffff;
-}
 
-.bird-log-summary-card span,
-.bird-log-summary-card small {
-  color: #607067;
-  font-size: 0.88rem;
-  font-weight: 700;
-}
 
-.bird-log-summary-card strong {
-  color: #1f3329;
-  font-size: 1.45rem;
-}
 
-.bird-log-filter-panel {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(180px, 0.45fr));
-  gap: 12px;
-  align-items: end;
-}
 
-.bird-log-filter-panel label {
-  display: grid;
-  gap: 6px;
-  color: #536258;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
 
-.bird-log-filter-panel input,
-.bird-log-filter-panel select {
-  min-height: 40px;
-  border: 1px solid #c8d2c3;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #ffffff;
-  color: #18231d;
-}
 
-.bird-log-group-list,
-.bird-log-group,
-.bird-log-entry-list {
-  display: grid;
-  gap: 14px;
-}
 
-.bird-log-entry {
-  display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
-  min-width: 0;
-  border: 1px solid #dce3d8;
-  border-radius: 8px;
-  padding: 12px;
-  background: #ffffff;
-}
 
-.bird-log-entry.is-false-positive {
-  border-color: #d6ded3;
-  background: #fbfdf8;
-}
 
-.bird-log-entry-body {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
 
-.bird-log-entry-top {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-  min-width: 0;
-}
 
-.bird-log-entry-top > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
 
-.bird-log-entry-top h3,
-.bird-log-entry-top p {
-  margin: 0;
-}
 
-.bird-log-entry-top h3 {
-  color: #1f3329;
-  font-size: 1.12rem;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
 
-.bird-log-entry-top p {
-  color: #536258;
-  font-size: 0.92rem;
-  line-height: 1.4;
-}
 
-.bird-log-media,
-.bird-log-image-placeholder {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-width: 0;
-  border: 1px solid #e1e8dd;
-  border-radius: 8px;
-  padding: 8px;
-  background: #f8fbf5;
-}
 
-.bird-log-thumb {
-  display: grid;
-  min-height: 142px;
-  overflow: hidden;
-  border-radius: 6px;
-  background: #17291f;
-  place-items: center;
-}
 
-.bird-log-thumb img {
-  width: 100%;
-  height: 100%;
-  min-height: 142px;
-  object-fit: cover;
-}
 
-.bird-log-thumb-fallback {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  color: #dce8df;
-  text-align: center;
-}
 
-.bird-log-thumb-fallback span {
-  color: #aec1b5;
-  font-size: 0.78rem;
-  overflow-wrap: anywhere;
-}
 
-.bird-log-media-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
 
-.bird-log-media-facts span {
-  max-width: 100%;
-  border-radius: 999px;
-  padding: 4px 7px;
-  background: #edf2e9;
-  color: #425348;
-  font-size: 0.78rem;
-  font-weight: 800;
-  line-height: 1.2;
-}
 
-.bird-log-media-filename {
-  display: block;
-  flex-basis: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.bird-log-result-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
 
-.bird-log-result-row > div,
-.bird-log-meta-grid > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid #e1e8dd;
-  border-radius: 8px;
-  padding: 8px;
-  background: #f8fbf5;
-}
 
-.bird-log-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
 
-.bird-log-result-row span,
-.bird-log-meta-grid span,
-.bird-log-image-placeholder span {
-  color: #607067;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
 
-.bird-log-result-row strong,
-.bird-log-meta-grid strong {
-  color: #20352a;
-  font-size: 0.9rem;
-  line-height: 1.25;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.bird-log-image-placeholder {
-  min-height: 180px;
-  place-content: center;
-  text-align: center;
-}
 
-.bird-log-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .queue-media-block {
   max-width: 540px;
@@ -8598,8 +8500,6 @@ a.secondary-action {
   }
 
   .metric-grid,
-  .bird-log-summary-grid,
-  .bird-log-filter-panel,
   .case-summary-grid,
   .manifest-summary,
   .manifest-export-form,
@@ -8650,7 +8550,6 @@ a.secondary-action {
   }
 
   .retention-detail-grid,
-  .bird-log-entry,
   .retention-linkage-grid,
   .retention-dry-run-form,
   .retention-dry-run-summary,
@@ -8661,13 +8560,9 @@ a.secondary-action {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .bird-log-entry {
-    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-  }
+  
 
-  .bird-log-meta-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  
 
   .playback-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8769,9 +8664,6 @@ a.secondary-action {
   }
 
   .metric-grid,
-  .bird-log-summary-grid,
-  .bird-log-filter-panel,
-  .bird-log-entry,
   .case-summary-grid,
   .manifest-summary,
   .species-export-summary,
@@ -8847,25 +8739,13 @@ a.secondary-action {
     grid-template-columns: 1fr;
   }
 
-  .bird-log-entry,
-  .bird-log-result-row,
-  .bird-log-meta-grid {
-    grid-template-columns: 1fr;
-  }
+  
 
-  .bird-log-entry-top {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+  
 
-  .bird-log-thumb,
-  .bird-log-thumb img {
-    min-height: 190px;
-  }
+  
 
-  .bird-log-actions {
-    justify-content: flex-start;
-  }
+  
 
   .source-next-action,
   .provider-workflow-next,
@@ -10468,4 +10348,263 @@ a.secondary-action {
   .table-scroll-hint {
     display: block;
   }
+}
+
+.place-story-card-cameras {
+  margin: 0;
+  color: #536258;
+  font-size: 0.85rem;
+}
+
+.alert-row-grouped {
+  display: grid;
+  gap: 4px;
+}
+
+fieldset.camera-filter {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.camera-filter-stream-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: Visit detail
+   leads with the wildlife image and the one decision; everything else is a
+   disclosure. */
+.visit-primary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.visit-primary-evidence,
+.visit-primary-decision {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.visit-primary-decision {
+  position: sticky;
+  top: 12px;
+}
+
+.visit-decision-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.visit-decision-suggestion strong {
+  font-size: 1.15rem;
+}
+
+.visit-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.visit-decision-actions .primary-action {
+  flex: 1 1 140px;
+}
+
+.visit-suggestions-details > summary,
+.visit-advanced-details > summary,
+.visit-organization-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-weight: 800;
+}
+
+.visit-advanced-body,
+.visit-organization-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.visit-advanced-body > .panel,
+.visit-organization-body > .panel {
+  box-shadow: none;
+}
+
+.visit-suggestions-details > :not(summary) {
+  margin-top: 12px;
+}
+
+.visit-decision-footnote {
+  margin: 0;
+}
+
+@media (max-width: 1000px) {
+  .visit-primary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .visit-primary-decision {
+    position: static;
+  }
+}
+
+.visit-context-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 14px;
+}
+
+.visit-context-banner p {
+  margin: 0;
+}
+
+.visit-context-banner .detail-actions {
+  margin-left: auto;
+}
+
+.visit-decision-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.visit-decision-actions .primary-action {
+  grid-column: 1 / -1;
+}
+
+.taxonomy-quick-picks-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.correction-form.visit-decision-form {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.visit-decision-suggestion {
+  margin-top: 2px;
+}
+
+.visit-decision-panel .section-heading h2 {
+  font-size: 1.25rem;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: a small source
+   image is shown whole on a soft backdrop, never stretched to fill the card
+   (see components/subjectFraming.ts). */
+.journal-label-image img.journal-thumb-low-resolution,
+.journal-gallery-image img.journal-thumb-low-resolution,
+.today-report-species-thumb.journal-thumb-low-resolution {
+  object-fit: contain;
+  background: #e3eadf;
+}
+
+.correction-form .visit-decision-note textarea {
+  min-height: 42px;
+}
+
+.dashboard-place-details-disclosure > summary {
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.dashboard-place-details-disclosure[open] > summary {
+  margin-bottom: 12px;
+}
+
+.wildlife-insights-context-details > summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-weight: 800;
+}
+
+.wildlife-insights-context-details[open] > summary {
+  margin-bottom: 10px;
+}
+
+/* Everyday Wildlife Experience & Presentation Refinement v1: the secondary
+   list under the active primary destination. */
+.nav-sub-items {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 6px 14px;
+  padding-left: 10px;
+  border-left: 1px solid #5d8068;
+}
+
+.nav-item.nav-sub-item {
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #dbe8dc;
+}
+
+/* Bird Log rediscovery (Everyday Wildlife Experience & Presentation
+   Refinement v1). */
+.journal-recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.journal-recent-item {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: inherit;
+  text-align: left;
+}
+
+.journal-recent-item:hover {
+  border-color: #2e6f5e;
+}
+
+.journal-controls input[type="search"] {
+  min-height: 42px;
+  min-width: 220px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+}
+
+.fast-review-context.fast-review-context-line {
+  display: block;
+  grid-template-columns: none;
+  margin: 0;
+  font-weight: 700;
+  color: #243a2d;
+}
+
+/* Reviewed Visit: the readiness actions live in the narrow decision column,
+   so stack them instead of letting a button spill past the panel edge. */
+.visit-primary-decision .case-readiness-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.visit-primary-decision .case-readiness-panel .detail-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.visit-primary-decision .case-readiness-panel .detail-actions button {
+  width: 100%;
 }

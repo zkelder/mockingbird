@@ -22,7 +22,7 @@ regression class, not a new starvation-family defect. See "Decision," below, for
   HEAD, confirmed via `GET /api/product/instance` (`build_id` `10f58c46e82b555e`, `app_version` `0.1.0`,
   `instance_id` `77449dd359d9e0296cf8b198ff1013b4`) and independently re-confirmed via the live Observation
   Engine's own `model_runtime_metadata`.
-- Deployment: a genuinely fresh, disposable dev-root (`C:\Users\zachk\AppData\Local\
+- Deployment: a genuinely fresh, disposable dev-root (`C:\Users\<user>\AppData\Local\
   MockingBirdFieldAcceptanceV5`), **not** the operator's long-lived `MockingBirdDev` identity — disposable
   local Administrator (`field-acceptance-v5@mockingbird.local`, bootstrapped via `POST /api/setup/
   administrator`, password generated and used only within this session's own automation, never surfaced to
@@ -36,7 +36,7 @@ regression class, not a new starvation-family defect. See "Decision," below, for
   scene check, before committing to the cohort) and repeatedly throughout via the independent recorder's own
   archive, not assumed from a forecast.
 - Camera/Stream count: **1 real Stream** (`stream-fb6aa12f80ca`, "Field Acceptance V5"), backed by the real
-  reference Camera Node (`node-76ec8e53ae586dd0`, `192.168.1.112:8787`), camera `picamera2-camera-0` ("Pi
+  reference Camera Node (`node-<id>`, `<node-ip>:8787`), camera `picamera2-camera-0` ("Pi
   camera 1") of 8 the Node advertised — the identical physical camera every prior accepted daylight cohort
   (including v4) used. One full-frame Zone (`yard` type, polygon 0.02–0.98 both axes, matching v4's own
   configuration for direct comparability).

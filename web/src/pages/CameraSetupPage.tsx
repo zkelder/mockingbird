@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSetupOption,
@@ -12,7 +12,7 @@ import type {
   ZoneActivitySensitivity,
   ZoneType,
 } from "../api/types";
-import { formatLabel, withTimeout } from "../utils";
+import { formatLabel, withTimeout, userFacingErrorMessage } from "../utils";
 
 interface CameraSetupPageProps {
   onComplete: (streamId: string) => void;
@@ -32,6 +32,57 @@ const defaultPolygon: Point[] = [
   { x: 0.8, y: 0.8 },
   { x: 0.2, y: 0.8 },
 ];
+// Everyday UX & Accessibility Closure v1: the watch area is a rectangle, so
+// a keyboard or screen-reader user edits the same four numbers a pointer drag
+// produces -- never a second geometry model. Fractions of the picture, 0..1.
+const MIN_ZONE_EXTENT = 0.03;
+const ZONE_KEY_STEP = 0.02;
+const ZONE_KEY_FINE_STEP = 0.005;
+interface ZoneRect { left: number; top: number; width: number; height: number }
+
+function zoneRectOf(polygon: Point[]): ZoneRect {
+  return {
+    left: polygon[0].x,
+    top: polygon[0].y,
+    width: polygon[1].x - polygon[0].x,
+    height: polygon[2].y - polygon[1].y,
+  };
+}
+
+// Editing a size stops at the picture edge (the opposite edge stays put);
+// editing a position slides the rectangle but never resizes it.
+function clampZoneRect(rect: ZoneRect, edit: "position" | "size"): ZoneRect {
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  if (edit === "size") {
+    const left = clamp(rect.left, 0, 1 - MIN_ZONE_EXTENT);
+    const top = clamp(rect.top, 0, 1 - MIN_ZONE_EXTENT);
+    return {
+      left,
+      top,
+      width: clamp(rect.width, MIN_ZONE_EXTENT, 1 - left),
+      height: clamp(rect.height, MIN_ZONE_EXTENT, 1 - top),
+    };
+  }
+  const width = clamp(rect.width, MIN_ZONE_EXTENT, 1);
+  const height = clamp(rect.height, MIN_ZONE_EXTENT, 1);
+  return {
+    width,
+    height,
+    left: clamp(rect.left, 0, 1 - width),
+    top: clamp(rect.top, 0, 1 - height),
+  };
+}
+
+function polygonOfZoneRect(rect: ZoneRect): Point[] {
+  const right = rect.left + rect.width;
+  const bottom = rect.top + rect.height;
+  return [
+    { x: rect.left, y: rect.top }, { x: right, y: rect.top }, { x: right, y: bottom }, { x: rect.left, y: bottom },
+  ];
+}
+
+const percentOf = (fraction: number) => Math.round(fraction * 1000) / 10;
+
 const DRAFT_KEY = "mockingbird-camera-setup-draft-v1";
 const DEFAULT_CAMERA_NAME = "My camera";
 
@@ -78,7 +129,7 @@ function setupKey() {
 }
 
 function errorMessage(caught: unknown, fallback: string): string {
-  return caught instanceof Error ? caught.message : fallback;
+  return userFacingErrorMessage(caught, fallback);
 }
 
 function firstAvailableCamera(cameras: CameraNodeAdvertisedCamera[]): CameraNodeAdvertisedCamera | undefined {
@@ -125,6 +176,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedd
   const [zoneName, setZoneName] = useState(initialDraft.zoneName ?? "Activity area");
   const [zoneType, setZoneType] = useState<ZoneType>(initialDraft.zoneType ?? "feeder");
   const [polygon, setPolygon] = useState<Point[]>(initialDraft.polygon ?? defaultPolygon);
+  const [zoneFieldText, setZoneFieldText] = useState<Partial<Record<keyof ZoneRect, string>>>({});
   const [sensitivity, setSensitivity] = useState<ZoneActivitySensitivity>(initialDraft.sensitivity ?? "normal");
   const [monitoringEnabled, setMonitoringEnabled] = useState(initialDraft.monitoringEnabled ?? false);
   const [validation, setValidation] = useState<CameraSetupValidationResponse | null>(null);
@@ -321,6 +373,48 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedd
     const nextPolygon = [
       { x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom },
     ];
+    setPolygon(nextPolygon);
+    saveNodeDraft({ polygon: nextPolygon });
+  }
+
+  function applyZoneRect(next: ZoneRect, edit: "position" | "size") {
+    setPolygon(polygonOfZoneRect(clampZoneRect(next, edit)));
+  }
+
+  // Arrow keys move the area; Shift+arrows resize it (Alt for finer steps).
+  // Only local state changes per key press -- the Camera Node draft is saved
+  // once on blur, matching the text fields, so holding a key never fires a
+  // request per step.
+  function handleZoneKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const direction: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+    };
+    const delta = direction[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    const step = event.altKey ? ZONE_KEY_FINE_STEP : ZONE_KEY_STEP;
+    const rect = zoneRectOf(polygon);
+    if (event.shiftKey) {
+      applyZoneRect({ ...rect, width: rect.width + delta[0] * step, height: rect.height + delta[1] * step }, "size");
+    } else {
+      applyZoneRect({ ...rect, left: rect.left + delta[0] * step, top: rect.top + delta[1] * step }, "position");
+    }
+  }
+
+  function saveZoneDraft() {
+    saveNodeDraft({ polygon });
+  }
+
+  // Typed values are held as text until the field is left, so typing "10"
+  // is not clamped to the 3% minimum at the "1" keystroke.
+  function commitZoneField(key: keyof ZoneRect) {
+    const text = zoneFieldText[key];
+    setZoneFieldText((current) => { const { [key]: _discarded, ...rest } = current; return rest; });
+    const value = Number(text);
+    if (text === undefined || text.trim() === "" || !Number.isFinite(value)) return;
+    const nextPolygon = polygonOfZoneRect(
+      clampZoneRect({ ...zoneRectOf(polygon), [key]: value / 100 }, key === "width" || key === "height" ? "size" : "position"),
+    );
     setPolygon(nextPolygon);
     saveNodeDraft({ polygon: nextPolygon });
   }
@@ -689,7 +783,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedd
               ) : (
                 <span>Enter the Camera Node’s address on your network and its one-time pairing code. Both are printed in the Camera Node’s own setup output — see the Camera Node install guide if you haven’t set one up yet. MockingBird never scans your network for it.</span>
               )}
-              <label>Node address<input autoCapitalize="off" autoCorrect="off" inputMode="url" onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
+              <label>Node address<input autoCapitalize="off" autoCorrect="off" inputMode="url" onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.100:8787" value={nodeAddress} /></label>
               <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
               <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNode()} type="button">{isPairingNode ? "Pairing…" : nodeSetup?.status === "needs_renewal" ? "Renew pairing" : "Pair Camera Node"}</button>
             </>}
@@ -729,10 +823,41 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedd
       </section>
       <section className="panel page-stack source-setup-form">
         <h2>2. Choose the area to watch</h2><p>Draw the part of this camera’s view that matters. Privacy and Ignore areas won’t trigger monitoring on their own, but can still appear in a photo saved because of activity elsewhere in view.</p>
-        <div className="zone-drawing-canvas" onPointerDown={(event) => { drawStart.current = pointAt(event); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerUp={finishDraw} role="img" aria-label="Draw the area to watch">
+        <div
+          aria-describedby="zone-drawing-instructions"
+          aria-label="Area to watch"
+          className="zone-drawing-canvas"
+          onBlur={saveZoneDraft}
+          onKeyDown={handleZoneKeyDown}
+          onPointerDown={(event) => { drawStart.current = pointAt(event); event.currentTarget.setPointerCapture(event.pointerId); }}
+          onPointerUp={finishDraw}
+          role="group"
+          tabIndex={0}
+        >
           <div className="zone-drawing-rectangle" style={{ left: `${polygon[0].x * 100}%`, top: `${polygon[0].y * 100}%`, width: `${(polygon[1].x - polygon[0].x) * 100}%`, height: `${(polygon[2].y - polygon[1].y) * 100}%` }} />
           <span>Drag to draw the area to watch</span>
         </div>
+        <p className="meta-text" id="zone-drawing-instructions">
+          Drag on the picture to draw the area. Without a pointer: focus the drawing box, then use the arrow keys to move the area and Shift + arrow keys to resize it (hold Alt for smaller steps), or type exact values below.
+        </p>
+        <fieldset className="zone-drawing-fields">
+          <legend>Area position and size (percent of the picture)</legend>
+          {(["left", "top", "width", "height"] as const).map((key) => (
+            <label key={key}>{key === "left" ? "Left edge" : key === "top" ? "Top edge" : key === "width" ? "Width" : "Height"}
+              <input
+                inputMode="decimal"
+                onBlur={() => commitZoneField(key)}
+                onChange={(event) => setZoneFieldText((current) => ({ ...current, [key]: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitZoneField(key); } }}
+                type="text"
+                value={zoneFieldText[key] ?? String(percentOf(zoneRectOf(polygon)[key]))}
+              />
+            </label>
+          ))}
+        </fieldset>
+        <span aria-live="polite" className="visually-hidden" role="status">
+          {`Area to watch: left ${percentOf(zoneRectOf(polygon).left)} percent, top ${percentOf(zoneRectOf(polygon).top)} percent, width ${percentOf(zoneRectOf(polygon).width)} percent, height ${percentOf(zoneRectOf(polygon).height)} percent.`}
+        </span>
         <label>Area name<input onChange={(event) => setZoneName(event.target.value)} onBlur={() => saveNodeDraft({ zone_name: zoneName })} value={zoneName} /></label>
         <label>Area type<select value={zoneType} onChange={(event) => { const value = event.target.value as ZoneType; setZoneType(value); saveNodeDraft({ zone_type: value }); }}>{["feeder", "birdbath", "ground", "perch", "yard", "driveway", "privacy", "ignore"].map((value) => <option key={value} value={value}>{formatLabel(value)}</option>)}</select></label>
         {zoneType !== "privacy" && zoneType !== "ignore" ? <label>Sensitivity<select value={sensitivity} onChange={(event) => { const value = event.target.value as ZoneActivitySensitivity; setSensitivity(value); saveNodeDraft({ sensitivity: value }); }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label> : <p className="meta-text">Activity in this area won’t start or trigger monitoring by itself. If activity elsewhere starts monitoring, a saved photo can still show this area.</p>}

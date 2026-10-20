@@ -11,7 +11,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 const riskLevels = ["low", "medium", "high", "protected"];
 
@@ -239,7 +239,7 @@ export function SavedMediaRetentionPage() {
     try {
       setReport(await apiClient.getSavedMediaRetentionReport());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load saved media retention.");
+      setError(userFacingErrorMessage(caught, "Could not load saved media retention."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -313,7 +313,7 @@ export function SavedMediaRetentionPage() {
       );
     } catch (caught) {
       setDryRunError(
-        caught instanceof Error ? caught.message : "Could not run saved media dry-run.",
+        userFacingErrorMessage(caught, "Could not run saved media dry-run."),
       );
     } finally {
       setIsDryRunning(false);
@@ -345,7 +345,7 @@ export function SavedMediaRetentionPage() {
       await loadReport({ showLoading: false });
     } catch (caught) {
       setCleanupError(
-        caught instanceof Error ? caught.message : "Could not clean saved preview media.",
+        userFacingErrorMessage(caught, "Could not clean saved preview media."),
       );
     } finally {
       setCleaningMediaId(null);
@@ -378,7 +378,7 @@ export function SavedMediaRetentionPage() {
       await loadReport({ showLoading: false });
     } catch (caught) {
       setBulkEvidenceError(
-        caught instanceof Error ? caught.message : "Could not create pending evidence.",
+        userFacingErrorMessage(caught, "Could not create pending evidence."),
       );
     } finally {
       setIsCreatingEvidence(false);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from dataclasses import dataclass
 import io
 import json
@@ -298,6 +299,68 @@ def open_browser_when_ready(base_url: str, *, timeout_seconds: float = 20.0) -> 
         time.sleep(0.2)
 
 
+# Native-Windows Runtime Shutdown & Listener Resilience Correction v1 (F-2,
+# and F-1's trigger). On Windows, uvicorn's own default is the Proactor event
+# loop, and the bundled CPython 3.12's Proactor has two socket-lifecycle
+# defects proven on real hardware: its accept loop *closes the listening
+# socket* on one `WinError 64` from an abortive client (the product stays
+# alive but unreachable), and its connection-lost path raises `WinError
+# 10054` before `Server._detach()`, leaking the server's connection count so
+# graceful shutdown waits forever. The selector loop's accept path logs and
+# keeps serving on the same errors, and its connection-lost path detaches in
+# a `finally`. Nothing on this server loop needs Proactor: MockingBird
+# starts no asyncio subprocesses or pipes (camera/ffmpeg bridges use
+# blocking `subprocess.Popen` on their own threads), and other components'
+# own `asyncio.run(...)` loops on their own threads are untouched because
+# this chooses the loop for the uvicorn server only, never the process-wide
+# policy. The selector loop's `select()` limit (512 sockets on Windows) is
+# far above a loopback/LAN product's concurrent connections. Other platforms
+# keep uvicorn's own choice unchanged.
+_SERVE_ON_SELECTOR_LOOP = sys.platform == "win32"
+
+# F-1 defense in depth: uvicorn's default (`None`) waits forever for open
+# connections and `asyncio.Server.wait_closed()` before it ever runs the
+# FastAPI lifespan teardown (which ends in `mark_clean_shutdown()`), so one
+# leaked connection -- the Proactor bug above, or a response that never ends,
+# such as an open MJPEG live view -- hung *Shut down MockingBird* forever.
+# Measured on native Windows with the selector loop, a real shutdown's whole
+# drain + lifespan teardown completed in 0.45-0.59 s (process exit
+# 0.83-1.06 s), with and without prior connection resets; 5 s is ~8x that
+# while staying well short of a user concluding the stop hung. When it
+# fires, uvicorn cancels the remaining request tasks and still runs the
+# teardown; a blocking handler already running on a worker thread is not
+# interrupted and finishes before the process exits.
+GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5
+
+
+def build_uvicorn_server(app, *, host: str, port: int, log_config) -> uvicorn.Server:
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        log_config=log_config,
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
+    )
+    return uvicorn.Server(config)
+
+
+def serve_until_stopped(server: uvicorn.Server) -> None:
+    """Run `server` until it stops, on the event loop this platform needs.
+
+    `Server.serve()` is uvicorn's public programmatic entry point, and
+    `asyncio.Runner` is exactly what uvicorn's own `Server.run()` uses on
+    Python 3.11+, so signal handling, lifespan and shutdown order are
+    uvicorn's own -- only the loop class differs.
+    """
+
+    if not _SERVE_ON_SELECTOR_LOOP:
+        server.run()
+        return
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        runner.run(server.serve())
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Start the local MockingBird application.")
     parser.add_argument("--host", default="127.0.0.1")
@@ -439,16 +502,11 @@ def run(argv: list[str] | None = None) -> int:
         # interactive terminal's Ctrl+C already triggers today -- never a
         # second, parallel shutdown path. This is the only reason a
         # `Server` reference is kept at all; nothing else here reads it.
-        config = uvicorn.Config(
-            app,
-            host=args.host,
-            port=args.port,
-            log_level="info",
-            log_config=uvicorn_log_config(log_path),
+        server = build_uvicorn_server(
+            app, host=args.host, port=args.port, log_config=uvicorn_log_config(log_path)
         )
-        server = uvicorn.Server(config)
         app.state.uvicorn_server = server
-        server.run()
+        serve_until_stopped(server)
         return 0
     except Exception:
         _logger.exception("MockingBird failed to start.")

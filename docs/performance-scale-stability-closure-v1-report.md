@@ -23,7 +23,7 @@ wrong.
 
 | | |
 |---|---|
-| Repository | `/home/zkelder/projects/mockingbird-active` |
+| Repository | `/home/<user>/projects/mockingbird-active` |
 | Branch | `main` |
 | Accepted HEAD at session start | `3133c64b6a9c49273f5cc57a807240630cab5b7a` |
 | Schema at session start | `v59` |

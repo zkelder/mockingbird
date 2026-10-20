@@ -78,6 +78,66 @@ class EvidenceCandidateFact:
     asset_pixel_area: int
 
 
+# A derived crop whose own short side is below this is an upscaled stub, not a
+# legitimate subject-centred image: it earns no subject-region credit and
+# competes on its raw pixel size like any other frame.
+MIN_CROP_SHORT_SIDE_PX = 64
+
+
+def _valid_normalized_box(box: Sequence[float] | None) -> tuple[float, float, float, float] | None:
+    """A box only counts when it is four finite fractions describing a
+    non-empty region inside the image -- never guess at a malformed one."""
+
+    if box is None or len(box) != 4:
+        return None
+    left, top, right, bottom = (float(value) for value in box)
+    if not all(0.0 <= value <= 1.0 for value in (left, top, right, bottom)):
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def resolve_subject_region(
+    *,
+    width: int | None,
+    height: int | None,
+    normalized_track_box: Sequence[float] | None,
+    normalized_crop_box: Sequence[float] | None,
+) -> tuple[bool, int]:
+    """`(has_subject_region, subject_pixel_area)` for one evidence frame,
+    in this frame's *own* pixels.
+
+    Two different boxes arrive on a `VisitEvidenceFrame`, and they are in
+    different coordinate spaces:
+
+    - `normalized_track_box` is only ever populated for a frame that still
+      spans the camera's full field of view with proven alignment (see
+      `_frame_local_subject_box`), so it is a fraction of *this* image: the
+      subject occupies `box * (width, height)` pixels of it.
+    - `normalized_crop_box` is present on a *derived crop* and says where
+      that crop sits in its parent frame. The crop image itself is already
+      the subject-centred region, so its subject area is its own pixel area.
+      Scaling the asset's dimensions by that parent-relative fraction (the
+      earlier behaviour) shrank a good crop's area twice over and let a wide
+      frame with a tiny speck outrank a clean, subject-centred crop.
+
+    A crop below `MIN_CROP_SHORT_SIDE_PX` earns no region credit. Nothing
+    here invents a subject: with no valid box, or unknown pixel size, the
+    answer is `(False, 0)`.
+    """
+
+    if not width or not height:
+        return False, 0
+    track = _valid_normalized_box(normalized_track_box)
+    if track is not None:
+        left, top, right, bottom = track
+        return True, round((right - left) * width) * round((bottom - top) * height)
+    if _valid_normalized_box(normalized_crop_box) is not None and min(width, height) >= MIN_CROP_SHORT_SIDE_PX:
+        return True, width * height
+    return False, 0
+
+
 def select_representative_evidence(
     candidates: Sequence[EvidenceCandidateFact],
 ) -> EvidenceCandidateFact | None:

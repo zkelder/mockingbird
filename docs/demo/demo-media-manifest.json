@@ -1,0 +1,38 @@
+{
+  "_comment": "Three CC0 (public-domain dedication) recorded clips used only by scripts/prepare_demo_instance.py. Files are fetched on explicit request, SHA-1 verified, transcoded to mp4 (video only) and stored under the git-ignored data/demo-media/. They are never committed or bundled.",
+  "clips": [
+    {
+      "demo_filename": "northern-mockingbird-feeding.mp4",
+      "source_filename": "NOMO_feeding.webm",
+      "subject": "adult northern mockingbird feeding a juvenile",
+      "title": "File:NOMO feeding.webm",
+      "commons_page": "https://commons.wikimedia.org/wiki/File:NOMO_feeding.webm",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/9/9e/NOMO_feeding.webm",
+      "sha1": "30354c14d0dfb0e43366a4aca8c39f712f654053",
+      "license": "CC0 1.0",
+      "author": "auburn"
+    },
+    {
+      "demo_filename": "pileated-woodpecker-suet.mp4",
+      "source_filename": "Pileated_Woodpecker_eating_suet.ogv",
+      "subject": "pileated woodpecker at a suet feeder",
+      "title": "File:Pileated Woodpecker eating suet.ogv",
+      "commons_page": "https://commons.wikimedia.org/wiki/File:Pileated_Woodpecker_eating_suet.ogv",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/5/5d/Pileated_Woodpecker_eating_suet.ogv",
+      "sha1": "8e06b700fc79320cbf34529ded8b75439adc7c47",
+      "license": "CC0 1.0",
+      "author": "5shot"
+    },
+    {
+      "demo_filename": "goldfinch-birdbath.mp4",
+      "source_filename": "2_American_Goldfinch_(Spinus_tristis)_on_birdbath.webm",
+      "subject": "American goldfinches at a birdbath",
+      "title": "File:2 American Goldfinch (Spinus tristis) on birdbath.webm",
+      "commons_page": "https://commons.wikimedia.org/wiki/File:2_American_Goldfinch_(Spinus_tristis)_on_birdbath.webm",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/c/c5/2_American_Goldfinch_%28Spinus_tristis%29_on_birdbath.webm",
+      "sha1": "ad24969be7d0a837db56f4325b321f4f6eafd7da",
+      "license": "CC0 1.0",
+      "author": "J. M. Pearson"
+    }
+  ]
+}

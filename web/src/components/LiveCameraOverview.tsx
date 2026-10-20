@@ -544,7 +544,7 @@ export function LiveCameraOverview({
                 <span>Last good frame: <strong>{stream.camera_health?.last_good_frame_at ? formatDateTime(stream.camera_health.last_good_frame_at) : "Not yet received"}</strong></span>
                 {runtime?.exposure_interval_active ? <span>Active exposure: <strong>{exposureDurationLabel(runtime.current_healthy_duration_seconds)}</strong></span> : null}
                 {stream.camera_health?.next_retry_at ? <span>Recovery: <strong>{formatDateTime(stream.camera_health.next_retry_at)}</strong></span> : null}
-                {stream.camera_health?.unread_alert ? <span>Unread camera alert</span> : null}
+                {stream.camera_health?.unread_alert ? <span>Open camera alert</span> : null}
                 {
                   // Camera / Source + Multi-Camera Maturity v1, Phase F/K:
                   // plain wording only -- "kept working while disconnected,

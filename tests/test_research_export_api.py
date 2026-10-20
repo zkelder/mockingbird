@@ -134,7 +134,7 @@ async def test_darwin_core_export_dry_run_round_trips(client: httpx.AsyncClient)
 async def test_darwin_core_export_writes_real_files(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/research/export-darwin-core",
-        json={"site_name": "Example Yard", "latitude": 40.015, "longitude": -105.2705},
+        json={"site_name": "Example Yard", "latitude": 12.015, "longitude": -45.2705},
     )
     assert response.status_code == 201
     body = response.json()
@@ -144,3 +144,30 @@ async def test_darwin_core_export_writes_real_files(client: httpx.AsyncClient) -
     assert (output_dir / "occurrence.csv").exists()
     assert (output_dir / "meta.xml").exists()
     assert (output_dir / "eml.xml").exists()
+
+
+async def test_research_export_include_media_and_visit_scope_round_trip(
+    client: httpx.AsyncClient, isolated_repository: ProductRepository,
+) -> None:
+    response = await client.post(
+        "/api/research/export",
+        json={"dry_run": True, "include_media": True, "filters": {"visit_ids": ["no-such-visit"]}},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["media_bundle"] == {
+        "requested": 0, "bundled": 0, "omitted": 0, "omitted_reasons": {}, "total_bytes": 0, "warnings": [],
+    }
+    assert "media-bundle.csv" in {f["name"] for f in body["files"]}
+    assert body["manifest"]["filters"]["visit_ids"] == ["no-such-visit"]
+
+
+async def test_research_export_media_limit_maps_to_400(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mockingbird.repository.product_repository as repo_module
+
+    monkeypatch.setattr(repo_module, "RESEARCH_EXPORT_MEDIA_MAX_FILES", -1)
+    response = await client.post("/api/research/export", json={"dry_run": True, "include_media": True})
+    assert response.status_code == 400
+    assert "research_export_media_limit_exceeded" in response.json()["detail"]

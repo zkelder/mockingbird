@@ -234,7 +234,7 @@ ordinary signed-in Administrator, regardless of the Node's RTT capability).
 Against a fake current-shape response (fields present, real timing):
 `compatible`, `rtt_calibration.state == "calibrated"`,
 `missing_capabilities == ()`. Against the **real, live, already-upgraded
-reference Camera Node** (`192.168.1.112:8787`, LAN-reachable, confirmed
+reference Camera Node** (`<node-ip>:8787`, LAN-reachable, confirmed
 via TCP connect before probing): both profiles return `compatible` (see
 "RTT probe result" below for the real numbers). `test_node_compatibility_
 api.py::test_field_acceptance_start_proceeds_past_the_gate_for_a_current_
@@ -249,7 +249,7 @@ of this milestone's scope, per its own explicit non-goals).
 Real, live, unauthenticated (`/node/v1/health` needs no credential — see
 "Existing metadata") probe against the real reference Camera Node via
 `scripts/check_camera_node_compatibility.py --base-address http://
-192.168.1.112:8787 --profile field_acceptance --json`:
+<node-ip>:8787 --profile field_acceptance --json`:
 
 ```
 state: compatible
@@ -348,7 +348,7 @@ two commits.
   node_compatibility` succeeded; `probe_node_compatibility` against an
   unreachable address returned the correct `node_unreachable` result with
   the correct message; against the **real reference Camera Node**
-  (`192.168.1.112:8787`, reachable from this real Windows Host on the
+  (`<node-ip>:8787`, reachable from this real Windows Host on the
   same LAN) returned `compatible`, a real **5/5 valid RTT-bounded
   calibration** (`rtt_ms=24.0`), closely matching this same milestone's
   own earlier WSL-side measurement (22.65ms) and the Reference Camera

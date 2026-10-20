@@ -351,11 +351,11 @@ def test_prepare_with_an_explicit_exact_location_carries_it_through(repository: 
     records = repository.prepare_ecological_submissions(
         PrepareEcologicalSubmissionsRequest(
             visit_ids=[visit_id], destination="inaturalist",
-            location=EcologicalLocationInput(choice="exact", latitude=40.015, longitude=-105.2705),
+            location=EcologicalLocationInput(choice="exact", latitude=12.015, longitude=-45.2705),
         )
     )
     assert records[0].location_choice == "exact"
-    assert records[0].location_latitude == 40.015
+    assert records[0].location_latitude == 12.015
     assert records[0].status == "prepared"
 
 

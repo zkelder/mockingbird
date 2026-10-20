@@ -4,6 +4,20 @@ This is the current planning authority. It intentionally describes completed
 foundations briefly and keeps detailed historical phase narration in
 [roadmap-history.md](roadmap-history.md) and the linked design documents.
 
+**Owner release-strategy correction, 2026-09-29:** MockingBird will not
+publish an intentionally incomplete `0.1.0`. The first public product release
+is targeted as **`1.0.0`**, after every named roadmap gap that can be
+responsibly implemented and meaningfully validated without real users or
+unavailable physical hardware has been completed. The accepted `d7e61c1`
+artifact remains an internal baseline, not the final public candidate. Mixed
+lanes are split: software-completable work moves before `1.0.0`; real
+user/field/hardware, external-credential/institution, legal/signing, and
+missing-evidence dependencies remain explicitly gated. See
+[final-product-release-scope-reconciliation-v1.md](final-product-release-scope-reconciliation-v1.md)
+and `release-execution-state.md` §6-§9. "Final product release" means one
+complete first public launch, not that security, compatibility, defect, or
+evidence-driven updates can never follow.
+
 ## Product outcome
 
 MockingBird is a local-first, hardware-agnostic, evidence-backed ecosystem
@@ -64,15 +78,25 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
 
 ## Current status
 
-- **Current phase:** Phase 1 -- Trustworthy Single-Site Observatory (below).
-- **Current exit gate:** one representative installation can run for days
-  and create trustworthy useful history without developer babysitting.
-- **release-gate mapping:** see "release gates," below, for the
-  authoritative small gate set this phase's still-open work maps onto --
-  principally Gate A (detection/encounter/Visit correctness, including the
-  new multi-subject requirement) and part of Gate E (reliability/
-  observability). Phase numbering below is preserved as historical record,
-  not renumbered.
+**Current strategy supersession (2026-09-29):** Phase 1 and the historical
+release gates remain accepted evidence, but `READY FOR OWNER RELEASE
+DECISION` is superseded. Current phase is **PRE-1.0 PRODUCT COMPLETION --
+SOFTWARE-FIRST**. The promoted-queue audit is complete: it removed already-
+delivered remote-transport and soundscape-analytics work, split the surviving
+software into bounded dependency-ordered milestones, and authorized
+**Attention Integrity & Health Reliability v1** first. See
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md)
+and `release-execution-state.md` §3/§8.
+
+- **Current phase:** PRE-1.0 PRODUCT COMPLETION -- SOFTWARE-FIRST.
+- **Current exit gate:** every surviving item in the promoted software queue
+  is accepted, its externally gated boundary is accurately disclosed, and a
+  fresh Final `1.0.0` Hardening pass is ready for the owner's release decision.
+- **Release-gate mapping:** the accepted historical gates below remain
+  evidence, not the complete new exit condition. The promoted queue is now
+  converted into bounded milestones by the Pre-1.0 Software Gap Audit; only
+  the first is authorized. Phase numbering below is preserved as historical
+  record, not renumbered.
 - **Already complete** (see [roadmap-history.md](roadmap-history.md) for
   detail): the real Camera Node path; the native ONNX Runtime CUDA
   detection/tracking/evidence Observation Engine, hardened through repeated
@@ -689,7 +713,7 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   reference device (the next action the diagnosis above recommended) found
   the concrete failure case that diagnosis had only inferred from logs: a
   solid red power LED, no green ACT activity, and the device completely
-  absent from the LAN -- `192.168.1.112` failed ICMP, TCP 8787, and
+  absent from the LAN -- `<node-ip>` failed ICMP, TCP 8787, and
   `/node/v1/health` alike -- while the Windows host and MockingBird product
   stayed healthy throughout, and six bounded reconnect attempts correctly,
   honestly classified the failure as `timeout` (among the bounded
@@ -988,6 +1012,19 @@ invocation silently did nothing (missing `__main__` guard). Decision:
 (see "Release readiness vs. continued capability work," below).
 
 ## Release scope discipline
+
+**Superseding scope rule, 2026-09-29:** the first public release is no longer
+the smallest wildlife-first slice described in the historical paragraph
+below. It is the complete `1.0.0` launch defined by
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md):
+all named, doctrine-consistent work whose requirements and meaningful
+acceptance can be established with repository code, deterministic fixtures,
+simulation, CI, local services, and available packaged-host environments is
+pre-release scope. Work is not promoted when its product meaning depends on
+real users, representative field evidence, unavailable hardware, external
+credentials/institutions, legal authority, or real demand. This rule does not
+reopen settled model, truth, Local Only, or explicit-deprioritization
+decisions merely because speculative code could be written.
 
 MockingBird's public release means, approximately: install MockingBird →
 connect a supported camera → reliably notice wildlife → preserve useful
@@ -2733,6 +2770,15 @@ recruited, no cohort size is fixed, and no finding has been collected.**
 Current authorization to begin execution remains `NONE` -- see
 [release-execution-state.md](release-execution-state.md) §3/§6.
 
+**2026-09-29 update (waived by the owner, not passed):** the owner waived
+Gate G and is the sole pre-release tester until public release. The
+sequence is now *owner-only pre-release acceptance -> Final Release
+Hardening -> the one public launch*. The independent setup, hardware and
+user-diversity evidence this gate was meant to supply is lost, not
+substituted, and MockingBird must never be described as externally
+validated. The plan above is kept as history. See
+[release-execution-state.md](release-execution-state.md) §3 and §6.S.
+
 ### Numeric release budgets
 
 Where a valid numeric threshold already exists, it is preserved here rather
@@ -2919,10 +2965,10 @@ and further converged evidence, named precisely in
 
 ## Public release readiness
 
-MockingBird's public release is the real product launch (see "Release is
-release" in Gate G, above), not a soft/internal milestone. Distinct from
-Gate F's engineering-packaging closure, above, non-software readiness the
-canonical roadmap must retain -- eventually, not now -- includes:
+MockingBird's public release is the real `1.0.0` product launch (see "Release
+is release" in Gate G, above), not a soft/internal milestone. Distinct from
+Gate F's engineering-packaging closure, above, readiness the canonical
+roadmap must retain includes:
 
 - code/license decision for the MockingBird codebase itself;
 - exact dependency/model/dataset/media license inventory;
@@ -2944,21 +2990,29 @@ canonical roadmap must retain -- eventually, not now -- includes:
   "Deployment and organization doctrine" in
   [product-doctrine.md](product-doctrine.md));
 - hardware/BOM/compatibility truth;
-- an external pre-release acceptance cohort (Gate G, above);
+- an external pre-release acceptance cohort (Gate G, above -- waived by
+  the owner 2026-09-29, not passed);
 - support/security/community plan;
 - release artifacts/versioning/checksums/SBOM/signing where practical;
 - launch media built from real MockingBird evidence, never staged/synthetic
   imagery.
 
-Do not implement these now. This section exists so the canonical roadmap
-retains them rather than losing them to a documentation pass that only
-talks about engineering gates.
+Repository-completable documentation, inventory, deployment guidance,
+support/security/community planning, website/project presence, and launch
+materials move before `1.0.0`. Hardware/BOM truth, independent-user evidence,
+brand/trademark/legal action, signing credentials, and other externally-owned
+decisions remain gated and must be disclosed rather than fabricated. See the
+scope reconciliation for the exact split.
 
-## After-release lanes
+## Mixed promoted-software and external-dependency lanes
 
-Real future direction, deliberately not implemented now and not gating the
-first release. Kept here so it is not lost, not so it grows into a second
-roadmap.
+**Reclassified 2026-09-29:** this heading is retained for historical detail,
+but it no longer places an entire mixed lane after launch. Repository-
+completable work described below is promoted before `1.0.0`; real LTE,
+carrier, solar/battery, CM/custom hardware, specialized-camera, sustained
+field, external-service, institutional, legal, or representative-evidence
+acceptance remains gated. The authoritative split is
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md).
 
 **Remote / Intermittent-WAN Camera Node.** The *current* Camera Node
 reference implementation is explicitly LAN/Wi-Fi-scoped today
@@ -3464,15 +3518,20 @@ covers why this is not a separate track).
 
 ## Remaining roadmap -- canonical sequence
 
-This section is the authoritative answer to "what's next after the first
-release" -- for that question, use this section, not the old Phase 5/6/7/8
-headings above (which remain as historical/structural record, per the
-"Phase sequencing" convention stated above). "Release gates," above,
-remains the authoritative answer to "what's left before the first
-release" and keeps priority order over everything here, per "Governing
-priority before release," above. Do not undo accepted engineering
+This section is now the capability inventory feeding the first complete
+public `1.0.0` release. Use it together with
+[Final Product Release Scope Reconciliation v1](final-product-release-scope-reconciliation-v1.md),
+which promotes every responsibly testable software gap and separates real
+user/hardware/external-evidence dependencies. The old Phase 5/6/7/8 headings
+above remain historical/structural record. Do not undo accepted engineering
 milestones while sequencing this: everything already shipped under old
 Phase 1-4 and Phase 7, and every Gate C slice already delivered, stands.
+
+**Current execution overlay:** the current-code audit is complete. Use
+[Pre-1.0 Software Gap Audit & Contract Lock v1](pre-1.0-software-gap-audit-contract-lock-v1-report.md)
+for the surviving bounded sequence and `release-execution-state.md` §3 for the
+single currently authorized milestone. The capability layers below remain the
+full product inventory; they do not independently authorize work.
 
 These are major capability layers, not a strict waterfall -- later layers
 may pull forward bounded slices ahead of an earlier layer's full
@@ -4257,9 +4316,14 @@ second, separate inventory.
 
 ## Release non-blockers
 
-Distinct from "Explicit deprioritization," above (the longer-standing
-critical-path list): these specific items do not delay the first release,
-absent new empirical evidence that changes a real dependency --
+**Superseded as a whole-lane rule, 2026-09-29:** software-completable portions
+of named roadmap items below move before `1.0.0`. The listed items remain
+non-blocking only where meaningful implementation or acceptance depends on
+real hardware, users, external services/institutions, legal authority, or
+missing representative evidence. The explicit-deprioritization section above
+remains unchanged.
+
+Historical list:
 
 LTE, solar, battery/BMS integration, managed PoE, custom CM hardware,
 custom PCB, manufactured hardware, research-grade claims, advanced field
@@ -4507,7 +4571,7 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 ## WSL activation checkpoint
 
 The active development checkout is WSL-native at
-`/home/zkelder/projects/mockingbird-active`. A locally configured Windows
+`/home/<user>/projects/mockingbird-active`. A locally configured Windows
 `ffmpeg.exe`, native DirectShow controls, fresh live frames, and a daylight
 3840 x 2160 capture have been verified from WSL, and the packaged
 Windows/CUDA product has been run and debugged against real passed-through

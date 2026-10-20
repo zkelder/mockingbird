@@ -46,6 +46,7 @@ package validation" in the governing brief.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
@@ -64,7 +65,7 @@ from mockingbird.research.research_export import ResearchObservation, sorted_obs
 #: evidence too -- fixed here rather than narrowly to "just audio". Falls
 #: back to `.jpg` only for a genuinely unrecognized/missing content type,
 #: preserving this module's exact prior behavior for that one edge case.
-_MEDIA_FILE_EXTENSIONS: dict[str, str] = {
+MEDIA_FILE_EXTENSIONS: dict[str, str] = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
@@ -80,7 +81,7 @@ _MEDIA_FILE_EXTENSIONS: dict[str, str] = {
 
 
 def _media_file_extension(content_type: str | None) -> str:
-    return _MEDIA_FILE_EXTENSIONS.get(content_type or "", ".jpg")
+    return MEDIA_FILE_EXTENSIONS.get(content_type or "", ".jpg")
 
 CAMTRAP_DP_PROFILE_VERSION = "1.0.2"
 
@@ -278,6 +279,26 @@ def build_camtrap_dp_package(
         media=media,
         observations=camtrap_observations,
     )
+
+
+def restrict_package_to_bundled_media(
+    package: CamtrapDpPackage, bundled_media_ids: frozenset[str] | set[str],
+) -> CamtrapDpPackage:
+    """Make a package truthful when media bytes were requested but only some
+    were actually bundled. Camtrap DP 1.0.2 requires `filePath` on every media
+    row and has no "absent" value, so a media row for an omitted file would
+    advertise an archive member that does not exist. Such rows are dropped and
+    the observation's (optional, event-level) `mediaID` is blanked; the
+    omission stays visible in `media-bundle.csv` and validation warnings."""
+
+    kept_media = [m for m in package.media if m.media_id in bundled_media_ids]
+    observations = [
+        dataclasses.replace(o, media_id=None)
+        if o.media_id is not None and o.media_id not in bundled_media_ids
+        else o
+        for o in package.observations
+    ]
+    return dataclasses.replace(package, media=kept_media, observations=observations)
 
 
 @dataclass(frozen=True)

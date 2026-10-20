@@ -244,6 +244,64 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+// Owner-Only Release Polish & Acceptance v1 (O-1): a recording imported with
+// no capture-time fact is anchored internally at 1970 (the raw timestamp is
+// kept for ordering and provenance). `formatDateTime` omits the year, so that
+// placeholder used to read as a real recent date ("Dec 31, 7:00 PM"). The
+// server's `capture_time_known` fact -- never the date's age -- decides.
+export const CAPTURE_TIME_UNKNOWN_LABEL = "Capture time unknown";
+
+// Everyday Wildlife Experience & Presentation Refinement v1: surfaces that
+// show a bare instant with no per-record `capture_time_known` fact (Alerts,
+// Local Data's oldest/newest media) mirror the server's own placeholder
+// prefilter (`CAPTURE_TIME_PLACEHOLDER_PREFILTER_CEILING`, 1971-01-01): no
+// real MockingBird observation, import or alert can predate it, so an instant
+// before it is the epoch anchor of a recording with no capture-time fact and
+// is never rendered as a date. Nothing is invented in its place.
+const PLACEHOLDER_INSTANT_CEILING_MS = Date.UTC(1971, 0, 1);
+
+export function isPlaceholderInstant(value: string): boolean {
+  const parsed = new Date(value).getTime();
+  return !Number.isNaN(parsed) && parsed < PLACEHOLDER_INSTANT_CEILING_MS;
+}
+
+export function formatInstantOrUnknown(value: string, format: (value: string) => string = formatDateTime): string {
+  return isPlaceholderInstant(value) ? CAPTURE_TIME_UNKNOWN_LABEL : format(value);
+}
+
+export function formatCaptureDateTime(value: string, captureTimeKnown: boolean | undefined): string {
+  return captureTimeKnown === false ? CAPTURE_TIME_UNKNOWN_LABEL : formatDateTime(value);
+}
+
+// Owner-Only Release Polish & Acceptance v1 (O-2): what an empty
+// `detections` list actually means. Those are separate stored detection
+// records; Visits found by the Observation Engine (live or by offline
+// analysis of an imported recording) and by sound analysis never carry any
+// -- their saved evidence frames/clips are the evidence. Only a manual or
+// folder media import is honestly a "manual media" record.
+export function noDetectionRecordsMessage(
+  eventType: string,
+  acquisitionType: "recorded_video" | "continuous_live" | "unknown" | undefined,
+  scope: "visit" | "event",
+): string {
+  if (eventType === "observation_engine_candidate") {
+    const foundBy =
+      acquisitionType === "recorded_video"
+        ? "Found by offline analysis of an imported recording."
+        : acquisitionType === "continuous_live"
+          ? "Found by live observation."
+          : "Found by automatic analysis.";
+    return `${foundBy} No separate detection records are stored for this ${scope}; review its saved evidence frames instead.`;
+  }
+  if (eventType === "acoustic_observation_candidate") {
+    return `Found by sound analysis. No separate detection records are stored for this ${scope}; review its saved recording instead.`;
+  }
+  if (eventType === "manual_media_import" || eventType === "folder_media_import") {
+    return `No detections are attached to this manual media ${scope}.`;
+  }
+  return `No detection records are attached to this ${scope}.`;
+}
+
 // Environmental Context Foundation v1: sunrise/sunset are already known to
 // be "today" (or the Visit's own day) from context, so showing the date
 // again would be redundant -- nearest-minute precision only, matching how
@@ -347,6 +405,35 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, action: s
       },
     );
   });
+}
+
+// Everyday UX & Accessibility Closure v1: a failure caught in a page handler
+// is shown to the person using MockingBird, so it must read as a product
+// message. `ApiError` (and page/`withTimeout`-authored `Error`s) already carry
+// human-written text and pass through. A built-in JavaScript runtime error --
+// a response body that was not valid JSON ("Unexpected token '<'"), or a
+// "Cannot read properties of undefined" slip -- is developer language that
+// tells a person nothing actionable, so the page's own fallback is shown
+// instead. The raw error still goes to the console for diagnosis; nothing is
+// swallowed.
+const DEVELOPER_ERROR_NAMES = new Set([
+  "TypeError",
+  "SyntaxError",
+  "RangeError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+]);
+
+export function userFacingErrorMessage(caught: unknown, fallback: string): string {
+  if (!(caught instanceof Error)) {
+    return fallback;
+  }
+  if (DEVELOPER_ERROR_NAMES.has(caught.name)) {
+    console.error(caught);
+    return fallback;
+  }
+  return caught.message.trim() || fallback;
 }
 
 export function formatBytes(value: number): string {

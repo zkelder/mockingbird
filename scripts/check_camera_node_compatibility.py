@@ -32,7 +32,7 @@ Bounded reachability/RTT check only, no pairing credential needed --
 `/node/v1/health` itself requires none (mirrors `CameraNodeClient.health`/
 `sample_clock_round_trip` exactly):
 
-    python scripts/check_camera_node_compatibility.py --base-address http://192.168.1.112:8787
+    python scripts/check_camera_node_compatibility.py --base-address http://<node-ip>:8787
 
 Full field-acceptance check against an already-paired camera, including
 live camera availability (needs the Source's own stored pairing
@@ -41,13 +41,13 @@ credential -- never hold this in shell history; pass it via the
 when scripting this):
 
     python scripts/check_camera_node_compatibility.py \\
-        --base-address http://192.168.1.112:8787 \\
+        --base-address http://<node-ip>:8787 \\
         --camera-id opaque-camera-1 --credential "$MOCKINGBIRD_NODE_CREDENTIAL"
 
 Ordinary-monitoring profile (only confirms the Node's health protocol
 answers at all -- an old, pre-RTT Node is expected to pass this):
 
-    python scripts/check_camera_node_compatibility.py --base-address http://192.168.1.112:8787 --profile ordinary_monitoring
+    python scripts/check_camera_node_compatibility.py --base-address http://<node-ip>:8787 --profile ordinary_monitoring
 
 Exit code is 0 for `compatible`, 1 for any other state -- safe to use as a
 fail-closed gate in a field-acceptance shell sequence."""
@@ -121,7 +121,7 @@ def _print_human(result: NodeCompatibilityResult) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base-address", required=True, help="Camera Node base address, e.g. http://192.168.1.112:8787")
+    parser.add_argument("--base-address", required=True, help="Camera Node base address, e.g. http://<node-ip>:8787")
     parser.add_argument(
         "--profile", choices=("ordinary_monitoring", "field_acceptance"), default="field_acceptance",
         help="Compatibility profile to evaluate (default: field_acceptance).",

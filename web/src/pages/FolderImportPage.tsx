@@ -12,7 +12,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatLabel } from "../utils";
+import { formatLabel, userFacingErrorMessage } from "../utils";
 
 interface FolderImportPageProps {
   streams: Stream[];
@@ -110,7 +110,7 @@ export function FolderImportPage({
         if (isMounted) {
           setZones([]);
           setSelectedZoneId("");
-          setError(caught instanceof Error ? caught.message : "Could not load stream zones.");
+          setError(userFacingErrorMessage(caught, "Could not load stream zones."));
         }
       } finally {
         if (isMounted) {
@@ -150,7 +150,7 @@ export function FolderImportPage({
       );
     } catch (caught) {
       setPreview(null);
-      setError(caught instanceof Error ? caught.message : "Folder preview could not be loaded.");
+      setError(userFacingErrorMessage(caught, "Folder preview could not be loaded."));
     } finally {
       setIsPreviewing(false);
     }
@@ -194,7 +194,7 @@ export function FolderImportPage({
       );
       await onImportComplete();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Folder import could not be created.");
+      setError(userFacingErrorMessage(caught, "Folder import could not be created."));
     } finally {
       setIsImporting(false);
     }

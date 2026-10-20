@@ -175,11 +175,9 @@ reviewed Visit *is* the Observation (see product-doctrine.md's "Observation
 (target durable object)" -- no distinct persisted Observation record exists
 yet), so a second, near-duplicate table would only invite drift. `media.csv`/
 `sources.csv` are deduplicated, deterministically ordered, and metadata-only
-by default (`include_media` only affects whether media bytes would be
-staged -- this v1 never copies binary media at all, matching "Do not
-duplicate binary media unless explicitly requested" while keeping that
-specific inclusion path unimplemented; every export today is effectively
-metadata-only, disclosed as a known limitation below).
+by default. `include_media` copies the eligible evidence bytes into `media/`
+with a `media-bundle.csv` checksum/linkage table -- see
+[research-export-ecological-workflow-completion-v1-contract.md](research-export-ecological-workflow-completion-v1-contract.md).
 
 Every export carries reproducibility metadata (`manifest.json` /
 `ResearchExportManifest`): schema version
@@ -225,7 +223,7 @@ descriptor.
 | `latitude`/`longitude` | `None` unless explicitly supplied at export time (see Privacy) |
 | `deploymentStart`/`deploymentEnd` | bounds of the *exported* observation window for that deployment -- an honest "what this package covers," never a fabricated install/removal date (MockingBird has no deployment-lifecycle model) |
 | `mediaID`/`timestamp`/`fileMediatype` | `ResearchEvidenceRecord` fields |
-| `filePath` | a manifest-relative reference (`media/<id>.jpg`), never a local filesystem path |
+| `filePath` | a manifest-relative reference (`media/<id>.jpg`), never a local filesystem path; with `include_media=true` a row exists only for media actually bundled (omitted media has no row -- see the media-bundle contract) |
 | `observationID`/`eventID` | Visit id (suffixed `-human`/`-machine`) / Event id -- preserves shared-Event lineage for multi-subject encounters |
 | `observationLevel` | always `"event"` (a Visit is an event-level identification, not a per-frame classification) |
 | `observationType` | `"animal"` for every included row (only eligible records are mapped at all) |
@@ -287,9 +285,10 @@ fabricated.
   requirements of its own (see the v2 contract's "Phase 3" and "Research/
   export considerations"); a future milestone that adds weather to an
   export must carry that attribution forward explicitly, not silently.
-- **Metadata-only by default.** No export in this v1 copies media bytes;
-  `include_media` is accepted for forward compatibility but has no
-  additional effect yet (see "Generic research export," known limitation).
+- **Metadata-only by default.** Media bytes are copied only when
+  `include_media` is explicitly requested, and only for observations that
+  already passed the eligibility gate; see the Milestone 4 contract above for
+  path-safety, integrity, bounds, and missing-media behavior.
 
 ## Collection / contributor model
 
@@ -330,9 +329,9 @@ Same retained truth + same filters → the same `content_fingerprint`, always
 
 ## Explicitly deferred / known limitations
 
-- Media-byte copying into an export bundle (`include_media`/`ClassifierManifestFileExportRequest.media_policy`'s
-  `copy_media` precedent exists for the classifier manifest export; this
-  milestone's research export accepts the flag but does not yet act on it).
+- ~~Media-byte copying into an export bundle~~ -- closed by Research Export &
+  Ecological Workflow Completion v1 (generic export and Camtrap DP; Darwin Core
+  stays reference-only).
 - `acquisition_type="unknown"` for Visits predating Observation Engine v2
   candidate authority, or created via the legacy still-image motion-evidence
   path (see "Acquisition type" above).
@@ -358,7 +357,7 @@ Camtrap DP export with an explicit site override:
 
 ```bash
 python -m mockingbird export-camtrap-dp --site-name "Example Yard" \
-    --latitude 40.0150 --longitude -105.2705
+    --latitude 12.0150 --longitude -45.2705
 ```
 
 Conservation report for the last week:

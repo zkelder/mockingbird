@@ -45,7 +45,7 @@ def _camera_node_stream(repository: ProductRepository, *, key: str) -> str:
             stream_name=f"Camera Node {key} view",
             provider_key="camera_node",
             config={
-                "node_base_address": "http://192.168.1.50:8787",
+                "node_base_address": "http://192.168.1.23:8787",
                 "node_credential": "test-credential",
                 "node_camera_id": "opaque-camera-1",
                 "node_id": "opaque-node-1",

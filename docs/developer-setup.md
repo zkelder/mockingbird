@@ -1,0 +1,328 @@
+# Developer & Source-Checkout Setup
+
+This is the **developer / source-checkout** guide: running MockingBird from the
+repository, optional model runtimes for a checkout, replay tooling, and the
+test suite. It is **not** the way a normal user installs MockingBird -- see
+[using-mockingbird.md](using-mockingbird.md) for the supported Windows
+install, and [support-matrix.md](support-matrix.md) for what is supported.
+
+A source checkout is the "source/developer path" in the support matrix: it
+works and is tested, but it is not a packaged, hardware-accepted release path.
+Linux and macOS Hosts are reachable **only** this way, and macOS is
+unvalidated. The checkout reports its version as `0.1.0` until the 1.0 version
+bump made during release hardening.
+
+## Start the local app from a source checkout
+
+Requires Python 3.11+ and Node.js/npm for the initial frontend build.
+
+Create a virtual environment and install the API with test dependencies:
+
+```sh
+python -m venv .venv
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"
+```
+
+Install frontend dependencies:
+
+```sh
+cd web
+npm ci
+cd ..
+```
+
+Windows users can open `Start MockingBird.cmd`; Linux/macOS checkouts can run
+`./start-mockingbird.sh`. Both find the local virtual environment
+automatically and launch the same unified runtime. The cross-platform command
+is:
+
+```sh
+python -m mockingbird
+```
+
+A normal user with no development checkout does not run any of the above --
+see [docs/using-mockingbird.md](using-mockingbird.md) for the
+self-contained Windows bundle (`scripts/build_local_product.py` builds it;
+[local-product-packaging-design.md](local-product-packaging-design.md)
+documents the packaging decision).
+
+The launcher checks the frontend and local database, starts one local-only app
+process, reuses an already-running healthy instance, and opens the browser when
+ready. It does not start a camera, monitor, provider, worker, or model.
+
+Validate startup without launching the server or browser:
+
+```sh
+python -m mockingbird --check
+```
+
+### Optional Camera Node
+
+On a Raspberry Pi or ordinary Linux edge device, start the separately bounded
+Node manually with `python -m mockingbird_node`, or install it as a
+supervised, boot-persistent `systemd` service with
+`scripts/install_camera_node.py` -- see the
+[Camera Node install guide](camera-node-install-guide.md). Either way it
+prints a short-lived pairing code to that device's console (or its journal).
+In **Add Camera**, choose **MockingBird Camera Node**, enter an explicit LAN
+IP address and that code, then choose one advertised camera view. Pairing
+credentials remain local and masked; previews are transient and monitoring
+stays off until explicitly enabled. There is no automatic LAN discovery,
+remote shell, cloud relay, audio, or recording, and the host cannot trigger
+or run the installer remotely. See
+[Camera Node boundary](camera-node-boundary-design.md).
+
+### Supported camera limits
+
+The canonical statement of the legacy local-camera concurrency limit (two armed
+Streams, two independent preview slots, Camera Node exempt) lives in
+[support-matrix.md](support-matrix.md#concurrency-limits-that-actually-apply-as-of-this-milestone).
+
+### Start observing wildlife
+
+Every configured Stream shows the same **Observation** panel, and it works
+the same way no matter which camera type is underneath: open that camera's
+Stream page and use **Start observing**. No CLI tool is required for normal
+use. The panel shows plain camera/observation health (Ready, Observing, or
+Needs attention with a plain-language reason and the relevant setup action)
+and **Stop observing** always cleanly stops it.
+
+- Once a Camera Node is paired, **Start observing** runs the accepted
+  Observation Engine. The packaged native-Windows product
+  (`scripts/build_local_product.py`) already includes the default model
+  bundle and GPU runtime, so a normal packaged install needs no manual
+  setup; a development checkout still needs the local model bundle
+  configured (see [Optional ONNX Runtime CUDA
+  replay](#optional-onnx-runtime-cuda-replay) below for that one-time local
+  setup). A useful wildlife moment appears in Review Queue only when it
+  clears a conservative evidence-quality check; a quiet or distant scene
+  honestly shows no candidates rather than a low-value one.
+- For an RTSP, Linux local USB, or Windows DirectShow Stream, **Start
+  observing** arms the existing durable monitoring policy (the same
+  continuity that already survives a restart).
+- For a Source configured with a plain still-image URL, **Start observing**
+  starts the existing Snapshot monitor.
+- A Stream with no integrated observation runtime (for example manual media
+  or an unconfigured Source) reports that honestly instead of a Start
+  button that would only fail.
+
+Advanced technical detail (which runtime is underneath, provider ids,
+durable-monitoring state) stays in one collapsed "Advanced diagnostics"
+section. See
+[observation-engine-product-control-contract.md](observation-engine-product-control-contract.md)
+for the accepted engine this panel wraps for Camera Node, and
+[unified-observation-panel-contract.md](unified-observation-panel-contract.md)
+for the panel itself and the current provider support matrix.
+
+### Optional ONNX Runtime CUDA replay
+
+The Stage 3 accelerated provider is an offline, shadow-only benchmark path. Core
+MockingBird and the Snapshot provider do not require ONNX Runtime. On a compatible
+NVIDIA/CUDA development host, install only the GPU extra:
+
+```sh
+python -m pip install -e ".[observation-onnx-cuda]"
+```
+
+Supply an existing local ONNX file through its versioned model-bundle JSON; the
+application never downloads a model. Then run:
+
+```sh
+python -m mockingbird replay-benchmark \
+  --provider onnx-cuda \
+  --frames data/replay/frames \
+  --manifest data/replay/benchmark.json \
+  --provider-config data/models/detector/model-bundle.json \
+  --output data/replay/output
+```
+
+`CUDAExecutionProvider` is mandatory and CPU fallback is rejected. This provider
+emits detector evidence only; it does not start cameras or monitoring, track
+animals, create Visits, or write product truth. See the
+[ONNX CUDA shadow-provider contract](onnx-cuda-shadow-provider-contract.md).
+
+Stage 4 uses a separate portable provider configuration that names the model
+bundle and bounded source-time detector/tracker settings:
+
+```sh
+python -m mockingbird replay-benchmark \
+  --provider frame-driven-onnx-cuda \
+  --frames data/replay/frames \
+  --manifest data/replay/benchmark.json \
+  --provider-config data/models/observation-frame-driven/provider-config.json \
+  --output data/replay/frame-driven-output
+```
+
+This path adds continuous analysis-frame tracking and shadow-only Visit proposals
+inside deterministic replay. It still starts no camera, live monitor, Camera Node,
+or production Visit handoff. See the
+[frame-driven shadow-provider contract](frame-driven-shadow-provider-contract.md).
+
+Stage 5 adds a separate live-shadow adapter for an already paired Camera Node. It
+uses one authenticated, frame-bounded multipart-JPEG analysis stream and a
+profile-bound one-frame evidence burst. The PC keeps at most the newest bounded
+work, applies Privacy/Ignore masking before ONNX CUDA inference, tracks source-time
+frames, and emits temporary shadow evidence only. This shadow-only CLI path does
+not start through the normal application launcher or create product records; the
+same pipeline reachable from **Start observing** on the Stream page (see above)
+is the app-owned, bounded, explicitly-activated production path. See the
+[Camera Node live-shadow contract](camera-node-live-shadow-contract.md).
+
+### Optional local species suggestions
+
+The current BioCLIP 2 path is a local reviewer-assistance action inside the
+existing Review Queue, not an automatically enabled production classifier.
+
+**A normal packaged Windows build (`scripts/build_local_product.py`) needs
+none of this setup.** It already installs the complete BioCLIP runtime
+dependency closure and, when a local bundle is available at build time
+(`--bioclip-bundle-source`, defaulting to `data/models/bioclip-2/`), the
+model/labels/embedding-cache bundle itself -- both durably, inside the
+release, surviving a restart or an ordinary redeploy with no environment
+variable to set by hand. See "BioCLIP runtime packaging" in
+local-product-packaging-design.md for the full design. The setup below
+is for a development checkout running directly from source instead of a
+packaged build.
+
+Install its optional runtime with:
+
+```sh
+python -m pip install -e ".[classifier-bioclip]"
+```
+
+Configure these paths in the environment that launches MockingBird:
+
+- `MOCKINGBIRD_BIOCLIP_MODEL_PATH`: existing local BioCLIP model directory
+- `MOCKINGBIRD_BIOCLIP_LABELS_PATH`: frozen local/seasonal candidate labels
+- `MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH`: matching precomputed text
+  embeddings
+
+For the supported desktop-local baseline, use the official Imageomics
+[`imageomics/bioclip-2`](https://huggingface.co/imageomics/bioclip-2) artifact
+version `1.0.0`, pinned to revision
+`2957b322090f9cb17ae72c71981c7218a28d81e0`. Its
+`open_clip_model.safetensors` SHA-256 is
+`b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef`;
+the model card licenses it under MIT. Obtain that single artifact manually from
+the official model source into an ignored local cache, verify the digest before
+configuration, and keep its accompanying `open_clip_config.json` beside it.
+
+Build the frozen cache only after choosing the bounded existing MockingBird bird
+taxonomy. This explicit setup command accepts local artifacts only, sets offline
+mode before loading OpenCLIP, and neither downloads anything nor runs from a
+review request:
+
+```sh
+python scripts/prepare_bioclip_candidate_cache.py \
+  --model-dir data/models/bioclip-2 \
+  --labels-path data/models/bioclip-2/mockingbird-bird-candidates.txt \
+  --embedding-cache-path data/models/bioclip-2/mockingbird-bird-candidates.npz \
+  --model-weights-sha256 b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef
+```
+
+The labels file contains the selected application taxonomy display names, with
+scientific names retained when they exist in that taxonomy. Updating labels or
+the model requires an explicit rebuilt cache and produces new pending evidence;
+all of these local files remain ignored. Configure the three environment
+variables in the environment that launches MockingBird, never in a frontend or
+API request.
+
+The optional extra stays on the tested OpenCLIP 3.3 runtime line. The app never
+downloads artifacts or generates embeddings during a review request. A manual
+run, or the default-off assist for a newly completed review Visit, creates ranked,
+explicitly uncalibrated `SpeciesSuggestion` evidence only;
+submitting a correction remains the sole species-truth action. Runtime package
+versions and artifact digests are retained with the evidence for reproducible
+evaluation. Each future user-triggered manual run also retains one durable
+attempt record with its outcome, duration, exact crop, complete ordered
+candidate bank and scores when returned, and sanitized failure context. The
+assist never backfills history, retries an existing attempt, or creates truth.
+
+### Batch Review Queue species suggestions
+
+Review Queue can select up to 25 visible unresolved bird Visits for a local batch.
+The browser validates those Visit IDs, then calls the established single-Visit
+BioCLIP assistant sequentially, so the already-loaded local runtime is reused
+without a general scheduler or one long-running batch request. Cancellation stops
+scheduling additional Visits after the current one completes. Each result retains
+its own crop-first MediaAsset provenance and remains suggestion evidence; only an
+explicit correction writes reviewed truth.
+
+Evaluate already-stored BioCLIP suggestions against final ReviewLabel
+corrections without running a model or writing product state:
+
+```sh
+python scripts/evaluate_bioclip_field_truth.py
+python scripts/evaluate_bioclip_field_truth.py --json-output data/evaluations/bioclip-field-truth.json
+```
+
+The command opens local SQLite storage in query-only mode, keeps JSON reports
+under the ignored `data/` tree, and labels candidate-relative scores and
+incomplete historical attempt coverage explicitly.
+
+## Developer split mode
+
+Run the API:
+
+```sh
+python -m uvicorn mockingbird.api.main:app --reload
+```
+
+Run the frontend from `web/`:
+
+```sh
+npm run dev
+```
+
+The Vite development server proxies same-origin API requests to the local API.
+The production build is served by the single MockingBird application process.
+
+## Validation
+
+Backend suite (see
+[docs/test-suite-validation-tiers-contract.md](test-suite-validation-tiers-contract.md)
+for the tiered `scripts/verify_fast.py`/`verify_core.py`/`verify_full.py`
+gates and what each guarantees). Start with the gates; plain `python -m pytest`
+is the whole suite, including the slow packaging/subprocess tests:
+
+```sh
+python scripts/verify_fast.py     # quick change gate
+python scripts/verify_core.py     # normal pre-PR gate (long)
+python -m pytest                  # everything (same as verify_full.py)
+```
+
+Clone outside your system temp directory: two guard tests in
+`tests/test_repository_isolation.py` treat paths under it as safe scratch space
+and will fail inside it.
+
+Frontend type-check and production build:
+
+```sh
+cd web
+npm run typecheck
+npm run build
+```
+
+Validation tiers and reporting rules live in
+[docs/development-workflow.md](development-workflow.md). Hardware/model
+checks are opt-in and must not be required for the normal non-hardware gate.
+
+## Local data
+
+Defaults:
+
+- database: `data/mockingbird.sqlite3`
+- managed imported media: `data/media/imports/`
+- verified backups: `data/backups/`
+
+Useful overrides:
+
+- `MOCKINGBIRD_DB_URL`
+- `MOCKINGBIRD_MEDIA_ROOT`
+- `MOCKINGBIRD_BACKUP_ROOT`
+
+The `data/` tree is ignored. Generated exports, captured media, benchmark data,
+model artifacts, caches, and training workspaces must remain in ignored local
+paths and must not be committed.
+

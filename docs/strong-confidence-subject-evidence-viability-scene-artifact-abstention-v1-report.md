@@ -8,7 +8,7 @@ A real Gate-A investigation, not a fix, into the exact defect the accepted Stron
 
 Verified before any work, per the brief's own §2/§3:
 
-- Repository/branch: `/home/zkelder/projects/mockingbird-active`, `main`.
+- Repository/branch: `/home/<user>/projects/mockingbird-active`, `main`.
 - Accepted HEAD at session start: `127edaf` -- exact match to the brief's expected state (`git rev-parse HEAD`).
 - Schema: `v58` (`CURRENT_DATABASE_SCHEMA_VERSION`, `src/mockingbird/storage/database.py:45`), unchanged throughout -- matches.
 - Latest accepted milestone: Strong-Confidence Non-Target & Scene-Artifact Visit Admission Correctness v1, Classification **B** -- directly re-read from `docs/strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md` and `docs/release-execution-state.md` §1/§3 -- matches exactly, including: person dual-class same-frame contradiction fix accepted; scene-confusor rejection-history bookkeeping accepted; pure single-class person misclassification remains the already-accepted 2026-08-20 residual (open, unchanged); **the exact v11 Visit-018 strong-confidence scene-artifact shape explicitly, numerically proven not closed** by that milestone's own investigation.

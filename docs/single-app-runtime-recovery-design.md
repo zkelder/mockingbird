@@ -62,7 +62,12 @@ The local launcher:
 - opens the same-origin app after `/health` becomes ready
 
 API shutdown cancels in-memory source monitors and stops backend-owned camera
-sessions. It never restarts them automatically. Persisted desired monitoring,
+sessions. It never restarts them automatically. Graceful shutdown (the in-app
+*Shut down MockingBird* action or Ctrl+C) is bounded: uvicorn waits at most
+`runtime.GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` for open connections before the
+lifespan teardown and `mark_clean_shutdown()` run, and on Windows the server
+runs on a selector event loop rather than uvicorn's Proactor default (the
+measured rationale is in `src/mockingbird/runtime.py`). Persisted desired monitoring,
 scheduled provider actions, workers, reconnect policy, and reboot recovery are
 future explicitly scoped lifecycle phases.
 

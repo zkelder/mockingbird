@@ -2792,6 +2792,12 @@ class StreamVisitSummary(BaseModel):
     # was collapsed into this row -- see `VisitCrossCameraPartnerSummary`'s
     # own docstring. Independent of `multimodal_partner` above.
     cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
+    # Owner-Only Release Polish & Acceptance v1 (O-1): False only when this
+    # Visit's times are the 1970 epoch placeholder for a recording imported
+    # with no capture-time fact (see `ProductRepository._visit_capture_time_
+    # known`). The raw timestamps above are unchanged; a surface shows
+    # "Capture time unknown" instead of formatting the placeholder.
+    capture_time_known: bool = True
 
 
 class ActivityLibraryReviewFilter(str, Enum):
@@ -4206,6 +4212,9 @@ class ReviewQueueItem(BaseModel):
     evidence_count: int = Field(default=0, ge=0)
     is_demo_source: bool = False
     is_legacy_activity: bool = False
+    # Owner-Only Release Polish & Acceptance v1 (O-1): see
+    # `StreamVisitSummary.capture_time_known`.
+    capture_time_known: bool = True
 
 
 class ReviewQueueProductTab(str, Enum):
@@ -5065,6 +5074,10 @@ class ResearchExportFilters(BaseModel):
     taxon_labels: list[str] | None = Field(default=None, max_length=100)
     acquisition_scope: Literal["live", "offline", "both"] = "both"
     collection_id: str | None = None
+    # Research Export & Ecological Workflow Completion v1: narrows (never
+    # widens) the in-scope Visits, so a Visit deep link can scope the
+    # workflow to one record. Eligibility is still evaluated per Visit.
+    visit_ids: list[str] | None = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
     def validate_range(self) -> "ResearchExportFilters":
@@ -5087,6 +5100,18 @@ class ResearchExportRequest(BaseModel):
         return _validate_export_output_name(value)
 
 
+class ResearchMediaBundleSummary(BaseModel):
+    """What `include_media` actually did: every requested eligible media id is
+    either bundled or listed under an explicit omission reason."""
+
+    requested: int = Field(ge=0)
+    bundled: int = Field(ge=0)
+    omitted: int = Field(ge=0)
+    omitted_reasons: dict[str, int] = Field(default_factory=dict)
+    total_bytes: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ResearchExportManifest(BaseModel):
     """Reproducibility metadata every research export carries (see
     "Versioning / reproducibility" in the governing milestone brief)."""
@@ -5103,6 +5128,7 @@ class ResearchExportManifest(BaseModel):
     excluded_count: int = Field(ge=0)
     excluded_reasons: dict[str, int] = Field(default_factory=dict)
     content_fingerprint: str
+    media_bundle: ResearchMediaBundleSummary | None = None
 
 
 class ResearchExportResponse(BaseModel):
@@ -5114,6 +5140,7 @@ class ResearchExportResponse(BaseModel):
     excluded_count: int = Field(ge=0)
     excluded_reasons: dict[str, int] = Field(default_factory=dict)
     manifest: ResearchExportManifest
+    media_bundle: ResearchMediaBundleSummary | None = None
     dry_run: bool
 
 
@@ -5150,6 +5177,7 @@ class CamtrapDpExportResponse(BaseModel):
     media_count: int = Field(ge=0)
     observation_count: int = Field(ge=0)
     validation: CamtrapDpValidation
+    media_bundle: ResearchMediaBundleSummary | None = None
     dry_run: bool
 
 
@@ -6497,6 +6525,8 @@ class WildlifeJournalRepresentative(BaseModel):
     display_name: str
     observed_at: datetime
     primary_evidence: VisitEvidenceFrame | None = None
+    # Same contract as `StreamVisitSummary.capture_time_known` (O-1).
+    capture_time_known: bool = True
 
 
 class WildlifeJournalRecentDay(BaseModel):
@@ -6510,6 +6540,11 @@ class WildlifeJournalLabelSummary(BaseModel):
     observation_count: int = Field(ge=1)
     first_observed_at: datetime
     latest_observed_at: datetime
+    # Owner-Only Release Polish & Acceptance v1 (O-1): whether the Visit
+    # behind `first_observed_at`/`latest_observed_at` has a real capture
+    # time, per `StreamVisitSummary.capture_time_known`.
+    first_capture_time_known: bool = True
+    latest_capture_time_known: bool = True
     stream_count: int = Field(ge=0)
     zone_count: int = Field(ge=0)
     recent_activity: list[WildlifeJournalRecentDay] = Field(default_factory=list, max_length=14)
@@ -6624,6 +6659,8 @@ class WildlifeJournalObservation(BaseModel):
     evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
     multimodal_partner: VisitMultimodalPartnerSummary | None = None
     cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
+    # Identical contract to `StreamVisitSummary.capture_time_known`.
+    capture_time_known: bool = True
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -6725,6 +6762,9 @@ class AlertActionType(str, Enum):
     # Calm Attention & Notifications v1.
     open_place_story = "open_place_story"
     open_place_report = "open_place_report"
+    # Attention Integrity & Health Reliability v1: Observatory Health
+    # model/runtime conditions with no single affected Stream.
+    open_doctor = "open_doctor"
 
 
 class AttentionCategory(str, Enum):
@@ -6770,6 +6810,20 @@ class ProductAlertAction(BaseModel):
     story_kind: str | None = None
 
 
+class ProductAlertGroupMember(BaseModel):
+    """Another camera's own review alert folded into this one because the two
+    Visits are a confidently-`associated` cross-camera encounter. Presentation
+    only: the member Visit/alert still exist and are independently reviewable;
+    `visit_id` is the drill-down to that camera's evidence."""
+
+    alert_id: str
+    visit_id: str
+    stream_id: str | None = None
+    stream_name: str | None = None
+    source_id: str | None = None
+    source_name: str | None = None
+
+
 class ProductAlert(BaseModel):
     id: str
     category: AlertCategory
@@ -6794,6 +6848,10 @@ class ProductAlert(BaseModel):
     # `ProductRepository._attention_category_for`/`_attention_urgency_for`.
     attention_category: AttentionCategory
     urgency: AttentionUrgency
+    # Cross-camera Calm Attention grouping (Multi-Camera Attribution & Filter
+    # Consolidation v1): other cameras' review alerts for the same associated
+    # encounter, empty for every ungrouped alert.
+    grouped_visits: list[ProductAlertGroupMember] = Field(default_factory=list)
 
 
 class ProductAlertListResponse(BaseModel):
@@ -7061,6 +7119,31 @@ class ProductHealthAcousticSummary(BaseModel):
     detail: str
 
 
+class ProductHealthAttentionSyncSummary(BaseModel):
+    """Attention Integrity & Health Reliability v1: whether the background
+    alert reconciliation (`AttentionSyncService`) is actually working, so
+    "no alerts" can be told apart from "alert reconciliation is failing."
+    `status` is `pending` before this process has attempted its first pass,
+    `failing` while the most recent pass failed, otherwise `healthy`.
+    `last_error_*` keep the most recent failure's registered code and safe
+    message (never raw exception text) even after a later success. Counters
+    are process-lifetime. Like acoustic status, never a factor in
+    `ProductHealthStatus.ready`: attention is presentation over product
+    state, not the product state itself."""
+
+    status: Literal["pending", "healthy", "failing"]
+    running: bool
+    poll_interval_seconds: float = Field(ge=0)
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    consecutive_failure_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+
+
 class ProductHealthStatus(BaseModel):
     """One bounded, basic-first product status aggregate.
 
@@ -7106,6 +7189,7 @@ class ProductHealthStatus(BaseModel):
     observation: ProductHealthObservationSummary
     backup: ProductHealthBackupSummary
     acoustic: ProductHealthAcousticSummary
+    attention_sync: ProductHealthAttentionSyncSummary | None = None
     previous_shutdown_clean: bool | None = None
     database_schema_version: int = Field(ge=1)
     # Release Engineering Foundation v1: set only when *this running
@@ -7894,6 +7978,10 @@ class EventDetail(BaseModel):
     review_state_token: str = ""
     dataset_ready: bool
     review_summary: str
+    # Owner-Only Release Polish & Acceptance v1 (O-1): see
+    # `StreamVisitSummary.capture_time_known`; False when this Event's Visits
+    # carry the epoch placeholder for an unknown capture time.
+    capture_time_known: bool = True
 
 
 class VisitMultimodalAssociation(BaseModel):
@@ -8001,6 +8089,13 @@ class VisitDetail(BaseModel):
     review_state_token: str
     dataset_ready: bool
     review_summary: str
+    # Owner-Only Release Polish & Acceptance v1: see `StreamVisitSummary.
+    # capture_time_known` (O-1). `acquisition_type` reuses the research-
+    # export mapping of the candidate ledger's `provider_key` -- how this
+    # Visit was found (offline analysis of an imported recording vs. live
+    # observation), so the evidence panel can say so honestly (O-2).
+    capture_time_known: bool = True
+    acquisition_type: Literal["recorded_video", "continuous_live", "unknown"] = "unknown"
 
 
 class VisitOrganizationState(BaseModel):
@@ -9486,6 +9581,16 @@ PlaceStoryEventKind = Literal[
 PlaceStoryImportance = Literal["major", "notable"]
 
 
+class PlaceStorySourceContribution(BaseModel):
+    """One camera that contributed the encounter a Story entry is anchored
+    to; `visit_id` opens that camera's own evidence."""
+
+    source_id: str
+    source_name: str
+    visit_id: str
+    source_archived: bool = False
+
+
 class PlaceStoryEntry(BaseModel):
     """One Place Story timeline entry -- see `mockingbird.analytics.place_
     story.PlaceStoryEvent` for the full field-by-field rationale. `kind` is
@@ -9512,6 +9617,8 @@ class PlaceStoryEntry(BaseModel):
     zone_name: str | None = None
     source_id: str | None = None
     detail_refs: dict[str, str] = Field(default_factory=dict)
+    source_scope: Literal["place_level", "single_source", "multiple_sources"] = "place_level"
+    contributions: list[PlaceStorySourceContribution] = Field(default_factory=list)
 
 
 class PlaceStoryResponse(BaseModel):

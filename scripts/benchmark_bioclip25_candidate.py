@@ -48,7 +48,7 @@ from mockingbird.species.identification_eligibility import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_IMPORTS_DIR = Path(
-    "/mnt/c/Users/zachk/AppData/Local/MockingBirdDev/userdata/data/media/imports"
+    "/mnt/c/Users/<user>/AppData/Local/MockingBirdDev/userdata/data/media/imports"
 )
 CANDIDATE_LABELS_PATH = REPO_ROOT / "data/models/bioclip-2/mockingbird-bird-candidates.txt"
 # Real production id order, matching BUILTIN_SPECIES_CANDIDATE_TAXONOMY_IDS in

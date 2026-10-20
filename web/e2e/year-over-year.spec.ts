@@ -58,11 +58,17 @@ async function mockYearOverYear(page: Page, overrides: Record<string, unknown>) 
   );
 }
 
-test("a brand-new Place shows an honest, calm first-year message, not an error", async ({ page }) => {
+test("a brand-new Place shows an honest, calm first-year message on the Place Report, and Today stays quiet", async ({ page }) => {
   await completeSetup(page);
   await mockYearOverYear(page, {});
 
+  // Today omits the "long-term patterns will appear" placeholder (it is just
+  // another empty state there); the Place Report keeps the honest sentence.
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
+  await expect(page.locator(".year-over-year-card")).toHaveCount(0);
+
+  await page.goto("/place-report");
   const card = page.locator(".year-over-year-card");
   await expect(card).toBeVisible();
   await expect(card.getByText("Compared with last year")).toBeVisible();

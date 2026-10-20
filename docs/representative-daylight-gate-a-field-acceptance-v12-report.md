@@ -52,7 +52,7 @@ Checked before allocating a field instance, all confirmed real:
 
 - **Daylight**: session start 12:29 EDT; sunset ≈19:30 EDT — ~7 hours of
   daylight remained, no time pressure.
-- **Reference Camera Node reachable**: `192.168.1.112:8787` healthy,
+- **Reference Camera Node reachable**: `<node-ip>:8787` healthy,
   `available_camera_count: 1` of `camera_count: 2` — the *post-fix* shape
   (previously spuriously "8"), confirming the `4c1be35` diagnostic-truth
   fix is genuinely live on the real Pi.
@@ -108,7 +108,7 @@ Checked before allocating a field instance, all confirmed real:
   `scripts/field_acceptance_instance_lifecycle.py`): POSIX `Path()` never
   parses a `C:\...` string as absolute, so `_resolve()` anchored it under
   the current working directory (this repo checkout), whose *existing*
-  parent (`/home/zkelder/projects/mockingbird-active`) is what
+  parent (`/home/<user>/projects/mockingbird-active`) is what
   `shutil.disk_usage` then measured. Re-invoked with the correct
   WSL-mounted form (`/mnt/c/Users/...`) and got the real number: **7.9GB
   free, tier `action_recommended`** (not `healthy`) — genuinely tight

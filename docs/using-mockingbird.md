@@ -5,65 +5,64 @@ camera, start observing, review, and basic backup/recovery. It assumes
 nothing about Python, servers, or the command line.
 
 Setting up a development checkout, running the test suite, or working on
-MockingBird's code is a separate audience -- see [README.md](../README.md)
-and [AGENTS.md](../AGENTS.md).
+MockingBird's code is a separate audience -- see [developer-setup.md](developer-setup.md)
+and [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-## Platform & hardware support
+## Before you install: what is supported
 
-This is an honest summary of what is actually validated today, not a
-promise that every platform listed here has been tested the same way.
+The one authoritative statement of supported platforms, hardware, cameras and
+limits is the [Support & compatibility matrix](support-matrix.md). The short
+version for a normal user:
 
-**Computer (Host)**
-
-| Platform | Status |
-|---|---|
-| Windows 10/11 (64-bit) | **Supported and validated.** The packaged download above is built, tested, and released for this platform, including GPU-accelerated wildlife detection. This is MockingBird's primary, release-tested platform today. |
-| Linux | Structurally supported for a development checkout (`./start-mockingbird.sh`), and MockingBird's own automated tests run continuously on Linux. There is no packaged "unpack and run" Linux download yet, and no dedicated Linux hardware acceptance has been performed. |
-| macOS | Not yet verified, and not part of this release. Microphone-based bird-sound identification specifically is known not to work on macOS -- MockingBird says so plainly rather than failing silently. |
-
-**Wildlife detection** (the part that notices something is there)
-
-Live wildlife detection needs a computer with a supported **NVIDIA
-graphics card**. There is deliberately no slower "CPU-only" mode for this
-part: MockingBird would rather tell you plainly that detection isn't
-available than quietly run a degraded version without saying so. If your
-graphics card isn't supported, **Start observing** says so directly instead
-of guessing (see "Start observing," below). Everything else -- reviewing
-history, your Bird Log, importing recorded video, backup and restore, and
-settings -- works the same with or without a supported graphics card.
-
-**Species and sound identification** (the part that guesses what it is)
-
-Species suggestions and bird-sound identification both run on any
-computer's regular processor -- neither needs a graphics card. If either
-isn't set up, or its runtime isn't available, wildlife Visits are still
-created normally; you only lose the automatic guess until you identify it
-yourself.
-
-**Apple Silicon and AMD graphics cards:** not supported today. MockingBird
-does not claim to work on them merely because the underlying open-source
-libraries theoretically could -- no Apple or AMD hardware has been used to
-test this product.
-
-**MockingBird Camera Node:** the validated reference hardware is a
-Raspberry Pi 4 with its camera attached, running Raspberry Pi OS. The
-Camera Node software does not require a Raspberry Pi specifically -- a
-similar Debian-based Linux device with a USB camera can run it too -- but
-only the Raspberry Pi 4 path has actually been tested end to end (install,
-reboot, upgrade, and recovery). A device without a Pi camera reports that
-plainly instead of failing the whole install.
+- **Computer:** Windows 10 (64-bit) is the supported, tested platform;
+  Windows 11 is expected to work but has not been separately tested. There is
+  no packaged Linux or macOS version in 1.0.
+- **Live wildlife detection needs a supported NVIDIA graphics card** (tested:
+  RTX 4060 Ti) with a current driver. There is deliberately no slower CPU mode;
+  without one, **Start observing** says so, and review, Bird Log, import,
+  export, backup and restore still work.
+- **Species suggestions** use the computer's regular processor (no graphics
+  card needed). AMD and Apple Silicon graphics are not supported.
+- **Camera Node:** tested on a Raspberry Pi 4 with its camera, running
+  Raspberry Pi OS; other similar Linux devices are unvalidated.
+- **Camera limits:** RTSP, USB and Windows DirectShow cameras can be armed two
+  at a time (plus two live previews); Camera Node cameras are not limited this
+  way. Details in the matrix.
 
 ## Install and start (Windows)
 
-1. Unpack the `MockingBird-windows-x64.zip` folder anywhere you like --
-   your Desktop, Documents, an external drive. Nothing outside that folder
-   is needed.
-2. Open the folder and double-click **Start MockingBird.vbs**.
-3. Your browser opens to MockingBird automatically once it is ready. No
-   window or terminal appears first.
+MockingBird for Windows is a **ZIP archive you unpack**, not an installer.
+There is no Start-menu entry and no uninstaller.
 
-That's it -- there is nothing to install first. The folder already contains
-everything MockingBird needs to run.
+### 1. Download and verify
+
+Official builds are published as `MockingBird-windows-x64.zip` on the
+project's GitHub **Releases** page, alongside a `SHA256SUMS` file. (No public
+1.0 release has been published yet; the owner publishes it. Do not trust a copy
+from anywhere else.) Because the file is not code-signed, **verify it** before
+unpacking. In Command Prompt, in the folder holding the download:
+
+```bat
+certutil -hashfile MockingBird-windows-x64.zip SHA256
+```
+
+The hash printed must match the `MockingBird-windows-x64.zip` line in
+`SHA256SUMS`. If it does not, delete the file and download it again.
+
+### 2. Unpack and start
+
+1. Unpack the ZIP anywhere you like -- your Desktop, Documents, an external
+   drive. Nothing outside that folder is needed. The unpacked folder is large (the ZIP is about 1.8 GB at the time of writing) because it carries
+   the detection model and GPU runtime.
+2. Open the folder and double-click **Start MockingBird.vbs**.
+3. Your browser opens to MockingBird at `http://127.0.0.1:8000` once it is
+   ready. No window or terminal appears first.
+
+There is nothing to install first. The folder already contains the detection
+model (MegaDetector v5a), the species-suggestion model (BioCLIP 2) and the GPU
+runtime. The one thing it does **not** contain is **ffmpeg**, needed only for
+network/USB cameras and video import (see "Add a camera"). Where your data is
+kept is covered under "First-run setup" and "Where your data lives."
 
 **About the Windows warning you may see first.** MockingBird's release
 files are not (yet) signed with a paid code-signing certificate, so
@@ -109,6 +108,17 @@ setup instead of showing an empty screen:
 You can finish setup without adding a camera and add one later. This guided
 setup only appears once; reopening MockingBird later goes straight to your
 normal Dashboard, with everything exactly as you left it.
+
+## Where your data lives
+
+MockingBird keeps its database, imported and captured media, backups and logs
+in its own local data folder -- normally `%LOCALAPPDATA%\MockingBird` (the
+Storage step and **Local Data** show the exact path). It is kept **separate from
+the application folder on purpose**, so unpacking a newer version never touches
+your data. The data folder can be relocated with the `MOCKINGBIRD_HOME`
+environment variable before starting. It holds your camera credentials and
+everything you have reviewed; treat it and its backups as private (see
+[privacy-and-security.md](privacy-and-security.md)).
 
 ## Add a camera
 
@@ -206,24 +216,35 @@ begins and risk stitching two different birds together into one wrong
 Visit. This only affects unusually crowded moments at a single spot;
 ordinary, everyday activity is unaffected.
 
-## Bird-sound identification (optional)
+## Models and bird-sound identification
 
-Alongside identifying birds it sees, MockingBird can optionally identify
-birds it *hears*, using a well-known research project called BirdNET. This
-is not included in MockingBird by default -- it needs a microphone and a
-separate, one-time setup step for a developer/technical user (a single
-`pip install` command, given in full in
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)), because the
-underlying BirdNET model is licensed for non-commercial use only, under
-different terms than MockingBird itself. MockingBird never installs or
-downloads it for you automatically, the same way it never installs
-`ffmpeg` for you (see "Add a camera," above) -- both stay separate,
-optional programs you obtain yourself. See
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for the exact command,
-and for exactly what is and is not included with MockingBird, and why. If
-it isn't set up, everything else works exactly the same; you simply don't
-get an automatic guess for a sound-only detection until you identify it
-yourself.
+**Wildlife detection and species suggestions need no setup.** The official
+Windows ZIP already contains both models (MegaDetector v5a and BioCLIP 2) and
+never downloads anything. Species suggestions are always labeled as guesses
+until you confirm them.
+
+**Bird-sound identification (BirdNET) is optional and is not in the Windows
+ZIP.** MockingBird can identify birds it *hears* using the BirdNET research
+model, but that model's weights are licensed by their authors for
+**non-commercial use only** (CC BY-NC-SA 4.0), and they cannot be separated from
+the code package that carries them. For that reason **official MockingBird
+downloads never include BirdNET**, and MockingBird never installs or downloads
+it for you.
+
+- **On the Windows ZIP there is currently no supported way to add it.** The
+  unpacked runtime is sealed and has no package installer, so this is not a
+  supported 1.0 path.
+- **From a source checkout** (a developer/technical path, see
+  [developer-setup.md](developer-setup.md)), you can install it yourself with
+  `pip install -e ".[classifier-birdnet]"`; that fetches the model straight
+  from PyPI under its authors' terms. It also needs a microphone/audio source
+  and ffmpeg, and microphone capture does not work on macOS.
+- Nothing else depends on it. Without it you simply get no automatic guess for
+  a sound-only detection; you can identify it yourself.
+
+See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for exactly what is
+and is not included and why, including the legal question this project leaves
+open. This is not legal advice.
 
 ## Use MockingBird on your phone
 
@@ -287,14 +308,18 @@ for a support conversation, not everyday use:
   paired Camera Node, and detector/species-identification setup, and shows
   a plain-language summary of anything that needs attention. Open
   **Doctor** from the menu for the same report in your browser (an
-  Administrator sign-in), or run `python -m mockingbird doctor` from a
-  terminal in MockingBird's folder for the identical check outside a
+  Administrator sign-in), or run `python\python.exe -m mockingbird doctor` from a
+  Command Prompt in MockingBird's folder for the identical check outside a
   browser -- useful when scripting or when MockingBird itself won't start.
-- **A support bundle** (`python -m mockingbird support-bundle`) writes one
-  small file safe to share for support -- it never includes camera
-  passwords, pairing secrets, or media, only Doctor's own check results, a
-  recent (automatically redacted) slice of MockingBird's log, and version
-  facts.
+- **A support bundle** (`python\python.exe -m mockingbird support-bundle
+  --no-local-paths`) writes one `.zip` for support. It never includes camera
+  passwords, pairing secrets, tokens or media -- only Doctor's check results, a
+  recent (redacted) slice of the log, and version facts. It **can still contain
+  local folder paths** (which may include your Windows user name), so open it
+  and read it before sharing publicly. See
+  [privacy-and-security.md](privacy-and-security.md#support-bundles).
+
+See [troubleshooting.md](troubleshooting.md) for the full support path.
 
 ## Backup and restore
 
@@ -430,11 +455,14 @@ locked behind a special tool.
   diagnostics," above) for one small file with the relevant pieces already
   gathered and redacted.
 
-## Other supported hosts
+## Other computers (Linux, macOS)
 
-Linux users with a development checkout can use `./start-mockingbird.sh`
-(or `python -m mockingbird`) the same way Windows users use
-`Start MockingBird.vbs` -- see [README.md](../README.md) for that developer
-setup. The guided first-run experience above is identical on every host.
-See "Platform & hardware support," near the top of this guide, for what is
-and isn't validated on each one.
+There is no packaged Linux or macOS version in 1.0. Linux users with a source
+checkout can use `./start-mockingbird.sh` (see [developer-setup.md](developer-setup.md));
+that is a developer path with no hardware acceptance, and macOS is unvalidated.
+See the [support matrix](support-matrix.md).
+
+## Where to go next
+
+[Troubleshooting & support](troubleshooting.md) -- [Privacy & security](privacy-and-security.md)
+-- [Support matrix](support-matrix.md) -- [Camera Node install guide](camera-node-install-guide.md).

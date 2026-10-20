@@ -129,8 +129,11 @@ test("previewing eligibility shows honest per-record status, not just a bare cou
   await page.goto("/ecological-destinations");
   await page.getByRole("button", { name: "Preview eligibility" }).click();
 
-  await expect(page.getByText("Northern Cardinal")).toBeVisible();
-  await expect(page.getByText("Squirrel")).toBeVisible();
+  // Scoped to the preview table: the Species filter's own <option> list
+  // legitimately repeats taxon names.
+  const previewTable = page.getByRole("table", { name: "Ecological eligibility preview" });
+  await expect(previewTable.getByText("Northern Cardinal")).toBeVisible();
+  await expect(previewTable.getByText("Squirrel")).toBeVisible();
   await expect(page.getByText(/taxonomy mapping ambiguous/i)).toBeVisible();
 });
 
@@ -230,7 +233,9 @@ test("preparing with an exact location choice but no coordinate typed in is refu
 
   await page.goto("/ecological-destinations");
   await page.getByRole("button", { name: "Preview eligibility" }).click();
-  await expect(page.getByText("Northern Cardinal")).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "Ecological eligibility preview" }).getByText("Northern Cardinal"),
+  ).toBeVisible();
   await page.getByLabel("Location").selectOption("exact");
 
   await page.getByRole("button", { name: /Prepare 1 selected/ }).click();

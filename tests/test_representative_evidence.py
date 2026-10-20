@@ -123,3 +123,59 @@ def test_deterministic_regardless_of_input_ordering_with_many_candidates() -> No
     assert forward is not None
     assert forward.visit_id == "visit-3"
     assert forward.visit_id == reversed_order.visit_id
+
+
+# Everyday Wildlife Experience & Presentation Refinement v1: subject-region
+# resolution. Boxes arrive in two different coordinate spaces; these pin the
+# unit each one is measured in.
+
+from mockingbird.analytics.representative_evidence import (  # noqa: E402
+    MIN_CROP_SHORT_SIDE_PX,
+    resolve_subject_region,
+)
+
+
+def test_frame_local_track_box_is_scaled_by_its_own_frame() -> None:
+    assert resolve_subject_region(
+        width=1000, height=500, normalized_track_box=[0.1, 0.2, 0.3, 0.6], normalized_crop_box=None
+    ) == (True, 200 * 200)
+
+
+def test_derived_crop_counts_its_own_pixels_not_the_parent_relative_fraction() -> None:
+    has_region, area = resolve_subject_region(
+        width=400, height=300, normalized_track_box=None, normalized_crop_box=[0.4, 0.4, 0.6, 0.6]
+    )
+    assert (has_region, area) == (True, 400 * 300)
+
+
+def test_clean_crop_outranks_a_wide_frame_with_a_tiny_speck() -> None:
+    crop_region = resolve_subject_region(
+        width=400, height=300, normalized_track_box=None, normalized_crop_box=[0.4, 0.4, 0.6, 0.6]
+    )
+    speck_region = resolve_subject_region(
+        width=1920, height=1080, normalized_track_box=[0.50, 0.50, 0.55, 0.55], normalized_crop_box=None
+    )
+    crop = _candidate(
+        "visit-crop", has_subject_region=crop_region[0], subject_pixel_area=crop_region[1], asset_pixel_area=400 * 300
+    )
+    speck = _candidate(
+        "visit-speck", has_subject_region=speck_region[0], subject_pixel_area=speck_region[1], asset_pixel_area=1920 * 1080
+    )
+    assert select_representative_evidence([speck, crop]) is crop
+
+
+def test_upscaled_stub_crop_earns_no_subject_region_credit() -> None:
+    assert MIN_CROP_SHORT_SIDE_PX > 32
+    assert resolve_subject_region(
+        width=48, height=48, normalized_track_box=None, normalized_crop_box=[0.1, 0.1, 0.5, 0.5]
+    ) == (False, 0)
+
+
+def test_malformed_or_missing_geometry_never_invents_a_subject() -> None:
+    for box in ([0.5, 0.5, 0.4, 0.9], [0.1, 0.1, 1.2, 0.9], [0.1, 0.1, 0.2], [0.3, 0.3, 0.3, 0.8]):
+        assert resolve_subject_region(
+            width=800, height=600, normalized_track_box=box, normalized_crop_box=box
+        ) == (False, 0)
+    assert resolve_subject_region(
+        width=None, height=600, normalized_track_box=[0.1, 0.1, 0.5, 0.5], normalized_crop_box=None
+    ) == (False, 0)

@@ -11,10 +11,12 @@ import type {
   VisitTagSummary,
   Zone,
 } from "../api/types";
+import { CameraFilter } from "../components/CameraFilter";
 import { EmptyState } from "../components/EmptyState";
+import { sourceCameraOptions } from "../cameraFilter";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 const MAX_SELECTION = 50;
 
@@ -251,7 +253,7 @@ export function ActivityLibraryPage({
       })
       .catch((caught) => {
         if (active) {
-          setError(caught instanceof Error ? caught.message : "Could not refresh activity.");
+          setError(userFacingErrorMessage(caught, "Could not refresh activity."));
         }
       })
       .finally(() => {
@@ -312,7 +314,7 @@ export function ActivityLibraryPage({
       setMessage(`Saved “${name}”.`);
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not save this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not save this view."));
     }
   }
 
@@ -323,7 +325,7 @@ export function ActivityLibraryPage({
       await apiClient.updateActivityLibrarySavedView(view.id, { name });
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not rename this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not rename this view."));
     }
   }
 
@@ -333,7 +335,7 @@ export function ActivityLibraryPage({
       await apiClient.deleteActivityLibrarySavedView(view.id);
       await refreshSavedViews();
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not delete this view.");
+      setMessage(userFacingErrorMessage(caught, "Could not delete this view."));
     }
   }
 
@@ -355,7 +357,7 @@ export function ActivityLibraryPage({
         setMessage("No selected Visits had current reviewed truth to export.");
       }
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not create the reviewed export.");
+      setMessage(userFacingErrorMessage(caught, "Could not create the reviewed export."));
     }
   }
 
@@ -376,7 +378,7 @@ export function ActivityLibraryPage({
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not update the selected Visits.");
+      setMessage(userFacingErrorMessage(caught, "Could not update the selected Visits."));
     } finally {
       setIsUpdatingOrganization(false);
     }
@@ -400,7 +402,7 @@ export function ActivityLibraryPage({
       setCollections((current) => current.map((item) => item.id === result.collection.id ? result.collection : item));
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not update Collection membership."); }
+    } catch (caught) { setMessage(userFacingErrorMessage(caught, "Could not update Collection membership.")); }
   }
 
   async function bulkUpdateTag(action: "add" | "remove") {
@@ -432,7 +434,7 @@ export function ActivityLibraryPage({
       setSelectedIds([]);
       setRefreshVersion((value) => value + 1);
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Could not update tags.");
+      setMessage(userFacingErrorMessage(caught, "Could not update tags."));
     }
   }
 
@@ -446,7 +448,7 @@ export function ActivityLibraryPage({
       await refreshTags();
       setNewTagName("");
       setTagManagementMessage(`Created ${created.name}.`);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not create this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not create this tag.")); }
   }
 
   async function renameTag(tag: VisitTagSummary) {
@@ -461,7 +463,7 @@ export function ActivityLibraryPage({
       await refreshTags();
       setTagManagementMessage(`Renamed tag to ${updated.name}.`);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not rename this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not rename this tag.")); }
   }
 
   async function archiveTag(tag: VisitTagSummary) {
@@ -476,14 +478,11 @@ export function ActivityLibraryPage({
       if (filters.tag_id === tag.id) commitFilters({ ...filters, tag_id: null });
       setTagManagementMessage(`Archived ${tag.name}. Existing Visits, media, notes, favorites, and Collections are unchanged.`);
       setRefreshVersion((value) => value + 1);
-    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not archive this tag."); }
+    } catch (caught) { setTagManagementMessage(userFacingErrorMessage(caught, "Could not archive this tag.")); }
   }
 
   const selectedStreamMissing = Boolean(
     filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
-  );
-  const selectedSourceMissing = Boolean(
-    filters.source_id && !sources.some((source) => source.id === filters.source_id),
   );
   const selectedZoneMissing = Boolean(
     filters.zone_id && !zones.some((zone) => zone.id === filters.zone_id),
@@ -525,28 +524,25 @@ export function ActivityLibraryPage({
               ))}
             </select>
           </label>
-          <label>
-            Camera
-            <select
-              value={filters.stream_id ?? ""}
-              onChange={(event) => commitFilters({ ...filters, stream_id: event.target.value || null })}
-            >
-              <option value="">All cameras</option>
-              {selectedStreamMissing ? <option value={filters.stream_id ?? ""}>Unavailable Stream</option> : null}
-              {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
-            </select>
-          </label>
-          <label>
-            Camera / Source
-            <select
-              value={filters.source_id ?? ""}
-              onChange={(event) => commitFilters({ ...filters, source_id: event.target.value || null })}
-            >
-              <option value="">All cameras</option>
-              {selectedSourceMissing ? <option value={filters.source_id ?? ""}>Unavailable camera</option> : null}
-              {sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-            </select>
-          </label>
+          <CameraFilter
+            onChange={(ids) =>
+              // Choosing a camera replaces any narrower Stream deep link so the
+              // two can never contradict each other.
+              commitFilters({ ...filters, source_id: ids[0] ?? null, stream_id: null })
+            }
+            options={sourceCameraOptions(sources)}
+            value={filters.source_id ? [filters.source_id] : []}
+          />
+          {filters.stream_id ? (
+            <div className="camera-filter-stream-chip" data-testid="stream-filter-chip">
+              <span className="meta-text">
+                Stream: {selectedStreamMissing ? "Unavailable Stream" : streams.find((stream) => stream.id === filters.stream_id)?.name}
+              </span>
+              <button className="text-action" onClick={() => commitFilters({ ...filters, stream_id: null })} type="button">
+                Clear stream
+              </button>
+            </div>
+          ) : null}
           <label>
             Zone
             <select
@@ -740,7 +736,7 @@ export function ActivityLibraryPage({
                   )}
                   <div className="activity-visit-summary">
                     <div className="activity-visit-title">
-                      <strong>{formatDateTime(visit.activity_started_at)}</strong>
+                      <strong>{formatCaptureDateTime(visit.activity_started_at, visit.capture_time_known)}</strong>
                       <StatusPill label={formatLabel(visit.review_outcome)} tone={outcomeTone(visit.review_outcome)} />
                     </div>
                     <span>{durationLabel(visit.duration_seconds)} · {visit.stream_name} · {visit.source_name}</span>

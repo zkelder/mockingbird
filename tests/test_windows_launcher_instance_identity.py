@@ -50,18 +50,14 @@ def _prepare_runtime_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, por
     monkeypatch.setenv(APP_HOME_ENV_VAR, str(tmp_path / "home"))
     monkeypatch.setattr(api_main, "_repository", None)
     monkeypatch.setattr(runtime_module, "prepare_runtime_state", lambda _home: None)
-    # Release Reliability & First-Run Recovery v1: `runtime.run()` no longer
-    # calls the `uvicorn.run(...)` convenience wrapper directly -- it
-    # constructs `uvicorn.Config`+`uvicorn.Server` explicitly so it can
-    # publish the real `Server` on `app.state.uvicorn_server` (see
-    # `POST /api/product/shutdown` in api/main.py). Mocking `Server.run`
-    # itself (never actually binding a real socket or blocking) is the
-    # equivalent no-op for this new shape; `uvicorn.Config`/`uvicorn.
-    # Server(...)` construction is cheap and non-blocking, so leaving it
-    # real (rather than also mocking `Server.__init__`) still lets
-    # `app.state.uvicorn_server` genuinely get set, exactly as production
+    # `runtime.run()` builds the real `uvicorn.Server` and publishes it on
+    # `app.state.uvicorn_server` (see `POST /api/product/shutdown` in
+    # api/main.py), then hands it to `serve_until_stopped`. Mocking only
+    # that last step (never binding a real socket or blocking) keeps the
+    # cheap, non-blocking `Config`/`Server` construction real, so
+    # `app.state.uvicorn_server` genuinely gets set exactly as production
     # does.
-    monkeypatch.setattr(runtime_module.uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setattr(runtime_module, "serve_until_stopped", lambda _server: None)
     return runtime_module.local_base_url("127.0.0.1", port)
 
 

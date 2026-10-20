@@ -87,7 +87,7 @@ Checked, in order, before committing to a long session:
    time-of-day." This milestone's own governing instruction names this
    *exact* scenario as the canonical "do not manufacture a field result"
    case. Decisive by itself.
-2. **Camera reachability.** Reference Camera Node `192.168.1.112:8787`:
+2. **Camera reachability.** Reference Camera Node `<node-ip>:8787`:
    ICMP ping 3/3 succeeded (40–212 ms), raw TCP connect to 8787 succeeded.
    Reachable — but reachability was never the blocking factor tonight.
 3. **Host/GPU/detector availability.** Checked and found healthy despite
@@ -203,7 +203,7 @@ pin, not new packaging architecture).
 ### 2. Live deployment result
 
 The second attempt (fix applied) **succeeded**: `DEPLOYED db8588c`,
-`Runtime: C:\Users\zachk\AppData\Local\MockingBirdDev\releases\db8588c`,
+`Runtime: C:\Users\<user>\AppData\Local\MockingBirdDev\releases\db8588c`,
 `BioCLIP species suggestions: available`. Independently re-verified via
 direct HTTP (never trusting the deploy tool's own report alone, matching
 established doctrine) — both routes are confirmed unauthenticated directly
@@ -219,7 +219,7 @@ GET /api/product/instance
 GET /api/product/health
   {"ready":true,"database_schema_version":57,"database_migrated_from_version":53,
    "observation":{"configured_stream_count":1,"monitored_stream_count":0},
-   "log_path":"C:\\Users\\zachk\\AppData\\Local\\MockingBirdDev\\userdata\\logs\\mockingbird.log",
+   "log_path":"C:\\Users\\<user>\\AppData\\Local\\MockingBirdDev\\userdata\\logs\\mockingbird.log",
    "storage_health_tier":"getting_low","storage_low_space":false,
    "backup":{"has_backup":true,"last_backup_verified":true},
    "previous_shutdown_clean":false, ...}
@@ -255,7 +255,7 @@ finding in "Simultaneous real-camera capability," below.
 ### 3. Camera Node
 
 Reachable at the network level throughout (ICMP + raw TCP to
-`192.168.1.112:8787`, re-checked at session start and again before writing
+`<node-ip>:8787`, re-checked at session start and again before writing
 this report — no change). Node-side health/pairing/self-test state was
 **not** re-verified against the live product this session (that requires
 an authenticated `GET /api/streams`/Camera Node status call, deferred to
@@ -319,7 +319,7 @@ frame sizes, not a guess.
 `GET /api/product/health` (unauthenticated, see "Live deployment result,"
 above) reports `configured_stream_count: 1` — only **one** real Stream is
 currently configured, almost certainly the paired reference Camera Node
-(`192.168.1.112:8787`, the `frame-driven-onnx-cuda` provider). A
+(`<node-ip>:8787`, the `frame-driven-onnx-cuda` provider). A
 **second** real camera Source does exist in this project's own recent
 field-acceptance history and is worth wiring up before the next session
 defaults to single-camera by assumption: a real **EMEET SmartCam S600 USB

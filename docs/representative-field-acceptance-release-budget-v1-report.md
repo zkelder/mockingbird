@@ -52,7 +52,7 @@ decision for how future sessions should handle the same blocker.
    accepted budget"). This governed Phase 4 of the milestone brief: any
    budget this session could have reported would necessarily have been
    *provisional*, not a governed threshold.
-6. **Real Camera Node reachability reconfirmed** — `192.168.1.112:8787`:
+6. **Real Camera Node reachability reconfirmed** — `<node-ip>:8787`:
    ICMP ping succeeded (3/3, 8.6-77.6ms), raw TCP connect to port 8787
    succeeded, and an HTTP probe returned a genuine `{"detail":"Not Found"}`
    from a real running service (confirms a live app, not a dead host —
@@ -143,7 +143,7 @@ was exercised, so nothing about it can be judged. That is exactly the
 ## What remains true and unaffected
 
 - Frozen production stack, schema v53, accepted HEAD unchanged.
-- Real Camera Node (`192.168.1.112:8787`) is reachable at the network
+- Real Camera Node (`<node-ip>:8787`) is reachable at the network
   level right now.
 - The real native-Windows Host dev deployment is healthy at the accepted
   commit right now.

@@ -21,7 +21,7 @@ SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
 OTHER_SOURCE_ID = "source-other-external"
 OTHER_STREAM_ID = "stream-other-external"
-PRIVATE_PREVIEW_URL = "http://192.168.1.50/camera/path/still.jpg"
+PRIVATE_PREVIEW_URL = "http://192.168.1.23/camera/path/still.jpg"
 
 
 class FakeResponse:
@@ -98,7 +98,7 @@ def allow_private_lan_dns(monkeypatch: pytest.MonkeyPatch) -> None:
         try:
             return [ipaddress.ip_address(hostname)]
         except ValueError:
-            return [ipaddress.ip_address("192.168.1.50")]
+            return [ipaddress.ip_address("192.168.1.23")]
 
     monkeypatch.setattr(external_url_preview, "_resolve_host_addresses", resolve)
 
@@ -264,7 +264,7 @@ async def test_supported_still_image_save_creates_one_media_asset_only(
     assert media_asset["media_type"] == "image"
     assert media_asset["filename"] == body["file_name"]
     assert media_asset["file_size_bytes"] == len(b"image-bytes")
-    assert "192.168.1.50" in media_asset["notes"]
+    assert "192.168.1.23" in media_asset["notes"]
     assert "Feeder" in media_asset["notes"]
     assert "Creates no Events, Visits, ReviewLabels, or truth." in media_asset["notes"]
 

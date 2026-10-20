@@ -850,7 +850,7 @@ forbidden, §21) or getting fortunate within a short window -- a smoke
 session could easily complete having exercised nothing relevant to this
 fix at all, while still costing real field-instance time/credential
 overhead the milestone's own §20 asks to keep bounded. The reference
-Camera Node was confirmed reachable (`192.168.1.112:8787`, per project
+Camera Node was confirmed reachable (`<node-ip>:8787`, per project
 memory) before this decision was made -- this is a judgment that a smoke
 session would not be worth running, not that one was unavailable.
 

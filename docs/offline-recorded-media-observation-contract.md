@@ -218,6 +218,36 @@ image -- a small, additive, backward-compatible extension of an existing,
 already-tested function; no schema change (the `captured_at` column already
 existed, simply unpopulated for video until now).
 
+### Capture-time presentation (Owner-Only Release Polish & Acceptance v1)
+
+The epoch anchor above is a storage and ordering convention, never a date
+to show. Two facts matter here:
+
+- **Persisted evidence carries the anchor, not `None`.** The frame-driven
+  provider's `_with_fallback_captured_at` replaces a `None`
+  `FramePacket.captured_at` with `1970-01-01 + offset` *before* evidence is
+  built, so an offline Visit's persisted evidence `MediaAssetModel.
+  captured_at` is `1970 + offset`. "Evidence `captured_at` is present" does
+  not, on its own, mean a real capture time is known.
+- **The placeholder is identified by provenance, never by age.**
+  `ProductRepository._visit_capture_time_known` reports `False` only when
+  the candidate ledger's `provider_key` maps to `recorded_video` and the
+  source recording's own `MediaAssetModel.captured_at` is `None` (the
+  source id comes from the ledger's frame lineage, `"<source
+  media_asset_id>:<index>"`). An acoustic candidate uses its source audio
+  asset the same way. A recording that genuinely states a 1970 capture
+  time stays known. An Event starting on or after 1971-01-01 skips the
+  check, which only avoids queries for ordinary Visits.
+
+The resulting `capture_time_known` flag is exposed on `StreamVisitSummary`
+(and so Today/Dashboard, Activity Library and Bird Log rows), Bird Log
+label summaries and representatives, `ReviewQueueItem`, `VisitDetail`
+(with `acquisition_type`) and `EventDetail`. The frontend's
+`formatCaptureDateTime` shows "Capture time unknown" when it is `false`.
+Research export requires the same fact before calling a capture time
+`recorded`. Raw timestamps, ordering, evidence and reviewed truth are
+unchanged.
+
 ## Source-resolution evidence
 
 The decoded sampled frame **is** the source frame -- there is no separate

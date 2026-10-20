@@ -8,7 +8,7 @@ hardware, deployment or CI change.
 
 | | Start (verified 2026-09-26) | End |
 | --- | --- | --- |
-| Authoritative checkout | `/home/zkelder/projects/mockingbird-active` | same, and now the only development checkout |
+| Authoritative checkout | `/home/<user>/projects/mockingbird-active` | same, and now the only development checkout |
 | Branch | `main` | `main` |
 | HEAD | `a9878a893175e067eefb75ec8155dd9bd79a8da9` | the reconciliation commit(s) recorded in §2, on top of `a9878a8` |
 | Schema / version | `v61` / `0.1.0` | unchanged |
@@ -44,7 +44,7 @@ and a second, independent pass re-ran the high-signal ones:
 | BirdNET weights/labels | **none**; only adapter code and exclusion/notice text |
 | Push-triggered automation | `.github/workflows/ci.yml` only -- tests, frontend build, structural packaging smoke; no secrets, no deploy/publish/release step |
 | Preserved untracked files | 5 of 8 never committed. **3 were briefly tracked** (`3f6a49c`, removed index-only by `2549b32`: `small_bird_benchmark.py`, `wildlife.py.orig`, `test_small_bird_benchmark.py`), so their blobs ship in history -- ordinary superseded source, no sensitive content. Not removable without a history rewrite, which is out of scope |
-| Personal information | `/home/zkelder`, `C:\Users\zachk` paths in ~49 docs/tests/scripts; the owner email once in a report (already the author email on every commit). Harmless for a private repository; a **pre-public** decision (§8) |
+| Personal information | `/home/<user>`, `C:\Users\<user>` paths in ~49 docs/tests/scripts; the owner email once in a report (already the author email on every commit). Harmless for a private repository; a **pre-public** decision (§8) |
 
 Verdict: no blocker for a private fast-forward push.
 
@@ -122,7 +122,7 @@ was pushed; `archive/*`, `preserve/*` and `reconcile/*` remain local.
 
 ## 5. Recovery
 
-Location: `/home/zkelder/mockingbird-recovery/2026-09-26-repo-consolidation/`
+Location: `/home/<user>/mockingbird-recovery/2026-09-26-repo-consolidation/`
 (mode `0700`, outside every retired directory).
 
 | File | Content | Verified |
@@ -138,9 +138,9 @@ Location: `/home/zkelder/mockingbird-recovery/2026-09-26-repo-consolidation/`
 Restore a retired branch: `git fetch <bundle> 'refs/heads/<name>:refs/heads/<name>'`
 from inside `mockingbird-active`; re-create its worktree with
 `git worktree add ../<dir> <name>`. Restore a directory: `tar -xzf
-archives/<file>.tar.gz -C /home/zkelder/projects`. Restore protected files:
+archives/<file>.tar.gz -C /home/<user>/projects`. Restore protected files:
 `tar -xpf protected-untracked/protected-untracked.tar -C
-/home/zkelder/projects/mockingbird-active`, then `sha256sum -c
+/home/<user>/projects/mockingbird-active`, then `sha256sum -c
 protected-untracked/protected-before.sha256`.
 
 ## 6. Protected files
@@ -185,7 +185,7 @@ Post-operation re-verification: §2a.
 1. `mockingbird-feature-replay`: two never-integrated commits (per-zone
    monitoring policies, storage retention controls, July 2026) plus
    uncommitted edits. Keep, or explicitly abandon (recoverable either way).
-2. `/home/zkelder/projects/mockingbird` clone: uncommitted July edits with no
+2. `/home/<user>/projects/mockingbird` clone: uncommitted July edits with no
    other copy (diff snapshotted). Keep, or delete.
 3. Whether `archive/*` / `preserve/*` branches should ever be published.
 4. Before any change to **public** visibility: the personal paths/email in

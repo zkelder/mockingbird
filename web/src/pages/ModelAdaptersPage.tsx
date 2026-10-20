@@ -17,7 +17,7 @@ import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
 const LOCAL_DETECTOR_ENV_VARS = [
@@ -136,7 +136,7 @@ export function ModelAdaptersPage({
           : nextMediaAssets[0]?.id ?? "",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load analyzers.");
+      setError(userFacingErrorMessage(caught, "Could not load analyzers."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -192,7 +192,7 @@ export function ModelAdaptersPage({
       await onProposalChanged();
       await loadPageData({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Analyzer run could not be created.");
+      setError(userFacingErrorMessage(caught, "Analyzer run could not be created."));
     } finally {
       setIsSubmitting(false);
     }

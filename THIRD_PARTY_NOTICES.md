@@ -118,13 +118,28 @@ are included (the default for an official release build):
   actual native `.dll`/`.so` libraries inside are governed by NVIDIA's own
   CUDA/cuDNN End User License Agreement. This is the same well-established
   distribution pattern official PyTorch/TensorFlow GPU wheels already use,
-  and is not treated as a redistribution blocker here -- but this
-  milestone did not independently re-confirm the exact current NVIDIA EULA
-  notice text against what these specific packages ship; see this
-  milestone's own report for the precise disposition.
+  and is not treated as a redistribution blocker here. **Open item:** this
+  project has not independently re-confirmed the exact current NVIDIA EULA
+  notice text against what these specific packages ship, and the owner
+  should confirm it before publishing (see `docs/owner-release-checklist.md`).
+  This is not legal advice.
 - **The BioCLIP/OpenCLIP runtime closure** (`torch`, `torchvision`,
   `open_clip_torch`, and their own further dependencies). PyTorch and
   torchvision are BSD-3-Clause; `open_clip_torch` is MIT.
+
+## Optional external data services (not bundled, off or explicit-only)
+
+These are contacted only when the user turns them on or uses the matching
+workflow; see `docs/privacy-and-security.md`.
+
+- **Open-Meteo** (weather for a Place; off by default). Open-Meteo's weather
+  data is offered under CC BY 4.0 and requires attribution to Open-Meteo
+  (<https://open-meteo.com/en/licence>); the product's weather display carries
+  that attribution link. Open-Meteo's own terms apply to its free API.
+- **iNaturalist** (taxonomy lookup used only by the iNaturalist export
+  workflow). MockingBird sends a species name only; iNaturalist's own terms
+  apply to its API and to anything a user submits there. eBird is not
+  integrated.
 
 ## Deliberately NOT bundled
 
@@ -145,6 +160,17 @@ distribution, not MockingBird. `scripts/build_local_product.py`'s
 `verify_no_bundled_ffmpeg_binary` fails the release build outright if this
 were ever to change silently.
 
+**One precise exception, stated so the claim above is not read more broadly
+than it is true:** the unmodified `opencv-python-headless` wheel that the
+Windows ZIP bundles (for image and frame handling) carries its own FFmpeg
+libraries, including `cv2/opencv_videoio_ffmpeg*.dll`. That is OpenCV's
+redistribution, not an `ffmpeg` executable and not a MockingBird-chosen
+codec set; its licensing is stated in the `LICENSE-3RD-PARTY.txt` files that
+ship alongside it in the ZIP (`python/site-packages/cv2/` and the wheel's
+`.dist-info`), which say "FFmpeg is redistributed within all opencv-python
+packages." MockingBird does not rely on it for network-camera or video-import
+decoding; those paths use the separate system `ffmpeg` described above.
+
 ### BirdNET / birdnetlib (optional bird-sound identification)
 
 MockingBird's official packaging never bundles bird-sound identification
@@ -161,9 +187,12 @@ MockingBird's official packaging never bundles bird-sound identification
 - Because the code and the model weights are not separable inside that one
   wheel, MockingBird's own installer/packaged build never installs
   `birdnetlib` at all. `classifier-birdnet` is an explicit, separate,
-  optional extra (`pip install "mockingbird[classifier-birdnet]"`) that a
-  user installs themselves, obtaining the model directly from PyPI under
-  upstream's own terms -- never through MockingBird's own redistribution.
+  optional extra (from a source checkout: `pip install -e ".[classifier-birdnet]"`)
+  that a user installs themselves, obtaining the model directly from PyPI under
+  upstream's own terms -- never through MockingBird's own redistribution. The
+  packaged Windows runtime has no package installer, so there is **no
+  supported route to add BirdNET to the Windows ZIP**; see
+  `docs/support-matrix.md`.
   `scripts/build_local_product.py`'s
   `verify_no_nc_licensed_acoustic_model_redistribution` fails the release
   build outright if this were ever to change silently.
@@ -180,6 +209,16 @@ MockingBird's official packaging never bundles bird-sound identification
   support, a crowdfunded/paid appliance, a hosted service) touches the
   acoustic feature specifically -- see `docs/release-execution-state.md`
   §2 for the standing caveat.
+
+## Demonstration media (fetched on request, never bundled)
+
+`scripts/prepare_demo_instance.py --fetch-media` downloads three recorded
+wildlife clips from Wikimedia Commons for the portfolio/demo walkthrough. All
+three are dedicated to the public domain under **CC0 1.0**; their authors,
+source pages and SHA-1 hashes are recorded in
+`docs/demo/demo-media-manifest.json`. They are stored only under the git-ignored
+`data/demo-media/` folder, are never committed, and are not part of any official
+MockingBird package. A few frames from them appear in `docs/assets/screenshots/`.
 
 ## Where to look for anything not covered here
 

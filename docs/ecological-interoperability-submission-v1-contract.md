@@ -355,5 +355,5 @@ always changes it.
 
 ```bash
 python -m mockingbird export-darwin-core --site-name "Example Yard" \
-    --latitude 40.0150 --longitude -105.2705 --dry-run
+    --latitude 12.0150 --longitude -45.2705 --dry-run
 ```

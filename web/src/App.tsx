@@ -20,6 +20,7 @@ import type {
   UserRole,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { AttentionProvider } from "./attention/AttentionProvider";
 import { AlertsControl, AlertsInboxPage } from "./components/AlertsInbox";
 import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
@@ -67,6 +68,7 @@ import {
   writeAppRoute,
 } from "./navigation";
 
+import { userFacingErrorMessage } from "./utils";
 interface AppData {
   health: HealthStatus | null;
   sources: CameraSource[];
@@ -114,32 +116,75 @@ const initialData: AppData = {
 // the product loop (observe -> discover/confirm/remember -> understand ->
 // manage) instead of one flat, 13-item "Product loop" list. Labels and
 // routes are unchanged; only order and grouping moved.
-type NavGroup = "home" | "observe" | "wildlife" | "place" | "manage";
-const navGroupLabels: Record<NavGroup, string | null> = {
-  home: null,
-  observe: "Observe",
-  wildlife: "Wildlife",
-  place: "Your place",
-  manage: "Settings & help",
-};
-const productNavItems: Array<{ page: Page; label: string; group: NavGroup; minRole?: UserRole }> = [
-  { page: "dashboard", label: "Today", group: "home" },
-  { page: "streams", label: "Cameras", group: "observe" },
-  { page: "import", label: "Import Media", group: "observe" },
-  { page: "review", label: "Review Queue", group: "wildlife", minRole: "reviewer" },
-  { page: "bird-log", label: "Bird Log", group: "wildlife" },
-  { page: "activity-library", label: "Activity Library", group: "wildlife" },
-  { page: "place-story", label: "Place Story", group: "place" },
-  { page: "place-activity-report", label: "Place Report", group: "place" },
-  { page: "analytics", label: "Insights", group: "place" },
-  { page: "ecological-destinations", label: "Ecological Destinations", group: "place" },
-  { page: "settings", label: "Local Data", group: "manage" },
-  { page: "users", label: "Users", group: "manage", minRole: "administrator" },
-  // Product Operations & First-Observation Completion v1: Doctor's own
-  // report includes local filesystem paths and Camera Node structural
-  // facts -- Administrator-gated server-side (see api/auth.py), mirrored
-  // here so the nav never shows an entry a Viewer/Reviewer cannot open.
-  { page: "doctor", label: "Doctor", group: "manage", minRole: "administrator" },
+// Everyday Wildlife Experience & Presentation Refinement v1: six primary
+// destinations (Today, Cameras, Review, Bird Log, Place, Settings) with the
+// remaining product pages reachable as a contextual secondary list under the
+// destination they belong to. No route, page or capability was removed or
+// renamed; only what is shown at the top level changed. `alsoPages` are pages
+// that are not themselves nav entries (detail/setup pages) but belong to a
+// destination, so it stays highlighted while the reviewer is inside them.
+interface NavMember {
+  page: Page;
+  label: string;
+  minRole?: UserRole;
+}
+interface NavDestination {
+  id: string;
+  label: string;
+  minRole?: UserRole;
+  members: NavMember[];
+  alsoPages?: Page[];
+}
+const navDestinations: NavDestination[] = [
+  { id: "today", label: "Today", members: [{ page: "dashboard", label: "Today" }] },
+  {
+    id: "cameras",
+    label: "Cameras",
+    members: [
+      { page: "streams", label: "Cameras" },
+      { page: "import", label: "Import Media" },
+    ],
+    alsoPages: ["stream-detail", "camera-setup", "camera-configuration"],
+  },
+  {
+    id: "review",
+    label: "Review Queue",
+    minRole: "reviewer",
+    members: [{ page: "review", label: "Review Queue" }],
+  },
+  {
+    id: "bird-log",
+    label: "Bird Log",
+    members: [
+      { page: "bird-log", label: "Bird Log" },
+      { page: "activity-library", label: "Activity Library" },
+    ],
+    alsoPages: ["collections", "collection-detail"],
+  },
+  {
+    id: "place",
+    label: "Place",
+    members: [
+      { page: "place-story", label: "Place Story" },
+      { page: "place-activity-report", label: "Place Report" },
+      { page: "analytics", label: "Insights" },
+      { page: "ecological-destinations", label: "Ecological Destinations" },
+    ],
+    alsoPages: ["taxon-story", "feature-story", "feature-comparison"],
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    members: [
+      { page: "settings", label: "Local Data" },
+      { page: "users", label: "Users", minRole: "administrator" },
+      // Product Operations & First-Run Completion v1: Doctor's own report
+      // includes local filesystem paths and Camera Node structural facts --
+      // Administrator-gated server-side (see api/auth.py), mirrored here so
+      // the nav never shows an entry a Viewer/Reviewer cannot open.
+      { page: "doctor", label: "Doctor", minRole: "administrator" },
+    ],
+  },
 ];
 
 const ROLE_RANK: Record<UserRole, number> = { viewer: 0, reviewer: 1, administrator: 2 };
@@ -397,7 +442,7 @@ export default function App() {
       });
       setSelectedStreamId((current) => current ?? streamsResult.value[0]?.id ?? null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
+      setError(userFacingErrorMessage(caught, "Could not load MockingBird data."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -446,6 +491,25 @@ export default function App() {
       setAuthStatus("unauthenticated");
     });
   }, []);
+
+  // The Administrator-chosen installation name (e.g. a clearly-labelled DEMO
+  // instance) replaces the generic tagline so a differently-purposed
+  // instance is never mistaken for a real Place. Display-only; a failure
+  // keeps the default tagline.
+  const [installationName, setInstallationName] = useState<string | null>(null);
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let cancelled = false;
+    void apiClient
+      .getInstallationSettings()
+      .then((settings) => {
+        if (!cancelled) setInstallationName(settings.installation_name ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
 
   function handleSignedIn(user: CurrentUser) {
     setCurrentUser(user);
@@ -640,6 +704,13 @@ export default function App() {
     if (action.action_type === "open_place_report") {
       window.history.pushState({}, "", "/place-report");
       applyRoute({ page: "place-activity-report" });
+      return;
+    }
+    if (action.action_type === "open_doctor") {
+      // Attention Integrity & Health Reliability v1: Doctor is
+      // Administrator-only (server-enforced); anyone else lands on Today,
+      // whose health panel shows the same basic condition.
+      setPage(currentUser && roleAtLeast(currentUser.role, "administrator") ? "doctor" : "dashboard");
     }
   }
 
@@ -1018,7 +1089,12 @@ export default function App() {
           correctionPrefill={visitCorrectionPrefill}
           onOpenCollections={() => openCollections()}
           onOpenActivityLibrary={openActivityLibrary}
-          onOpenEcologicalDestinations={() => setPage("ecological-destinations")}
+          onOpenEcologicalDestinations={(visitId) => {
+            // Carry the Visit into the one existing research/export
+            // workflow; the page reads `?visit=` and scopes its preview.
+            window.history.pushState({}, "", `/ecological-destinations?visit=${encodeURIComponent(visitId)}`);
+            applyRoute({ page: "ecological-destinations" });
+          }}
         />
       );
     }
@@ -1229,8 +1305,8 @@ export default function App() {
     return <SignInPage onSignedIn={handleSignedIn} />;
   }
 
-  const visibleProductNavItems = productNavItems.filter(
-    (item) => !item.minRole || roleAtLeast(currentUser.role, item.minRole),
+  const visibleNavDestinations = navDestinations.filter(
+    (destination) => !destination.minRole || roleAtLeast(currentUser.role, destination.minRole),
   );
 
   // Bottom-nav destinations for phone widths (below the 760px mobile nav
@@ -1239,7 +1315,7 @@ export default function App() {
   // Review-or-Bird-Log depending on role), plus a "More" button that opens
   // the same full drawer as the top bar's hamburger -- deliberately small
   // (Phase 3: "do not put twelve destinations into a bottom bar"), never a
-  // second, separate navigation model from `productNavItems` above.
+  // second, separate navigation model from `navDestinations` above.
   const mobileNavItems: Array<{ page: Page; label: string }> = [
     { page: "dashboard", label: "Today" },
     { page: "place-story", label: "Story" },
@@ -1250,7 +1326,10 @@ export default function App() {
   ];
 
   return (
-    <>
+    // Attention Integrity & Health Reliability v1: one shared attention
+    // summary for this signed-in shell, keyed by user so a different
+    // account never inherits the previous one's counts or "seen" alerts.
+    <AttentionProvider key={currentUser.id} onAction={openAlertAction}>
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
@@ -1285,25 +1364,43 @@ export default function App() {
           <span className="brand-mark">MB</span>
           <div>
             <strong>MockingBird</strong>
-            <span>Local wildlife observatory</span>
+            <span>{installationName ?? "Local wildlife observatory"}</span>
           </div>
         </div>
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
         <nav className="nav-list" aria-label="Product navigation">
-          {visibleProductNavItems.map((item, index) => {
-            const groupLabel = navGroupLabels[item.group];
-            const startsGroup = index === 0 || visibleProductNavItems[index - 1].group !== item.group;
+          {visibleNavDestinations.map((destination) => {
+            const isActive =
+              destination.members.some((member) => member.page === page) ||
+              (destination.alsoPages?.includes(page) ?? false);
+            const visibleMembers = destination.members.filter(
+              (member) => !member.minRole || roleAtLeast(currentUser.role, member.minRole),
+            );
             return (
-              <Fragment key={item.page}>
-                {startsGroup && groupLabel ? <span className="nav-section-label">{groupLabel}</span> : null}
+              <Fragment key={destination.id}>
                 <button
-                  aria-current={page === item.page ? "page" : undefined}
-                  className={page === item.page ? "nav-item active" : "nav-item"}
-                  onClick={() => setPage(item.page)}
+                  aria-current={visibleMembers.some((member) => member.page === page) ? "page" : undefined}
+                  className={isActive ? "nav-item active" : "nav-item"}
+                  onClick={() => setPage(visibleMembers[0].page)}
                   type="button"
                 >
-                  {item.label}
+                  {destination.label}
                 </button>
+                {isActive && visibleMembers.length > 1 ? (
+                  <div aria-label={`${destination.label} pages`} className="nav-sub-items" role="group">
+                    {visibleMembers.map((member) => (
+                      <button
+                        aria-current={page === member.page ? "page" : undefined}
+                        className={page === member.page ? "nav-item nav-sub-item active" : "nav-item nav-sub-item"}
+                        key={member.page}
+                        onClick={() => setPage(member.page)}
+                        type="button"
+                      >
+                        {member.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </Fragment>
             );
           })}
@@ -1423,6 +1520,6 @@ export default function App() {
           More
         </button>
       </nav>
-    </>
+    </AttentionProvider>
   );
 }

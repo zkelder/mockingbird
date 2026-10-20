@@ -13,7 +13,7 @@ import {
   isBirdReviewLabel,
   isUnidentifiedWildlifeLabel,
 } from "../components/taxonomy";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatCaptureDateTime, formatDateTime, formatLabel, noDetectionRecordsMessage, userFacingErrorMessage } from "../utils";
 
 interface EventDetailPageProps {
   eventId: string;
@@ -65,7 +65,7 @@ export function EventDetailPage({
         }
       } catch (caught) {
         if (isMounted) {
-          setError(caught instanceof Error ? caught.message : "Could not load event detail.");
+          setError(userFacingErrorMessage(caught, "Could not load event detail."));
         }
       } finally {
         if (isMounted) {
@@ -335,9 +335,9 @@ export function EventDetailPage({
         </div>
         <div className="panel case-summary-card">
           <span className="meta-text">Timing</span>
-          <strong>{formatDateTime(detail.event.started_at)}</strong>
+          <strong>{formatCaptureDateTime(detail.event.started_at, detail.capture_time_known)}</strong>
           <span className="meta-text">
-            Ended: {detail.event.ended_at ? formatDateTime(detail.event.ended_at) : "Open"}
+            Ended: {detail.event.ended_at ? formatCaptureDateTime(detail.event.ended_at, detail.capture_time_known) : "Open"}
           </span>
         </div>
         {detail.media_asset ? (
@@ -488,7 +488,9 @@ export function EventDetailPage({
                 />
               ))
             ) : (
-              <span className="meta-text">No detections are attached to this manual media event.</span>
+              <span className="meta-text">
+                {noDetectionRecordsMessage(detail.event.event_type, undefined, "event")}
+              </span>
             )}
           </div>
         </div>

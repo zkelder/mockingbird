@@ -52,7 +52,7 @@ build copies/extracts -- a testing-environment fact, not a product one).
 
 **Correction made and disclosed, not hidden:** this reference machine's own
 true default data location (`%LOCALAPPDATA%\MockingBird`, resolving in
-practice to `C:\Users\zachk\AppData\Local\MockingBird`) already holds real
+practice to `C:\Users\<user>\AppData\Local\MockingBird`) already holds real
 accumulated developer/test history from this project's multi-week build
 history, confirmed live (a first launch against it returned
 `setup_state.updated_at` dated 2026-08-09, not a fresh install). This was
@@ -160,7 +160,7 @@ this is a deliberate, guarded posture (`verify_no_bundled_ffmpeg_binary`).
 a full-bundle scan for embedded local build-machine paths found exactly
 one real hit specific to this build:
 `mockingbird-0.1.0.dist-info/direct_url.json` records the build machine's
-own absolute path (`file:///home/zkelder/projects/mockingbird-active/dist/...`)
+own absolute path (`file:///home/<user>/projects/mockingbird-active/dist/...`)
 -- standard pip PEP 610 behavior for any `pip install --target` from a
 local wheel path, present in effectively every pip-installed package built
 this way industry-wide. No secret, no credential, no functional impact; not
@@ -339,7 +339,7 @@ exists to distinguish from Local Only runtime.
 ## G. Camera Node / first-real-operation result
 
 **Reference Camera Node status:** reachable and healthy throughout this
-session (`192.168.1.112:8787`, `node-76ec8e53ae586dd0`, up since
+session (`<node-ip>:8787`, `node-<id>`, up since
 2026-09-18, `self_test: degraded` with `provider_enumeration_timed_out` --
 a pre-existing nuance from the 2026-09-21 baseline audit, not caused by
 this session). Currently paired to a different, older installation
@@ -412,7 +412,7 @@ Real, live, screenshotted proof against the actual artifact:
   immediately-prior accepted milestone, now independently re-verified live
   on the newly built artifact) -- `listen_addresses: ["0.0.0.0"]`.
   Reachable from this machine's own real Wi-Fi LAN address
-  (`192.168.1.50`, the same `/24` as the reference Camera Node, confirming
+  (`<host-ip>`, the same `/24` as the reference Camera Node, confirming
   this Windows box and the Pi genuinely share one home network) with a
   correct, identity-matching 200 response.
 - **Honest limitation disclosed:** the LAN-reachability check connected

@@ -18,6 +18,8 @@ import type {
   PlacePhenologyObservation,
   PlaceYearOverYearResponse,
 } from "../api/types";
+import { CameraFilter } from "../components/CameraFilter";
+import { readCameraIds, sourceCameraOptions, writeCameraIds } from "../cameraFilter";
 import { BiodiversitySummaryCard } from "../components/BiodiversitySummaryCard";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
@@ -570,7 +572,12 @@ export function PlaceActivityReportPage({
   // Camera / Source + Multi-Camera Maturity v1, Phase N: an empty selection
   // means the unfiltered whole-Place report -- mirrors the backend's own
   // "omitted/empty means every Source" contract for `source_ids`.
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  // Multi-Camera Attribution & Filter Consolidation v1: restored from, and
+  // written back to, repeated `?source=` query params so a filtered report
+  // survives reload/back-forward/sharing.
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>(() =>
+    readCameraIds(window.location.search, "source"),
+  );
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -689,13 +696,14 @@ export function PlaceActivityReportPage({
     };
   }, []);
 
-  function toggleSourceId(sourceId: string) {
-    setSelectedSourceIds((current) =>
-      current.includes(sourceId)
-        ? current.filter((selected) => selected !== sourceId)
-        : [...current, sourceId],
-    );
-  }
+  useEffect(() => {
+    const params = writeCameraIds(new URLSearchParams(window.location.search), "source", selectedSourceIds);
+    const query = params.toString();
+    const path = `${window.location.pathname}${query ? `?${query}` : ""}`;
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.replaceState({}, "", path);
+    }
+  }, [selectedSourceIds]);
 
   const range = useMemo<PlaceActivityReportRequest | null>(() => {
     const period = preset === "custom" ? appliedCustomRange : presetRange(preset, new Date());
@@ -806,26 +814,12 @@ export function PlaceActivityReportPage({
           reads as the same "choose what this report covers" filter area. */}
       {sources.length > 0 ? (
         <section className="panel place-report-source-filter" aria-label="Filter by camera">
-          <fieldset>
-            <legend>Cameras / Sources</legend>
-            <div className="retention-checkbox-grid">
-              {sources.map((source) => (
-                <label className="checkbox-row" key={source.id}>
-                  <input
-                    checked={selectedSourceIds.includes(source.id)}
-                    onChange={() => toggleSourceId(source.id)}
-                    type="checkbox"
-                  />
-                  {source.name}
-                </label>
-              ))}
-            </div>
-            <span className="meta-text">
-              {selectedSourceIds.length === 0
-                ? "No cameras selected — every camera is included."
-                : `Limited to ${selectedSourceIds.length} of ${sources.length} camera${sources.length === 1 ? "" : "s"}.`}
-            </span>
-          </fieldset>
+          <CameraFilter
+            multiple
+            onChange={setSelectedSourceIds}
+            options={sourceCameraOptions(sources)}
+            value={selectedSourceIds}
+          />
         </section>
       ) : null}
 

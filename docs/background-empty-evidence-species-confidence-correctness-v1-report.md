@@ -4,7 +4,7 @@
 
 Verified before any change:
 
-- **Repository:** `/home/zkelder/projects/mockingbird-active`
+- **Repository:** `/home/<user>/projects/mockingbird-active`
 - **Branch:** `main`
 - **HEAD:** `428fcb3` (matches the brief's expected accepted HEAD exactly).
 - **Schema:** `v58` (`CURRENT_DATABASE_SCHEMA_VERSION`, `src/mockingbird/storage/database.py:45`) — matches.

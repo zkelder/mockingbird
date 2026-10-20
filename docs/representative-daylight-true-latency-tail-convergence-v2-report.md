@@ -21,7 +21,7 @@ Zero production code changed. Zero new latency samples. Zero deployment.
 
 Verified directly, before any other action:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`; branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`; branch `main`.
 - Starting HEAD: `e103092767fc52d2ec76db00743cd3e33d87dcd1` (matches the
   brief's expected `e103092` exactly).
 - `git status`: working tree otherwise clean; the seven preserved untracked
@@ -93,7 +93,7 @@ itself be exactly the kind of unnecessary "long deployment/session" §4
 instructs against when the outcome is not in doubt.
 
 **Location/timezone assumption, checked, not merely assumed:** the
-reference Camera Node is LAN-local (`192.168.1.112`, confirmed reachable
+reference Camera Node is LAN-local (`<node-ip>`, confirmed reachable
 below), consistent with sharing the sandbox/Windows-host's physical site
 and timezone. Cross-checked against source: both v10's report ("Local
 time at session start: 2026-09-02 07:39:59 EDT") and v14's report
@@ -110,7 +110,7 @@ Not applicable — no build was deployed. As a bounded, read-only readiness
 signal only (not a deployment), the reference Camera Node was confirmed
 reachable on the LAN:
 
-- `ping -c 2 -W 2 192.168.1.112`: 0% packet loss, RTT 95.8–120.6ms.
+- `ping -c 2 -W 2 <node-ip>`: 0% packet loss, RTT 95.8–120.6ms.
 - TCP port 8787 (the Node's own API port): confirmed open via a raw
   connect probe.
 
@@ -309,7 +309,7 @@ Nothing was deployed, so there is nothing to stop, reconcile, or archive.
 No credentials or scratch secrets were created. Camera Node pairing state
 is unchanged from before this milestone (no pairing was attempted
 tonight). The two read-only checks performed (ICMP ping + TCP connect
-probe to `192.168.1.112:8787`; a `Get-Date`/`TimeZoneInfo` read via
+probe to `<node-ip>:8787`; a `Get-Date`/`TimeZoneInfo` read via
 `powershell.exe`) leave no residual state on either machine. No lock
 files, partial lifecycle manifests, or stray processes were created by
 this session; the worktree is exactly as it was at the start (verified:

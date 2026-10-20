@@ -16,7 +16,7 @@ pytestmark = pytest.mark.anyio
 
 SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
-PRIVATE_PREVIEW_URL = "http://192.168.1.50/still.jpg"
+PRIVATE_PREVIEW_URL = "http://192.168.1.23/still.jpg"
 
 
 class FakeResponse:
@@ -79,7 +79,7 @@ def allow_private_lan_dns(monkeypatch: pytest.MonkeyPatch) -> None:
         try:
             return [ipaddress.ip_address(hostname)]
         except ValueError:
-            return [ipaddress.ip_address("192.168.1.50")]
+            return [ipaddress.ip_address("192.168.1.23")]
 
     monkeypatch.setattr(
         external_url_preview,
@@ -172,9 +172,9 @@ async def test_external_url_missing_url_returns_not_configured_without_fetch(
 @pytest.mark.parametrize(
     ("url", "message_part"),
     [
-        ("ftp://192.168.1.50/still.jpg", "http and https"),
-        ("http://viewer:secret@192.168.1.50/still.jpg", "Credentials"),
-        ("http://192.168.1.50/still.jpg#fragment", "fragments"),
+        ("ftp://192.168.1.23/still.jpg", "http and https"),
+        ("http://viewer:secret@192.168.1.23/still.jpg", "Credentials"),
+        ("http://192.168.1.23/still.jpg#fragment", "fragments"),
         ("http://127.0.0.1/still.jpg", "Unsafe URL target"),
         ("http://169.254.169.254/latest/meta-data", "Link-local metadata"),
         ("http://169.254.1.10/still.jpg", "Unsafe URL target"),

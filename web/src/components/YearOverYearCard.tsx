@@ -12,6 +12,12 @@ interface YearOverYearCardProps {
   // occurrence log; Taxon Story is the calmer longitudinal view this
   // year-over-year fact itself is drawn from).
   onOpenTaxonStory?: (label: string) => void;
+  // Everyday Wildlife Experience & Presentation Refinement v1: on Today, the
+  // "long-term patterns will appear once there is a year of history"
+  // placeholder is just another empty state; Today opts out of showing it
+  // (the Place report keeps it). Real comparisons and the other honest
+  // abstentions (partial month, thin coverage) still appear.
+  hideWhenNoYearOfHistory?: boolean;
 }
 
 /**
@@ -33,8 +39,16 @@ interface YearOverYearCardProps {
  * direction is paired with plain-language text, and `StatusPill` always
  * uses the same non-judgmental "quiet" tone for both "higher" and "lower".
  */
-export function YearOverYearCard({ comparison, onOpenBirdLog, onOpenTaxonStory }: YearOverYearCardProps) {
+export function YearOverYearCard({
+  comparison,
+  onOpenBirdLog,
+  onOpenTaxonStory,
+  hideWhenNoYearOfHistory = false,
+}: YearOverYearCardProps) {
   if (!comparison) {
+    return null;
+  }
+  if (hideWhenNoYearOfHistory && comparison.place.status === "insufficient_prior_history") {
     return null;
   }
 

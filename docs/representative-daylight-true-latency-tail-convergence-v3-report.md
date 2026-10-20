@@ -24,7 +24,7 @@ REQUIRED. Lane R remains OPEN.**
 Verified directly, in the order the governing directive required, before any
 other action:
 
-- Repository: `/home/zkelder/projects/mockingbird-active`; branch `main`.
+- Repository: `/home/<user>/projects/mockingbird-active`; branch `main`.
 - Starting HEAD: `e031291` — matches the directive's expected baseline exactly.
 - Schema: `CURRENT_DATABASE_SCHEMA_VERSION = 59` (`src/mockingbird/storage/database.py:46`) — matches.
 - `docs/release-execution-state.md` top-of-file `CURRENT PHASE` section
@@ -235,7 +235,7 @@ already-precedented, non-destructive procedure ran once authorized:
 ## 5. Build identity, credential, camera setup
 
 Deployed via `deploy_windows_dev.py --dev-root
-C:\Users\zachk\AppData\Local\MockingBirdLatencyConvergenceV3 --commit
+C:\Users\<user>\AppData\Local\MockingBirdLatencyConvergenceV3 --commit
 f222217` (full GPU + BioCLIP closure, no skip flags), with the built-in
 acceptance recorder *attempted* (see Defect #3).
 

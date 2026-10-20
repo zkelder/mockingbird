@@ -32,7 +32,7 @@ same build the cache-128 report itself used, predating Multi-Subject Phase 2
 ## 2-3. Reconstruction of Visits 139 and 140
 
 Recovered directly from the live deployed product's own SQLite database
-(`C:\Users\zachk\AppData\Local\MockingBirdDev\userdata\data\mockingbird.sqlite3`,
+(`C:\Users\<user>\AppData\Local\MockingBirdDev\userdata\data\mockingbird.sqlite3`,
 read-only query via the packaged `python.exe`, plus `GET /api/media/{id}/preview`
 for the real evidence images) — not inferred, not assumed. Every fact below
 is a direct field read.

@@ -62,7 +62,7 @@ its own.
 **Evidence gathered directly this session:**
 
 - `git log --format='%an <%ae>' | sort -u` returns exactly one identity
-  across all 633 commits: `zkelder <zachkelder@gmail.com>`.
+  across all 633 commits: `zkelder <<author email>>`.
 - `git remote -v`: `https://github.com/zkelder/mockingbird.git` -- a GitHub
   username, not a legal name or registered organization.
 - No `[project.authors]`/`[project.maintainers]` table exists in

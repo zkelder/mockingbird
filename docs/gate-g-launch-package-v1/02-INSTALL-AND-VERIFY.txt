@@ -1,0 +1,88 @@
+Installing, Checking, Starting, and Stopping MockingBird
+========================================================
+
+Please sign 01-CONSENT-AGREEMENT.txt before installing.
+
+WHAT YOU NEED
+
+- A Windows 10 or 11 PC (64-bit).
+- For automatic wildlife detection: an NVIDIA graphics card with a
+  current driver. Without one, MockingBird still installs and runs, and
+  says plainly that detection is not available on this PC. It does not
+  silently run a slower version. Reviewing history, importing recorded
+  video, species suggestions, backup, and settings all work without a
+  graphics card. Please tell me your setup either way.
+- A camera: a network (RTSP/ONVIF) camera, a USB or built-in camera, or
+  recorded video/photos to import. A Raspberry Pi "Camera Node" is also
+  possible, but only with my help -- ask first.
+- About 10 GB of free disk space to start (the unpacked application is
+  about 5 GB), plus room for your growing history.
+- A real outdoor spot with regular wildlife: a feeder, birdbath, or
+  similar.
+
+STEP 1 -- CHECK THE DOWNLOAD
+
+You will receive the files through {{DELIVERY_CHANNEL}}, never from a
+public download page. Before unpacking, confirm the application file is
+exactly the one I built:
+
+1. Open the folder containing MockingBird-windows-x64.zip.
+2. Click the File Explorer address bar, type  powershell  and press
+   Enter.
+3. Run:
+
+     Get-FileHash .\MockingBird-windows-x64.zip -Algorithm SHA256
+
+4. The Hash shown must be exactly:
+
+     124939B96BDE155FCEB34595A8AB41D7CA65EF2C3FF9A1D4A6BDEAEECC8DC650
+
+   (Upper or lower case does not matter.) The same value is in
+   SHA256SUMS and PROVENANCE.txt. If it does not match, do not unpack
+   it. Tell me instead.
+
+STEP 2 -- UNPACK
+
+Right-click MockingBird-windows-x64.zip, choose "Extract All...", and
+pick any location (Desktop, Documents, another drive). Extraction can
+take a few minutes. There is no installer, nothing is written to the
+Windows registry, and no administrator rights are needed.
+
+STEP 3 -- START
+
+Open the unpacked MockingBird-windows-x64 folder and double-click
+"Start MockingBird.vbs". Your browser opens once MockingBird is ready.
+No terminal window appears.
+
+Windows may show a blue "Windows protected your PC" (SmartScreen)
+screen, because this build is not signed with a paid code-signing
+certificate. If you received the file from me and the checksum in
+Step 1 matched, click "More info", then "Run anyway".
+
+STEP 4 -- FIRST-RUN SETUP
+
+MockingBird walks you through five short steps:
+Welcome -> Account (create your sign-in; you are the Administrator) ->
+Storage -> Add a camera -> Start observing.
+You can finish without a camera and add one later from Cameras.
+
+STOPPING MOCKINGBIRD
+
+Closing the browser tab does NOT stop MockingBird; it keeps running in
+the background, and your data is safe either way.
+
+To stop it properly: open Local Data and choose
+"Shut down MockingBird", then "Confirm shut down". This is the preferred
+way.
+
+If MockingBird will not open, you can instead end "pythonw.exe" in Task
+Manager, or restart your computer. That never risks your data, but the
+next start will show a calm "did not shut down cleanly" note. That note
+is expected after a forced stop and is not a problem.
+
+(The README-FIRST.txt file inside the application folder mentions only
+the Task Manager method. The in-app "Shut down MockingBird" is the
+preferred method and works in this build.)
+
+The full MockingBird guide ("Using MockingBird") is available from
+{{OWNER_NAME}} if you want more detail.

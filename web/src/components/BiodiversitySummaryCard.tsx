@@ -3,6 +3,11 @@ import type { PlaceBiodiversitySummaryResponse, PlaceBiodiversityTaxonEntry } fr
 interface BiodiversitySummaryCardProps {
   summary: PlaceBiodiversitySummaryResponse | null;
   onOpenBirdLog?: () => void;
+  // Everyday Wildlife Experience & Presentation Refinement v1: Today already
+  // says "nothing observed yet" once (the report panel) and points at Review
+  // for awaiting items; a second empty "Biodiversity here" card repeating it
+  // is noise. Today opts in; other surfaces keep the explicit empty state.
+  hideWhenNothingConfirmed?: boolean;
 }
 
 const MAX_NAMES_SHOWN = 6;
@@ -37,13 +42,16 @@ function namesLine(entries: PlaceBiodiversityTaxonEntry[]): string {
  * "gone"/"absent" -- see product-doctrine.md and the milestone's own
  * "not observed recently must never mean absent" instruction.
  */
-export function BiodiversitySummaryCard({ summary, onOpenBirdLog }: BiodiversitySummaryCardProps) {
+export function BiodiversitySummaryCard({ summary, onOpenBirdLog, hideWhenNothingConfirmed = false }: BiodiversitySummaryCardProps) {
   if (!summary) {
     return null;
   }
 
   const hasAnyConfirmed = summary.taxa.length > 0;
   const hasProvisional = summary.provisional_taxa.length > 0;
+  if (hideWhenNothingConfirmed && !hasAnyConfirmed && !hasProvisional) {
+    return null;
+  }
   // Broader Wildlife Maturity v1: mirrors TodayReportPanel's own species/
   // kinds-of-wildlife fallback (see docs/broader-wildlife-maturity-v1-
   // contract.md). distinct_species_count only counts species-level truth

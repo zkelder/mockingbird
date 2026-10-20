@@ -11,7 +11,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, userFacingErrorMessage } from "../utils";
 
 interface MotionEvidenceDetailPageProps {
   motionEvidenceId: string;
@@ -75,7 +75,7 @@ export function MotionEvidenceDetailPage({
           : [],
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load MotionEvidence detail.");
+      setError(userFacingErrorMessage(caught, "Could not load MotionEvidence detail."));
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -113,7 +113,7 @@ export function MotionEvidenceDetailPage({
       await loadDetail({ showLoading: false });
     } catch (caught) {
       setActionError(
-        caught instanceof Error ? caught.message : "MotionEvidence could not be promoted.",
+        userFacingErrorMessage(caught, "MotionEvidence could not be promoted."),
       );
     } finally {
       setActionId(null);
@@ -141,7 +141,7 @@ export function MotionEvidenceDetailPage({
       setActionMessage(`${ignored.id} ignored. No Event, Visit, ReviewLabel, or truth was created.`);
       await loadDetail({ showLoading: false });
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "MotionEvidence could not be ignored.");
+      setActionError(userFacingErrorMessage(caught, "MotionEvidence could not be ignored."));
     } finally {
       setActionId(null);
     }

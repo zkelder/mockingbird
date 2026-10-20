@@ -7,7 +7,7 @@
 - Disposable dev-root: `%LOCALAPPDATA%\MockingBirdFieldAcceptanceV10`, a fresh instance created specifically for this milestone (not a reuse of any prior cohort's root).
 - Field-acceptance instance lifecycle manifest: `init`-ed at `2026-09-02T11:39:39.523177Z`, `lifecycle_state: active`, `created_by_commit` matches accepted HEAD exactly. This is the first real field session to use the newly-accepted lifecycle tool end-to-end.
 - Field Acceptance Operator credential: `field-acceptance-0d817e5bad064b69`, 4h TTL, minted via `POST /api/admin/field-acceptance-credentials` after bootstrapping a disposable local Administrator (`field-acceptance-v10`) via `POST /api/setup/administrator` with a locally-generated, never-reused, never-user-supplied password (per standing policy: never ask the user for live credentials).
-- Reference Camera Node: `node-76ec8e53ae586dd0` ("Pi Camera Node"), camera `picamera2-camera-0` (1920×1080 monitoring profile). Paired fresh for this session.
+- Reference Camera Node: `node-<id>` ("Pi Camera Node"), camera `picamera2-camera-0` (1920×1080 monitoring profile). Paired fresh for this session.
 - Source/Stream via `POST /api/camera-setup/complete`: `source-a7339d605dca` / `stream-a7339d605dca` ("Reference Camera Node"), one full-frame "Yard" zone (zones are not a crop boundary per doctrine; created only to satisfy the setup wizard's ≥1-zone requirement).
 
 ### Operational note: Camera Node pairing-slot contention (disclosed, user-authorized)

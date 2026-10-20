@@ -576,7 +576,7 @@ def test_final_recommendation_is_identical_despite_runtime_divergence() -> None:
 def test_absolute_paths_remain_non_semantic() -> None:
     baseline = _report()
     candidate = _report(model=_model(key="candidate"))
-    poisoned_path = "/home/zkelder/projects/mockingbird-active/data/models/observation-onnx-cuda-candidates/mdv1000-spruce/model-bundle.json"
+    poisoned_path = "/home/user/projects/mockingbird-active/data/models/observation-onnx-cuda-candidates/mdv1000-spruce/model-bundle.json"
     # A red-herring absolute path placed somewhere the comparison module
     # does not read (mirroring how a real detector-benchmark-report.json
     # never contains one either -- this proves the comparison would not

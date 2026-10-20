@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import type { VisitEvidenceFrame } from "../api/types";
+import { thumbnailFraming } from "./subjectFraming";
 
 /**
  * Place Story Deep Dives & Representative Evidence v1: one representative
@@ -47,9 +48,12 @@ export function RepresentativeThumbnail({
       </div>
     );
   }
+  const framing = thumbnailFraming(evidence);
   return (
     <img
       alt={alt}
+      className={framing.className || undefined}
+      style={framing.style}
       loading="lazy"
       onError={() => setFailed(true)}
       src={`${apiClient.baseUrl}${evidence.preview_url}`}
