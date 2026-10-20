@@ -14,6 +14,11 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: nothing here writes to the repository, issues, or packages.
+# Artifact upload uses the runner's own token and needs no extra scope.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
